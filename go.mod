@@ -44,7 +44,3 @@ require (
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/term v0.39.0 // indirect
 )
-
-// Replace with local sitectl for development
-// When publishing, this should point to a released version
-replace github.com/libops/sitectl => ../sitectl
