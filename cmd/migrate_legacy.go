@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/libops/sitectl/pkg/helpers"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -621,11 +622,11 @@ func normalizePath(path, projectPrefix string) string {
 
 	// Common absolute path patterns - convert to relative
 	patterns := map[string]string{
-		`^/Users/[^/]+/` + projectPrefix:   ".",
-		`^/home/[^/]+/` + projectPrefix:    ".",
-		`^/opt/` + projectPrefix:           ".",
-		`^/var/www/` + projectPrefix:       ".",
-		`^/workspace/` + projectPrefix:     ".",
+		`^/Users/[^/]+/` + projectPrefix: ".",
+		`^/home/[^/]+/` + projectPrefix:  ".",
+		`^/opt/` + projectPrefix:         ".",
+		`^/var/www/` + projectPrefix:     ".",
+		`^/workspace/` + projectPrefix:   ".",
 	}
 
 	for pattern, replacement := range patterns {
@@ -729,10 +730,13 @@ func generateHeader(format string, warnings []string) string {
 	tmpl := template.Must(template.New("header").Parse(tmplStr))
 
 	var buf bytes.Buffer
-	tmpl.Execute(&buf, map[string]interface{}{
+	err := tmpl.Execute(&buf, map[string]any{
 		"Format":   format,
 		"Warnings": warnings,
 	})
+	if err != nil {
+		helpers.ExitOnError(err)
+	}
 
 	return buf.String()
 }
