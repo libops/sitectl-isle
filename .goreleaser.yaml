@@ -47,4 +47,5 @@ brews:
       name: homebrew
     dependencies:
       - name: "libops/tap/sitectl"
+      - name: "libops/tap/sitectl-drupal"
 
