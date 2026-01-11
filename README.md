@@ -6,10 +6,10 @@ A [sitectl](https://github.com/libops/sitectl) plugin for Islandora (ISLE) utili
 
 ### Homebrew
 
-You can install `sitectl` using homebrew
+You can install `sitectl-isle` using homebrew
 
 ```bash
-brew install libops/homebrew/sitectl
+brew install libops/homebrew/sitectl-isle
 ```
 
 ### Download Binary
