@@ -46,6 +46,6 @@ brews:
       owner: libops
       name: homebrew
     dependencies:
-      - name: "libops/tap/sitectl"
-      - name: "libops/tap/sitectl-drupal"
+      - name: "libops/homebrew/sitectl"
+      - name: "libops/homebrew/sitectl-drupal"
 
