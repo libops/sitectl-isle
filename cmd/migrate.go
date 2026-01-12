@@ -20,8 +20,8 @@ var migrateCmd = &cobra.Command{
 
 var mergeProfilesCmd = &cobra.Command{
 	Use:   "merge-compose-profiles",
-	Short: "Merge isle-site-tempalte profiles into single service definitions",
-	Long: `Merge isle-site-tempalte profiles into single service definitions.
+	Short: "Merge compose profiles into single service definitions",
+	Long: `Merge compose profiles into single service definitions.
 Move traefik labels into their own conf files
 
 Supports migration from:
