@@ -6,5 +6,5 @@ import (
 
 // RegisterCommands registers all isle commands with the plugin SDK
 func RegisterCommands(sdk *plugin.SDK) {
-	sdk.AddCommand(migrateLegacyCmd)
+	sdk.AddCommand(migrateCmd)
 }

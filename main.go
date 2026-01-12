@@ -8,7 +8,7 @@ import (
 func main() {
 	sdk := plugin.NewSDK(plugin.Metadata{
 		Name:        "isle",
-		Version:     "v0.0.4",
+		Version:     "v0.0.6",
 		Description: "Islandora (ISLE) utilities and migration tools",
 		Author:      "libops",
 	})
