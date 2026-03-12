@@ -449,15 +449,15 @@ func buildYAMLOutput(compose map[string]interface{}) (string, error) {
 		buf.WriteString("x-common: &common\n")
 
 		if restart, ok := xCommon["restart"].(string); ok {
-			buf.WriteString(fmt.Sprintf("  restart: %s\n", restart))
+			fmt.Fprintf(&buf, "  restart: %s\n", restart)
 		}
 		if tty, ok := xCommon["tty"].(bool); ok {
-			buf.WriteString(fmt.Sprintf("  tty: %t # Required for non-root users with selinux enabled.\n", tty))
+			fmt.Fprintf(&buf, "  tty: %t # Required for non-root users with selinux enabled.\n", tty)
 		}
 		if secOpts, ok := xCommon["security_opt"].([]interface{}); ok {
 			buf.WriteString("  security_opt:\n")
 			for _, opt := range secOpts {
-				buf.WriteString(fmt.Sprintf("    - %s # Required for selinux to access the docker socket and bind mount files.\n", opt))
+				fmt.Fprintf(&buf, "    - %s # Required for selinux to access the docker socket and bind mount files.\n", opt)
 			}
 		}
 		buf.WriteString("  networks:\n")
@@ -480,7 +480,7 @@ func buildYAMLOutput(compose map[string]interface{}) (string, error) {
 		}
 		sort.Strings(volNames)
 		for _, name := range volNames {
-			buf.WriteString(fmt.Sprintf("  %s: {}\n", name))
+			fmt.Fprintf(&buf, "  %s: {}\n", name)
 		}
 		buf.WriteString("\n")
 	}
@@ -493,7 +493,7 @@ func buildYAMLOutput(compose map[string]interface{}) (string, error) {
 		certSecrets := []string{"CERT_PUBLIC_KEY", "CERT_PRIVATE_KEY", "CERT_AUTHORITY", "UID"}
 		for _, name := range certSecrets {
 			if secret, ok := secrets[name].(map[string]interface{}); ok {
-				buf.WriteString(fmt.Sprintf("  %s:\n", name))
+				fmt.Fprintf(&buf, "  %s:\n", name)
 				if file, ok := secret["file"].(string); ok {
 					// Path should already be normalized, but ensure it's relative
 					if !strings.HasPrefix(file, "./") && !strings.HasPrefix(file, "../") {
@@ -504,7 +504,7 @@ func buildYAMLOutput(compose map[string]interface{}) (string, error) {
 							file = "." + file[idx:]
 						}
 					}
-					buf.WriteString(fmt.Sprintf("    file: %s\n", file))
+					fmt.Fprintf(&buf, "    file: %s\n", file)
 				}
 			}
 		}
@@ -523,7 +523,7 @@ func buildYAMLOutput(compose map[string]interface{}) (string, error) {
 
 		for _, name := range otherSecrets {
 			if secret, ok := secrets[name].(map[string]interface{}); ok {
-				buf.WriteString(fmt.Sprintf("  %s:\n", name))
+				fmt.Fprintf(&buf, "  %s:\n", name)
 				if file, ok := secret["file"].(string); ok {
 					// Path should already be normalized, but ensure it's relative
 					if !strings.HasPrefix(file, "./") && !strings.HasPrefix(file, "../") {
@@ -535,7 +535,7 @@ func buildYAMLOutput(compose map[string]interface{}) (string, error) {
 						}
 					}
 					// Use double quotes for all production secrets to match target
-					buf.WriteString(fmt.Sprintf("    file: \"%s\"\n", file))
+					fmt.Fprintf(&buf, "    file: \"%s\"\n", file)
 				}
 			}
 		}
@@ -555,7 +555,7 @@ func buildYAMLOutput(compose map[string]interface{}) (string, error) {
 
 		for _, name := range serviceNames {
 			svc := services[name]
-			buf.WriteString(fmt.Sprintf("  %s:\n", name))
+			fmt.Fprintf(&buf, "  %s:\n", name)
 
 			svcMap, ok := svc.(map[string]interface{})
 			if !ok {

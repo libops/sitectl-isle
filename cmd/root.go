@@ -8,6 +8,4 @@ import (
 func RegisterCommands(sdk *plugin.SDK) {
 	sdk.AddCommand(cacheCmd)
 	sdk.AddCommand(migrateCmd)
-	sdk.AddCommand(transformCmd)
-	sdk.AddCommand(nodeCmd)
 }

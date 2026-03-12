@@ -26,7 +26,7 @@ var (
 // cacheCmd represents the transform command
 var cacheCmd = &cobra.Command{
 	Use:   "cache",
-	Short: "Transform one storage format to another",
+	Short: "Cache warmer commands to speed up your ISLE site page load times",
 }
 
 func init() {
@@ -41,10 +41,15 @@ func init() {
 	}
 }
 
-// csvCmcacheMirador represents the mirador command
+// cacheMirador represents the mirador command
 var cacheMirador = &cobra.Command{
 	Use:   "mirador",
-	Short: "Make sure IIIF server has cached images",
+	Short: "Make sure mirador IIIF viewer has cached images",
+	Long: `For paged content items with children items displayed through a mirador IIIF viewer
+	If the IIIF server doesn't have the children images cached, the first site visitor will have slow page load times
+	So this command can be used to fetch a list of paged content items at their canonical node URL
+	and ensure mirador is rendering the children items. This will make the next site visitor's page load times much quicker.
+`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		urls, err := fetchURLs(endpoint)
 		if err != nil {
