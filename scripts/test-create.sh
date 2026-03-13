@@ -10,7 +10,13 @@ GIT_REMOTE_URL="${GIT_REMOTE_URL:-}"
 SITECTL_CONTEXT="${SITECTL_CONTEXT:-integration-test}"
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)"
-TMP_PARENT="${SITECTL_TMP_PARENT:-${HOME}/.tmp}"
+if [ -n "${SITECTL_TMP_PARENT:-}" ]; then
+	TMP_PARENT="${SITECTL_TMP_PARENT}"
+elif [ -n "${GITHUB_WORKSPACE:-}" ]; then
+	TMP_PARENT="${GITHUB_WORKSPACE}"
+else
+	TMP_PARENT="${HOME}/.tmp"
+fi
 mkdir -p "${TMP_PARENT}"
 TMP_DIR="$(mktemp -d "${TMP_PARENT%/}/sitectl-isle-test.XXXXXX")"
 SITE_DIR="${TMP_DIR}/isle-site-template"
