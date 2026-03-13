@@ -120,9 +120,18 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 }
 
 func componentDefinitions() map[string]corecomponent.Definition {
-	return map[string]corecomponent.Definition{
-		"fcrepo":     components.Fcrepo(components.TemplateSource{}),
-		"blazegraph": components.Blazegraph(components.TemplateSource{}),
+	defs := orderedComponentDefinitions()
+	out := make(map[string]corecomponent.Definition, len(defs))
+	for _, def := range defs {
+		out[def.Name] = def
+	}
+	return out
+}
+
+func orderedComponentDefinitions() []corecomponent.Definition {
+	return []corecomponent.Definition{
+		components.Fcrepo(components.TemplateSource{}),
+		components.Blazegraph(components.TemplateSource{}),
 	}
 }
 

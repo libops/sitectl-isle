@@ -334,10 +334,10 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	createRunProjectCommand = func(dir, name string, args ...string) error {
 		ranProjectCommand = true
 		if dir != projectDir {
-			t.Fatalf("expected make up in %q, got %q", projectDir, dir)
+			t.Fatalf("expected make init up in %q, got %q", projectDir, dir)
 		}
-		if name != "make" || len(args) != 1 || args[0] != "up" {
-			t.Fatalf("expected make up, got %s %v", name, args)
+		if name != "make" || len(args) != 2 || args[0] != "init" || args[1] != "up" {
+			t.Fatalf("expected make init up, got %s %v", name, args)
 		}
 		return nil
 	}
@@ -365,7 +365,7 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 		t.Fatalf("runCreateCommand() error = %v", err)
 	}
 	if !ranProjectCommand {
-		t.Fatal("expected make up to run")
+		t.Fatal("expected make init up to run")
 	}
 
 	rendered := out.String()
@@ -461,7 +461,7 @@ func newCreateCommandForTest() *cobra.Command {
 	cmd.Flags().String("template-remote-name", "upstream", "")
 	cmd.Flags().Bool("default-context", false, "")
 	cmd.Flags().Bool("setup-only", false, "")
-	corecomponent.AddCreateFlags(cmd, createComponentOptions...)
+	corecomponent.AddCreateFlags(cmd, createComponentOptions()...)
 	corecomponent.AddDrupalRootfsFlag(cmd, &createDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	cmd.Flags().String("isle-file-system-uri", "private", "")
 	return cmd

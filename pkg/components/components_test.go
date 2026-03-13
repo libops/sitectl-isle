@@ -20,6 +20,15 @@ func TestFcrepoDefinition(t *testing.T) {
 	if definition.DefaultState != corecomponent.StateOn {
 		t.Fatalf("expected default state on, got %q", definition.DefaultState)
 	}
+	if !definition.PromptOnCreate {
+		t.Fatal("expected fcrepo to prompt on create")
+	}
+	if definition.Guidance.Question == "" {
+		t.Fatal("expected fcrepo guidance question")
+	}
+	if definition.Guidance.OnHelp == "" || definition.Guidance.OffHelp == "" {
+		t.Fatal("expected fcrepo guidance help text")
+	}
 	if !definition.Gates.LocalOnly {
 		t.Fatal("expected fcrepo to be local-only")
 	}
@@ -70,6 +79,15 @@ func TestBlazegraphDefinition(t *testing.T) {
 	}
 	if definition.DefaultState != corecomponent.StateOn {
 		t.Fatalf("expected default state on, got %q", definition.DefaultState)
+	}
+	if !definition.PromptOnCreate {
+		t.Fatal("expected blazegraph to prompt on create")
+	}
+	if definition.Guidance.Question == "" {
+		t.Fatal("expected blazegraph guidance question")
+	}
+	if definition.Guidance.OnHelp == "" || definition.Guidance.OffHelp == "" {
+		t.Fatal("expected blazegraph guidance help text")
 	}
 	if !definition.Gates.LocalOnly {
 		t.Fatal("expected blazegraph to be local-only")

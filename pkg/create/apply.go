@@ -144,92 +144,60 @@ func applyBlazegraphOff(projectDir, drupalRootfs string) error {
 }
 
 func updateComposeForFcrepoOff(composePath string) error {
-	data, err := os.ReadFile(composePath)
+	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
-		return fmt.Errorf("read compose file: %w", err)
+		return err
 	}
-
-	doc, err := corecomponent.LoadYAMLDocument(data)
-	if err != nil {
-		return fmt.Errorf("parse compose yaml: %w", err)
+	if err := compose.DeleteService("fcrepo"); err != nil {
+		return err
 	}
-
-	for _, path := range []string{
-		".services.fcrepo",
-		".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_HOST",
-		".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_PORT",
-		".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_URL",
-		".volumes.fcrepo-data",
+	for _, key := range []string{
+		"DRUPAL_DEFAULT_FCREPO_HOST",
+		"DRUPAL_DEFAULT_FCREPO_PORT",
+		"DRUPAL_DEFAULT_FCREPO_URL",
 	} {
-		if err := doc.DeletePath(path); err != nil {
+		if err := compose.DeleteServiceEnv("drupal", key); err != nil {
 			return err
 		}
 	}
-	if err := doc.SetString(".services.alpaca.environment.ALPACA_FCREPO_INDEXER_ENABLED", "false"); err != nil {
+	if err := compose.DeleteVolume("fcrepo-data"); err != nil {
 		return err
 	}
-
-	out, err := doc.Bytes()
-	if err != nil {
+	if err := compose.SetServiceEnv("alpaca", "ALPACA_FCREPO_INDEXER_ENABLED", "false"); err != nil {
 		return err
 	}
-	return os.WriteFile(composePath, out, 0o644)
+	return compose.Save()
 }
 
 func updateComposeForBlazegraphOff(composePath string) error {
-	data, err := os.ReadFile(composePath)
-	if err != nil {
-		return fmt.Errorf("read compose file: %w", err)
-	}
-
-	doc, err := corecomponent.LoadYAMLDocument(data)
-	if err != nil {
-		return fmt.Errorf("parse compose yaml: %w", err)
-	}
-
-	for _, path := range []string{
-		".services.blazegraph",
-		".services.drupal.environment.DRUPAL_DEFAULT_BROKER_URL",
-		".volumes.blazegraph-data",
-	} {
-		if err := doc.DeletePath(path); err != nil {
-			return err
-		}
-	}
-	if err := doc.SetString(".services.drupal.environment.DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE", ""); err != nil {
-		return err
-	}
-	if err := doc.SetString(".services.alpaca.environment.ALPACA_TRIPLESTORE_INDEXER_ENABLED", "false"); err != nil {
-		return err
-	}
-
-	out, err := doc.Bytes()
+	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(composePath, out, 0o644)
+	if err := compose.DeleteService("blazegraph"); err != nil {
+		return err
+	}
+	if err := compose.DeleteVolume("blazegraph-data"); err != nil {
+		return err
+	}
+	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE", ""); err != nil {
+		return err
+	}
+	if err := compose.SetServiceEnv("alpaca", "ALPACA_TRIPLESTORE_INDEXER_ENABLED", "false"); err != nil {
+		return err
+	}
+	return compose.Save()
 }
 
 func setComposeEnv(composePath, serviceName, key, value string) error {
-	data, err := os.ReadFile(composePath)
-	if err != nil {
-		return fmt.Errorf("read compose file: %w", err)
-	}
-
-	doc, err := corecomponent.LoadYAMLDocument(data)
-	if err != nil {
-		return fmt.Errorf("parse compose yaml: %w", err)
-	}
-
-	if err := doc.SetString(fmt.Sprintf(".services.%s.environment.%s", serviceName, key), value); err != nil {
-		return err
-	}
-
-	out, err := doc.Bytes()
+	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(composePath, out, 0o644)
+	if err := compose.SetServiceEnv(serviceName, key, value); err != nil {
+		return err
+	}
+	return compose.Save()
 }
 
 func cleanupDrupalConfig(configDir, targetScheme string) error {

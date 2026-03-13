@@ -322,6 +322,12 @@ services:
     image: islandora/fcrepo6:${ISLANDORA_TAG}
     volumes:
       - fcrepo-data:/data:rw
+  traefik:
+    <<: *common
+    command: >-
+      --ping=true
+      --log.level=INFO
+      --entryPoints.http.address=:80
 `
 	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(compose), 0o644); err != nil {
 		t.Fatalf("WriteFile(compose) error = %v", err)
@@ -358,6 +364,12 @@ services:
 	}
 	if !strings.Contains(rendered, "# preserve me") {
 		t.Fatalf("expected comment preserved, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "command: >-") {
+		t.Fatalf("expected traefik folded scalar style preserved, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "      --ping=true\n      --log.level=INFO\n      --entryPoints.http.address=:80") {
+		t.Fatalf("expected traefik folded scalar content preserved, got:\n%s", rendered)
 	}
 	if strings.Contains(rendered, "restart: unless-stopped\n    image: islandora/alpaca") {
 		t.Fatalf("expected common settings to stay behind the anchor, got:\n%s", rendered)

@@ -58,29 +58,6 @@ type createRequest struct {
 	Apply              createpkg.Options
 }
 
-var createComponentOptions = []corecomponent.CreateOption{
-	{
-		Name:    "fcrepo",
-		Default: corecomponent.StateOn,
-		Guidance: corecomponent.StateGuidance{
-			Question:     "FCRepo controls whether binary content is stored in Fedora.",
-			OnHelp:       "Keep the default Islandora repository stack with Fedora-backed storage.",
-			OffHelp:      "Store files directly in Drupal's filesystem and remove Fedora-specific wiring.",
-			DefaultState: corecomponent.StateOn,
-		},
-	},
-	{
-		Name:    "blazegraph",
-		Default: corecomponent.StateOn,
-		Guidance: corecomponent.StateGuidance{
-			Question:     "Blazegraph controls triplestore indexing support.",
-			OnHelp:       "Keep triplestore indexing enabled for the standard Islandora stack.",
-			OffHelp:      "Remove triplestore indexing services and Drupal actions if you do not need them.",
-			DefaultState: corecomponent.StateOn,
-		},
-	},
-}
-
 var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new ISLE checkout, register a local sitectl context, and apply component-state mutations",
@@ -102,7 +79,7 @@ func init() {
 	createCmd.Flags().StringVar(&createTemplateRemoteName, "template-remote-name", "upstream", "Name to keep for the template repository remote when --git-remote-url is set")
 	createCmd.Flags().BoolVar(&createSetDefaultContext, "default-context", false, "Set the created sitectl context as the default context")
 	createCmd.Flags().BoolVar(&createSetupOnly, "setup-only", false, "Create and customize the checkout, but do not run make up")
-	corecomponent.AddCreateFlags(createCmd, createComponentOptions...)
+	corecomponent.AddCreateFlags(createCmd, createComponentOptions()...)
 	corecomponent.AddDrupalRootfsFlag(createCmd, &createDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	createCmd.Flags().StringVar(&createISLEFileSystemURI, "isle-file-system-uri", createpkg.DefaultISLEFileSystemURI, "Filesystem scheme to use when FCRepo is off. Common values are public or private")
 
@@ -134,7 +111,7 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 		ISLEFileSystemURI: createISLEFileSystemURI,
 	}
 
-	states, err := corecomponent.ResolveCreateStates(cmd, createInput, createComponentOptions...)
+	states, err := corecomponent.ResolveCreateStates(cmd, createInput, createComponentOptions()...)
 	if err != nil {
 		return createRequest{}, err
 	}
@@ -170,6 +147,15 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 		SetupOnly:          setupOnly,
 		Apply:              opts,
 	}, nil
+}
+
+func createComponentOptions() []corecomponent.CreateOption {
+	defs := orderedComponentDefinitions()
+	options := make([]corecomponent.CreateOption, 0, len(defs))
+	for _, def := range defs {
+		options = append(options, def.CreateOption())
+	}
+	return options
 }
 
 func promptISLEFileSystemURI(defaultValue string) (string, error) {

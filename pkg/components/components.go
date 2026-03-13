@@ -11,6 +11,7 @@ type Definition = corecomponent.Definition
 type Dependencies = corecomponent.Dependencies
 type DrupalModuleDependency = corecomponent.DrupalModuleDependency
 type DrupalModuleDependencyMode = corecomponent.DrupalModuleDependencyMode
+type StateGuidance = corecomponent.StateGuidance
 
 const (
 	OpSet     = corecomponent.OpSet

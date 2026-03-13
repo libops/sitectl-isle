@@ -10,7 +10,9 @@ GIT_REMOTE_URL="${GIT_REMOTE_URL:-}"
 SITECTL_CONTEXT="${SITECTL_CONTEXT:-integration-test}"
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)"
-TMP_DIR="$(mktemp -d)"
+TMP_PARENT="${SITECTL_TMP_PARENT:-${HOME}/.tmp}"
+mkdir -p "${TMP_PARENT}"
+TMP_DIR="$(mktemp -d "${TMP_PARENT%/}/sitectl-isle-test.XXXXXX")"
 SITE_DIR="${TMP_DIR}/isle-site-template"
 PLUGIN_BIN="${TMP_DIR}/sitectl-isle"
 
@@ -63,6 +65,14 @@ wait_for_growth() {
 	return 1
 }
 
+drupal_sql_query() {
+	local query="$1"
+	(
+		cd "${SITE_DIR}" &&
+			docker compose exec -T drupal sh -lc "drush --root=/var/www/drupal sql:query --extra=--skip-column-names \"${query}\""
+	)
+}
+
 if [ "${FCREPO_STATE}" = "on" ]; then
 	ASSERT_SERVICE="fcrepo"
 	ASSERT_PATH="/data"
@@ -105,6 +115,12 @@ if [ "${FCREPO_STATE}" = "off" ]; then
 			docker compose config --services | grep -qx "fcrepo"
 	); then
 		echo "fcrepo service still present after create --fcrepo off" >&2
+		exit 1
+	fi
+
+	FEDORA_COUNT="$(drupal_sql_query "SELECT COUNT(*) FROM file_managed WHERE uri LIKE 'fedora%';" | tr -d '[:space:]')"
+	if [ "${FEDORA_COUNT:-0}" != "0" ]; then
+		echo "expected no fedora-backed file_managed URIs when fcrepo is off, got ${FEDORA_COUNT}" >&2
 		exit 1
 	fi
 fi

@@ -4,8 +4,16 @@ import corecomponent "github.com/libops/sitectl/pkg/component"
 
 func Blazegraph(source TemplateSource) Definition {
 	return Definition{
-		Name:         "blazegraph",
-		DefaultState: corecomponent.StateOn,
+		Name:           "blazegraph",
+		DefaultState:   corecomponent.StateOn,
+		PromptOnCreate: true,
+		Guidance: corecomponent.StateGuidance{
+			Question: `blazegraph controls triplestore indexing support.
+If you do not plan to query Islandora content using SPARQL, you may want to turn this off.
+`,
+			OnHelp:  "Keep triplestore indexing enabled for the standard Islandora stack.",
+			OffHelp: "Remove triplestore indexing services and Drupal actions if you do not need them.",
+		},
 		Gates: corecomponent.GateSpec{
 			LocalOnly: true,
 		},

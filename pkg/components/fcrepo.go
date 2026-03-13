@@ -4,8 +4,16 @@ import corecomponent "github.com/libops/sitectl/pkg/component"
 
 func Fcrepo(source TemplateSource) Definition {
 	return Definition{
-		Name:         "fcrepo",
-		DefaultState: corecomponent.StateOn,
+		Name:           "fcrepo",
+		DefaultState:   corecomponent.StateOn,
+		PromptOnCreate: true,
+		Guidance: corecomponent.StateGuidance{
+			Question: `fcrepo controls whether binary content is stored in Fedora.
+If you plan to store content in a different backend like AWS S3, you may want to turn this off.
+`,
+			OnHelp:  "Keep the default Islandora repository stack with Fedora-backed storage.",
+			OffHelp: "Store files directly in Drupal's filesystem and remove Fedora-specific wiring.",
+		},
 		Gates: corecomponent.GateSpec{
 			LocalOnly: true,
 		},
