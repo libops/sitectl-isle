@@ -12,12 +12,8 @@ func TestApplyFcrepoOffPublic(t *testing.T) {
 
 	projectDir := t.TempDir()
 	configDir := filepath.Join(projectDir, "drupal", "rootfs", "var", "www", "drupal", "config", "sync")
-	installScriptPath := filepath.Join(projectDir, "drupal", "rootfs", "etc", "s6-overlay", "scripts")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.MkdirAll(installScriptPath, 0o755); err != nil {
-		t.Fatalf("MkdirAll(install script path) error = %v", err)
 	}
 
 	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
@@ -59,10 +55,6 @@ volumes:
 	if err := os.WriteFile(filepath.Join(configDir, "user.role.fedoraadmin.yml"), []byte("id: fedoraadmin\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(role) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(installScriptPath, "install.sh"), []byte("wait_for_service \"${SITE}\" fcrepo\nwait_for_service \"${SITE}\" triplestore\ndrush user:role:add fedoraadmin admin\ncreate_blazegraph_namespace_with_default_properties\n"), 0o755); err != nil {
-		t.Fatalf("WriteFile(install.sh) error = %v", err)
-	}
-
 	if err := Apply(Options{
 		Path:              projectDir,
 		Fcrepo:            FcrepoStateOff,
@@ -137,22 +129,6 @@ volumes:
 	if _, err := os.Stat(filepath.Join(configDir, "user.role.fedoraadmin.yml")); !os.IsNotExist(err) {
 		t.Fatalf("expected user.role.fedoraadmin.yml deleted, stat err = %v", err)
 	}
-	installScript, err := os.ReadFile(filepath.Join(installScriptPath, "install.sh"))
-	if err != nil {
-		t.Fatalf("ReadFile(install.sh) error = %v", err)
-	}
-	if strings.Contains(string(installScript), "wait_for_service \"${SITE}\" fcrepo") {
-		t.Fatalf("expected install script to stop waiting for fcrepo, got:\n%s", string(installScript))
-	}
-	if strings.Contains(string(installScript), "fedoraadmin") {
-		t.Fatalf("expected install script fedoraadmin role grant removed, got:\n%s", string(installScript))
-	}
-	if !strings.Contains(string(installScript), "wait_for_service \"${SITE}\" triplestore") {
-		t.Fatalf("expected install script to keep triplestore wait, got:\n%s", string(installScript))
-	}
-	if !strings.Contains(string(installScript), "create_blazegraph_namespace_with_default_properties") {
-		t.Fatalf("expected install script to keep blazegraph namespace creation, got:\n%s", string(installScript))
-	}
 }
 
 func TestApplyBlazegraphOff(t *testing.T) {
@@ -160,12 +136,8 @@ func TestApplyBlazegraphOff(t *testing.T) {
 
 	projectDir := t.TempDir()
 	configDir := filepath.Join(projectDir, "drupal", "rootfs", "var", "www", "drupal", "config", "sync")
-	installScriptPath := filepath.Join(projectDir, "drupal", "rootfs", "etc", "s6-overlay", "scripts")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.MkdirAll(installScriptPath, 0o755); err != nil {
-		t.Fatalf("MkdirAll(install script path) error = %v", err)
 	}
 
 	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
@@ -213,10 +185,6 @@ volumes:
 		if err := os.WriteFile(filepath.Join(configDir, name), []byte(contents), 0o644); err != nil {
 			t.Fatalf("WriteFile(%s) error = %v", name, err)
 		}
-	}
-
-	if err := os.WriteFile(filepath.Join(installScriptPath, "install.sh"), []byte("wait_for_service \"${SITE}\" fcrepo\nwait_for_service \"${SITE}\" triplestore\ndrush user:role:add fedoraadmin admin\ncreate_blazegraph_namespace_with_default_properties\n"), 0o755); err != nil {
-		t.Fatalf("WriteFile(install.sh) error = %v", err)
 	}
 
 	if err := Apply(Options{
@@ -283,22 +251,6 @@ volumes:
 		}
 	}
 
-	installScript, err := os.ReadFile(filepath.Join(installScriptPath, "install.sh"))
-	if err != nil {
-		t.Fatalf("ReadFile(install.sh) error = %v", err)
-	}
-	if !strings.Contains(string(installScript), "wait_for_service \"${SITE}\" fcrepo") {
-		t.Fatalf("expected install script to keep fcrepo wait, got:\n%s", string(installScript))
-	}
-	if strings.Contains(string(installScript), "wait_for_service \"${SITE}\" triplestore") {
-		t.Fatalf("expected install script to stop waiting for triplestore, got:\n%s", string(installScript))
-	}
-	if !strings.Contains(string(installScript), "fedoraadmin") {
-		t.Fatalf("expected install script to keep fedoraadmin role grant, got:\n%s", string(installScript))
-	}
-	if strings.Contains(string(installScript), "create_blazegraph_namespace_with_default_properties") {
-		t.Fatalf("expected blazegraph namespace creation removed, got:\n%s", string(installScript))
-	}
 }
 
 func TestApplyFcrepoOnNoOp(t *testing.T) {
@@ -338,12 +290,8 @@ func TestApplyPreservesComposeAnchors(t *testing.T) {
 
 	projectDir := t.TempDir()
 	configDir := filepath.Join(projectDir, "drupal", "rootfs", "var", "www", "drupal", "config", "sync")
-	installScriptPath := filepath.Join(projectDir, "drupal", "rootfs", "etc", "s6-overlay", "scripts")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(configDir) error = %v", err)
-	}
-	if err := os.MkdirAll(installScriptPath, 0o755); err != nil {
-		t.Fatalf("MkdirAll(installScriptPath) error = %v", err)
 	}
 
 	compose := `---
@@ -397,10 +345,6 @@ services:
 			t.Fatalf("WriteFile(%s) error = %v", name, err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(installScriptPath, "install.sh"), []byte("wait_for_service \"${SITE}\" fcrepo\nwait_for_service \"${SITE}\" triplestore\ncreate_blazegraph_namespace_with_default_properties\n"), 0o755); err != nil {
-		t.Fatalf("WriteFile(install.sh) error = %v", err)
-	}
-
 	if err := Apply(Options{
 		Path:              projectDir,
 		Fcrepo:            FcrepoStateOff,
@@ -446,12 +390,8 @@ func TestApplyAcceptsCustomISLEFileSystemURI(t *testing.T) {
 
 	projectDir := t.TempDir()
 	configDir := filepath.Join(projectDir, "drupal", "rootfs", "var", "www", "drupal", "config", "sync")
-	installScriptPath := filepath.Join(projectDir, "drupal", "rootfs", "etc", "s6-overlay", "scripts")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.MkdirAll(installScriptPath, 0o755); err != nil {
-		t.Fatalf("MkdirAll(install script path) error = %v", err)
 	}
 
 	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
@@ -474,10 +414,6 @@ volumes:
 	if err := os.WriteFile(filepath.Join(configDir, "views.view.files.yml"), []byte("value: 'fedora://'\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(files view) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(installScriptPath, "install.sh"), []byte("wait_for_service \"${SITE}\" fcrepo\n"), 0o755); err != nil {
-		t.Fatalf("WriteFile(install.sh) error = %v", err)
-	}
-
 	if err := Apply(Options{
 		Path:              projectDir,
 		Fcrepo:            FcrepoStateOff,

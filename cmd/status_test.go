@@ -196,12 +196,8 @@ func writeISLEOnFixture(t *testing.T, projectDir string) {
 	t.Helper()
 
 	configDir := filepath.Join(projectDir, "drupal", "rootfs", "var", "www", "drupal", "config", "sync")
-	installScriptPath := filepath.Join(projectDir, "drupal", "rootfs", "etc", "s6-overlay", "scripts")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(configDir) error = %v", err)
-	}
-	if err := os.MkdirAll(installScriptPath, 0o755); err != nil {
-		t.Fatalf("MkdirAll(installScriptPath) error = %v", err)
 	}
 
 	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
@@ -272,8 +268,5 @@ volumes:
 	}
 	if err := os.WriteFile(filepath.Join(configDir, "field.storage.media.field_media_file.yml"), []byte("settings:\n  uri_scheme: fedora\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(field.storage.media.field_media_file.yml) error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(installScriptPath, "install.sh"), []byte("wait_for_service \"${SITE}\" fcrepo\nwait_for_service \"${SITE}\" triplestore\n"), 0o755); err != nil {
-		t.Fatalf("WriteFile(install.sh) error = %v", err)
 	}
 }

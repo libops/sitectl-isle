@@ -122,10 +122,6 @@ func applyFcrepoOff(projectDir, drupalRootfs, targetScheme string) error {
 		return err
 	}
 
-	if err := patchDrupalInstallScriptForFcrepoOff(filepath.Join(projectDir, "drupal", "rootfs", "etc", "s6-overlay", "scripts", "install.sh")); err != nil {
-		return err
-	}
-
 	configDir := corecomponent.ResolveDrupalLayout(projectDir, drupalRootfs).ConfigSyncDir()
 	if err := cleanupDrupalConfig(configDir, targetScheme); err != nil {
 		return err
@@ -139,56 +135,12 @@ func applyBlazegraphOff(projectDir, drupalRootfs string) error {
 		return err
 	}
 
-	if err := patchDrupalInstallScriptForBlazegraphOff(filepath.Join(projectDir, "drupal", "rootfs", "etc", "s6-overlay", "scripts", "install.sh")); err != nil {
-		return err
-	}
-
 	configDir := corecomponent.ResolveDrupalLayout(projectDir, drupalRootfs).ConfigSyncDir()
 	if err := cleanupBlazegraphConfig(configDir); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func patchDrupalInstallScriptForFcrepoOff(scriptPath string) error {
-	data, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return fmt.Errorf("read drupal install script: %w", err)
-	}
-
-	updatedLines := []string{}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.Contains(line, `wait_for_service "${SITE}" fcrepo`) {
-			continue
-		}
-		if strings.Contains(line, `user:role:add fedoraadmin admin`) {
-			continue
-		}
-		updatedLines = append(updatedLines, line)
-	}
-
-	return os.WriteFile(scriptPath, []byte(strings.Join(updatedLines, "\n")), 0o755)
-}
-
-func patchDrupalInstallScriptForBlazegraphOff(scriptPath string) error {
-	data, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return fmt.Errorf("read drupal install script: %w", err)
-	}
-
-	updatedLines := []string{}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.Contains(line, `wait_for_service "${SITE}" triplestore`) {
-			continue
-		}
-		if strings.Contains(line, `create_blazegraph_namespace_with_default_properties`) {
-			continue
-		}
-		updatedLines = append(updatedLines, line)
-	}
-
-	return os.WriteFile(scriptPath, []byte(strings.Join(updatedLines, "\n")), 0o755)
 }
 
 func updateComposeForFcrepoOff(composePath string) error {
