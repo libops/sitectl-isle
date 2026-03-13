@@ -1,0 +1,184 @@
+package components
+
+import corecomponent "github.com/libops/sitectl/pkg/component"
+
+func Fcrepo(source TemplateSource) Definition {
+	return Definition{
+		Name:         "fcrepo",
+		DefaultState: corecomponent.StateOn,
+		Gates: corecomponent.GateSpec{
+			LocalOnly: true,
+		},
+		Behavior: corecomponent.Behavior{
+			Idempotent: true,
+			Enable: corecomponent.TransitionBehavior{
+				DataMigration: corecomponent.DataMigrationBackfill,
+				Summary:       "Existing filesystem-backed binaries may need to be re-ingested into Fedora after enabling.",
+			},
+			Disable: corecomponent.TransitionBehavior{
+				DataMigration: corecomponent.DataMigrationHard,
+				Summary:       "Existing Fedora-backed binaries must be migrated out of Fedora before disabling.",
+			},
+		},
+		On: DomainSpec{
+			Compose: YAMLStateSpec{
+				Canonical: []RepoAsset{
+					source.ComposeAsset("docker-compose.yml"),
+				},
+				Rules: []YAMLRule{
+					{
+						Files:       []string{"docker-compose.yml"},
+						SourceFiles: []string{"docker-compose.yml"},
+						Op:          OpRestore,
+						Path:        ".services.fcrepo",
+					},
+					{
+						Files:       []string{"docker-compose.yml"},
+						SourceFiles: []string{"docker-compose.yml"},
+						Op:          OpRestore,
+						Path:        ".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_URL",
+					},
+					{
+						Files: []string{"docker-compose.yml"},
+						Op:    OpSet,
+						Path:  ".services.alpaca.environment.ALPACA_FCREPO_INDEXER_ENABLED",
+						Value: "true",
+					},
+					{
+						Files:       []string{"docker-compose.yml"},
+						SourceFiles: []string{"docker-compose.yml"},
+						Op:          OpRestore,
+						Path:        ".volumes.fcrepo-data",
+					},
+				},
+			},
+			Drupal: YAMLStateSpec{
+				Canonical: []RepoAsset{
+					source.DrupalAsset("config/sync"),
+				},
+				Rules: []YAMLRule{
+					{
+						Files: []string{
+							"context.context.all_media.yml",
+							"context.context.external_files.yml",
+							"context.context.repository_content.yml",
+							"context.context.taxonomy_terms.yml",
+							"system.action.delete_file_as_fedora_external_content.yml",
+							"system.action.delete_node_from_fedora.yml",
+							"system.action.delete_taxonomy_term_in_fedora.yml",
+							"system.action.index_file_as_fedora_external_content.yml",
+							"system.action.index_media_in_fedora.yml",
+							"system.action.index_node_in_fedora.yml",
+							"system.action.index_taxonomy_term_in_fedora.yml",
+							"system.action.user_add_role_action.fedoraadmin.yml",
+							"system.action.user_remove_role_action.fedoraadmin.yml",
+							"user.role.fedoraadmin.yml",
+							"views.view.non_fedora_files.yml",
+						},
+						SourceFiles: []string{
+							"context.context.all_media.yml",
+							"context.context.external_files.yml",
+							"context.context.repository_content.yml",
+							"context.context.taxonomy_terms.yml",
+							"system.action.delete_file_as_fedora_external_content.yml",
+							"system.action.delete_node_from_fedora.yml",
+							"system.action.delete_taxonomy_term_in_fedora.yml",
+							"system.action.index_file_as_fedora_external_content.yml",
+							"system.action.index_media_in_fedora.yml",
+							"system.action.index_node_in_fedora.yml",
+							"system.action.index_taxonomy_term_in_fedora.yml",
+							"system.action.user_add_role_action.fedoraadmin.yml",
+							"system.action.user_remove_role_action.fedoraadmin.yml",
+							"user.role.fedoraadmin.yml",
+							"views.view.non_fedora_files.yml",
+						},
+						Op:   OpRestore,
+						Path: ".",
+					},
+					{
+						Files:   []string{"*.yml"},
+						Exclude: []string{"jsonld.settings.yml"},
+						Op:      OpReplace,
+						Path:    ".**",
+						Old:     "gs-production",
+						Value:   "fedora",
+					},
+				},
+			},
+		},
+		Off: DomainSpec{
+			Compose: YAMLStateSpec{
+				Canonical: []RepoAsset{
+					source.ComposeAsset("docker-compose.yml"),
+				},
+				Rules: []YAMLRule{
+					{
+						Files:       []string{"docker-compose.yml"},
+						SourceFiles: []string{"docker-compose.yml"},
+						Op:          OpDelete,
+						Path:        ".services.fcrepo",
+					},
+					{
+						Files:       []string{"docker-compose.yml"},
+						SourceFiles: []string{"docker-compose.yml"},
+						Op:          OpDelete,
+						Path:        ".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_URL",
+					},
+					{
+						Files: []string{"docker-compose.yml"},
+						Op:    OpSet,
+						Path:  ".services.alpaca.environment.ALPACA_FCREPO_INDEXER_ENABLED",
+						Value: "false",
+					},
+					{
+						Files:       []string{"docker-compose.yml"},
+						SourceFiles: []string{"docker-compose.yml"},
+						Op:          OpDelete,
+						Path:        ".volumes.fcrepo-data",
+					},
+				},
+			},
+			Drupal: YAMLStateSpec{
+				Canonical: []RepoAsset{
+					source.DrupalAsset("config/sync"),
+				},
+				Rules: []YAMLRule{
+					{
+						Files: []string{
+							"context.context.all_media.yml",
+							"context.context.external_files.yml",
+							"context.context.repository_content.yml",
+							"context.context.taxonomy_terms.yml",
+							"system.action.delete_file_as_fedora_external_content.yml",
+							"system.action.delete_node_from_fedora.yml",
+							"system.action.delete_taxonomy_term_in_fedora.yml",
+							"system.action.index_file_as_fedora_external_content.yml",
+							"system.action.index_media_in_fedora.yml",
+							"system.action.index_node_in_fedora.yml",
+							"system.action.index_taxonomy_term_in_fedora.yml",
+							"system.action.user_add_role_action.fedoraadmin.yml",
+							"system.action.user_remove_role_action.fedoraadmin.yml",
+							"user.role.fedoraadmin.yml",
+							"views.view.non_fedora_files.yml",
+						},
+						Op:   OpDelete,
+						Path: ".",
+					},
+					{
+						Files: []string{"*.yml"},
+						Op:    OpDelete,
+						Path:  ".**.fedoraadmin",
+					},
+					{
+						Files:   []string{"*.yml"},
+						Exclude: []string{"jsonld.settings.yml"},
+						Op:      OpReplace,
+						Path:    ".**",
+						Old:     "fedora",
+						Value:   "gs-production",
+					},
+				},
+			},
+		},
+	}
+}

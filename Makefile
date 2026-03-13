@@ -1,12 +1,17 @@
-.PHONY: build deps lint test docker integration-test docs plugins install-plugins
+.PHONY: build deps lint test check work docker integration-test docs plugins install-plugins
 
 BINARY_NAME=sitectl-isle
+FCREPO_STATE?=on
+BLAZEGRAPH_STATE?=on
+ISLE_FILE_SYSTEM_URI?=public
+GIT_REMOTE_URL?=
+SITECTL_CONTEXT?=integration-test
 
 deps:
 	go get .
 	go mod tidy
 
-build: deps
+build:
 	go build -o $(BINARY_NAME) .
 
 lint:
@@ -23,3 +28,11 @@ lint:
 test: build
 	go test -v -race ./...
 
+check:
+	./scripts/check.sh
+
+work:
+	./scripts/use-go-work.sh
+
+integration-test:
+	SITECTL_CONTEXT="$(SITECTL_CONTEXT)" GIT_REMOTE_URL="$(GIT_REMOTE_URL)" ./scripts/test-create.sh $(FCREPO_STATE) $(ISLE_FILE_SYSTEM_URI) $(BLAZEGRAPH_STATE)
