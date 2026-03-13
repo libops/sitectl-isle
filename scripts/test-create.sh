@@ -44,6 +44,7 @@ trap cleanup EXIT
 	--fcrepo "${FCREPO_STATE}" \
 	--blazegraph "${BLAZEGRAPH_STATE}" \
 	--isle-file-system-uri "${ISLE_FILE_SYSTEM_URI}" \
+	--setup-only \
 	--git-remote-url "${GIT_REMOTE_URL}"
 
 count_files() {
@@ -97,6 +98,11 @@ else
 		;;
 	esac
 fi
+
+(
+	cd "${SITE_DIR}" &&
+		make init
+)
 
 (
 	cd "${SITE_DIR}" &&
