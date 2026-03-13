@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
+	"github.com/libops/sitectl/pkg/config"
+	"github.com/libops/sitectl/pkg/plugin"
 )
 
 func TestStatusCommandReportsOn(t *testing.T) {
@@ -133,6 +135,60 @@ volumes:
 	}
 	if !strings.Contains(rendered, "drift:") {
 		t.Fatalf("expected verbose drift details, got:\n%s", rendered)
+	}
+}
+
+func TestStatusCommandUsesActiveContextProjectDir(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	if err := config.SaveContext(&config.Context{
+		Name:           "isle-local",
+		DockerHostType: config.ContextLocal,
+		DockerSocket:   "/var/run/docker.sock",
+		ProjectDir:     projectDir,
+	}, true); err != nil {
+		t.Fatalf("SaveContext() error = %v", err)
+	}
+
+	oldSDK := commandSDK
+	oldStatusPath := statusPath
+	oldStatusDrupalRootfs := statusDrupalRootfs
+	oldStatusVerbose := statusVerbose
+	t.Cleanup(func() {
+		commandSDK = oldSDK
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldStatusDrupalRootfs
+		statusVerbose = oldStatusVerbose
+	})
+
+	commandSDK = plugin.NewSDK(plugin.Metadata{
+		Name:        "isle",
+		Version:     "test",
+		Description: "test",
+	})
+	commandSDK.Config.Context = "isle-local"
+	statusPath = ""
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	statusVerbose = false
+
+	var out bytes.Buffer
+	cmd := statusCmd
+	cmd.SetOut(&out)
+
+	if err := runStatus(cmd); err != nil {
+		t.Fatalf("runStatus() error = %v", err)
+	}
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "blazegraph: on") {
+		t.Fatalf("expected blazegraph on from active context project dir, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "fcrepo: on") {
+		t.Fatalf("expected fcrepo on from active context project dir, got:\n%s", rendered)
 	}
 }
 

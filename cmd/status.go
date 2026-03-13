@@ -26,15 +26,15 @@ var statusCmd = &cobra.Command{
 }
 
 func init() {
-	statusCmd.Flags().StringVar(&statusPath, "path", ".", "Path to the checked out isle-site-template project")
+	statusCmd.Flags().StringVar(&statusPath, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
 	corecomponent.AddDrupalRootfsFlag(statusCmd, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	statusCmd.Flags().BoolVar(&statusVerbose, "verbose", false, "Show drift details for components that do not match cleanly")
 }
 
 func runStatus(cmd *cobra.Command) error {
-	ctx := &config.Context{
-		DockerHostType: config.ContextLocal,
-		ProjectDir:     statusPath,
+	ctx, err := resolveStatusContext()
+	if err != nil {
+		return err
 	}
 
 	defs := []corecomponent.Definition{
@@ -42,8 +42,8 @@ func runStatus(cmd *cobra.Command) error {
 		components.Blazegraph(components.TemplateSource{}),
 	}
 
-	statuses, err := corecomponent.DetectComponentStatuses(ctx, statusPath, corecomponent.DetectOptions{
-		ComposeRoot:  statusPath,
+	statuses, err := corecomponent.DetectComponentStatuses(ctx, ctx.ProjectDir, corecomponent.DetectOptions{
+		ComposeRoot:  ctx.ProjectDir,
 		DrupalRootfs: statusDrupalRootfs,
 	}, defs...)
 	if err != nil {
@@ -58,6 +58,26 @@ func runStatus(cmd *cobra.Command) error {
 	}
 
 	return nil
+}
+
+func resolveStatusContext() (*config.Context, error) {
+	if strings.TrimSpace(statusPath) != "" {
+		return &config.Context{
+			DockerHostType: config.ContextLocal,
+			ProjectDir:     statusPath,
+		}, nil
+	}
+	if commandSDK == nil {
+		return nil, fmt.Errorf("plugin sdk is not initialized")
+	}
+	ctx, err := commandSDK.GetContext()
+	if err != nil {
+		return nil, fmt.Errorf("resolve status context: %w", err)
+	}
+	if strings.TrimSpace(ctx.ProjectDir) == "" {
+		return nil, fmt.Errorf("context %q does not define a project directory; pass --path or update the sitectl context", ctx.Name)
+	}
+	return ctx, nil
 }
 
 func writeDriftDetails(cmd *cobra.Command, status corecomponent.ComponentStatus) {
