@@ -8,7 +8,7 @@ func Blazegraph(source TemplateSource) Definition {
 		DefaultState:   corecomponent.StateOn,
 		PromptOnCreate: true,
 		Guidance: corecomponent.StateGuidance{
-			Question: `blazegraph controls triplestore indexing support.
+			Question: `The blazegraph component provides triplestore indexing support.
 If you do not plan to query Islandora content using SPARQL, you may want to turn this off.
 `,
 			OnHelp:  "Keep triplestore indexing enabled for the standard Islandora stack.",
