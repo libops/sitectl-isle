@@ -3,6 +3,8 @@
 set -euo pipefail
 set -x
 
+export TERM="${TERM:-dumb}"
+
 FCREPO_STATE="${1:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] }"
 ISLE_FILE_SYSTEM_URI="${2:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] }"
 BLAZEGRAPH_STATE="${3:-on}"
@@ -99,15 +101,40 @@ else
 	esac
 fi
 
-(
+run_compose_diagnostics() {
+	(
+		cd "${SITE_DIR}" &&
+			docker compose config || true
+	)
+	(
+		cd "${SITE_DIR}" &&
+			docker compose config --services || true
+	)
+	(
+		cd "${SITE_DIR}" &&
+			docker compose ps -a || true
+	)
+	(
+		cd "${SITE_DIR}" &&
+			docker compose run --rm init || true
+	)
+}
+
+if ! (
 	cd "${SITE_DIR}" &&
 		make init
-)
+); then
+	run_compose_diagnostics
+	exit 1
+fi
 
-(
+if ! (
 	cd "${SITE_DIR}" &&
 		make up
-)
+); then
+	run_compose_diagnostics
+	exit 1
+fi
 
 BEFORE_COUNT="$(count_files "${ASSERT_SERVICE}" "${ASSERT_PATH}" | tr -d '[:space:]')"
 
