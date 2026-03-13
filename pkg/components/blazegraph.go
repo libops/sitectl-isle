@@ -48,12 +48,6 @@ func Blazegraph(source TemplateSource) Definition {
 						Files:       []string{"docker-compose.yml"},
 						SourceFiles: []string{"docker-compose.yml"},
 						Op:          OpRestore,
-						Path:        ".services.drupal.environment.DRUPAL_DEFAULT_BROKER_URL",
-					},
-					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
-						Op:          OpRestore,
 						Path:        ".volumes.blazegraph-data",
 					},
 				},
@@ -133,12 +127,6 @@ func Blazegraph(source TemplateSource) Definition {
 						Op:    OpSet,
 						Path:  ".services.alpaca.environment.ALPACA_TRIPLESTORE_INDEXER_ENABLED",
 						Value: "false",
-					},
-					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
-						Op:          OpDelete,
-						Path:        ".services.drupal.environment.DRUPAL_DEFAULT_BROKER_URL",
 					},
 					{
 						Files: []string{"docker-compose.yml"},
