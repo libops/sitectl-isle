@@ -81,7 +81,9 @@ Use "sitectl isle [command] --help" for more information about a command.
 
 ## Development
 
-Use `make work` to create a local `go.work` that points this plugin at `../sitectl`. The file is intentionally gitignored so local development can use unreleased sitectl features without affecting CI or releases.
+### sitectl
+
+If you need to make code changes to sitectl, which provides a lot of helpers this plugin uses, you can use a local, edited copy of sitectl with go.work files. Use `make work` to create a local `go.work` that points this plugin at `../sitectl`. The file is intentionally gitignored so local development can use unreleased sitectl features without affecting CI or releases.
 
 Use `./scripts/check.sh` locally for the same lint and test invocation used in GitHub Actions.
 

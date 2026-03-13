@@ -296,6 +296,10 @@ func defaultRunProjectCommand(projectDir, name string, args ...string) error {
 	command.Dir = projectDir
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
+	command.Env = os.Environ()
+	if os.Getenv("TERM") == "" {
+		command.Env = append(command.Env, "TERM=dumb")
+	}
 	return command.Run()
 }
 

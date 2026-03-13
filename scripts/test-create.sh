@@ -50,9 +50,7 @@ wait_for_growth() {
 	local service="$1"
 	local target="$2"
 	local before="$3"
-	local attempt
-
-	for attempt in $(seq 1 24); do
+	for _ in $(seq 1 24); do
 		sleep 10
 		local after
 		after="$(count_files "${service}" "${target}" | tr -d '[:space:]')"
