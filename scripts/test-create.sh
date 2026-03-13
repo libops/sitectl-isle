@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+set -x
 
 FCREPO_STATE="${1:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] }"
 ISLE_FILE_SYSTEM_URI="${2:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] }"
