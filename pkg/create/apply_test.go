@@ -29,7 +29,6 @@ services:
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
       DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.example/fcrepo/rest/
-      DRUPAL_DEFAULT_BROKER_URL: tcp://activemq:61613
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: temporary
   fcrepo:
     image: islandora/fcrepo6
@@ -83,9 +82,6 @@ volumes:
 	}
 	if !strings.Contains(compose, `ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"`) && !strings.Contains(compose, "ALPACA_TRIPLESTORE_INDEXER_ENABLED: \"true\"") {
 		t.Fatalf("expected triplestore indexer flag preserved, got:\n%s", compose)
-	}
-	if !strings.Contains(compose, "DRUPAL_DEFAULT_BROKER_URL") {
-		t.Fatalf("expected broker url preserved, got:\n%s", compose)
 	}
 	if !strings.Contains(compose, `DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora`) && !strings.Contains(compose, "DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: \"islandora\"") {
 		t.Fatalf("expected triplestore namespace set when blazegraph is on, got:\n%s", compose)
@@ -151,7 +147,6 @@ services:
   drupal:
     environment:
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
-      DRUPAL_DEFAULT_BROKER_URL: tcp://activemq:61613
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
   fcrepo:
     image: islandora/fcrepo6
@@ -212,9 +207,6 @@ volumes:
 	}
 	if !strings.Contains(compose, `ALPACA_FCREPO_INDEXER_ENABLED: "true"`) && !strings.Contains(compose, "ALPACA_FCREPO_INDEXER_ENABLED: \"true\"") {
 		t.Fatalf("expected fcrepo indexer flag preserved, got:\n%s", compose)
-	}
-	if strings.Contains(compose, "DRUPAL_DEFAULT_BROKER_URL") {
-		t.Fatalf("expected broker url removed, got:\n%s", compose)
 	}
 	if !strings.Contains(compose, `DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: ""`) && !strings.Contains(compose, "DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: \"\"") {
 		t.Fatalf("expected triplestore namespace blanked, got:\n%s", compose)
@@ -322,7 +314,6 @@ services:
   drupal:
     <<: *common
     environment:
-      DRUPAL_DEFAULT_BROKER_URL: tcp://activemq:61613
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
       DRUPAL_DEFAULT_FCREPO_URL: ${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/

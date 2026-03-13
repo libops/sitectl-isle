@@ -14,9 +14,9 @@ import (
 )
 
 var (
-	componentSetYolo       bool
-	componentSetInput      = config.GetInput
-	componentApplyOptions  = createpkg.Apply
+	componentSetYolo      bool
+	componentSetInput     = config.GetInput
+	componentApplyOptions = createpkg.Apply
 )
 
 var componentSetCmd = &cobra.Command{

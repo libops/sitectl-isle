@@ -98,7 +98,6 @@ services:
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   drupal:
     environment:
-      DRUPAL_DEFAULT_BROKER_URL: tcp://activemq:61613
       DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.example/fcrepo/rest/
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: ""
   fcrepo:
@@ -210,7 +209,6 @@ services:
     image: islandora/blazegraph
   drupal:
     environment:
-      DRUPAL_DEFAULT_BROKER_URL: tcp://activemq:61613
       DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.example/fcrepo/rest/
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
   fcrepo:

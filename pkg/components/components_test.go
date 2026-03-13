@@ -88,8 +88,6 @@ func TestBlazegraphDefinition(t *testing.T) {
 	assertHasRule(t, definition.On.Compose.Rules, OpRestore, ".services.blazegraph")
 	assertHasRule(t, definition.Off.Compose.Rules, OpSet, ".services.alpaca.environment.ALPACA_TRIPLESTORE_INDEXER_ENABLED")
 	assertHasRule(t, definition.On.Compose.Rules, OpSet, ".services.alpaca.environment.ALPACA_TRIPLESTORE_INDEXER_ENABLED")
-	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.drupal.environment.DRUPAL_DEFAULT_BROKER_URL")
-	assertHasRule(t, definition.On.Compose.Rules, OpRestore, ".services.drupal.environment.DRUPAL_DEFAULT_BROKER_URL")
 	assertHasRule(t, definition.Off.Compose.Rules, OpSet, ".services.drupal.environment.DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE")
 	assertHasRule(t, definition.On.Compose.Rules, OpSet, ".services.drupal.environment.DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE")
 	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".volumes.blazegraph-data")
