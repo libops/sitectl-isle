@@ -220,7 +220,7 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		return err
 	}
 	if !req.SetupOnly {
-		if err := createRunProjectCommand(ctx.ProjectDir, "make", "up"); err != nil {
+		if err := createRunProjectCommand(ctx.ProjectDir, "make", "init", "up"); err != nil {
 			return fmt.Errorf("run make up: %w", err)
 		}
 	}
