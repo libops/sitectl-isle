@@ -48,4 +48,23 @@ brews:
     dependencies:
       - name: "libops/homebrew/sitectl"
       - name: "libops/homebrew/sitectl-drupal"
+nfpms:
+  - id: sitectl-isle
+    package_name: sitectl-isle
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: libops
+    homepage: "https://github.com/libops/sitectl-isle"
+    description: "A sitectl plugin for Islandora (ISLE) sites"
+    maintainer: "Joe Corall <joe@libops.io>"
+    license: "MIT"
+    formats:
+      - apk
+      - deb
+      - rpm
+    mtime: "{{ .CommitDate }}"
+    builds:
+      - sitectl-isle
+    dependencies:
+      - sitectl
+      - sitectl-drupal
 
