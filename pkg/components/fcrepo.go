@@ -8,11 +8,9 @@ func Fcrepo(source TemplateSource) Definition {
 		DefaultState:   corecomponent.StateOn,
 		PromptOnCreate: true,
 		Guidance: corecomponent.StateGuidance{
-			Question: `fcrepo controls whether binary content is stored in Fedora.
-If you plan to store content in a different backend like AWS S3, you may want to turn this off.
-`,
-			OnHelp:  "Keep the default Islandora repository stack with Fedora-backed storage.",
-			OffHelp: "Store files directly in Drupal's filesystem and remove Fedora-specific wiring.",
+			Question: `The fcrepo component controls whether binary content (i.e. files) are stored in Fedora. If you plan to store content in a different file system backend like AWS S3, you may want to turn the fcrepo component off.`,
+			OnHelp:   "Keep the default Islandora repository stack with Fedora-backed storage.",
+			OffHelp:  "Store files directly in Drupal's filesystem and remove Fedora-specific wiring.",
 		},
 		Gates: corecomponent.GateSpec{
 			LocalOnly: true,

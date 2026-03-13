@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -241,10 +242,13 @@ func TestEnsureClonedCheckoutClonesEmptyDirectory(t *testing.T) {
 		if opts.ProjectDir != projectDir {
 			t.Fatalf("expected dir %q, got %q", projectDir, opts.ProjectDir)
 		}
+		if !opts.Quiet {
+			t.Fatal("expected clone to run in quiet mode")
+		}
 		return os.MkdirAll(opts.ProjectDir, 0o755)
 	}
 
-	if err := ensureClonedCheckout(defaultTemplateRepo, defaultTemplateBranch, projectDir); err != nil {
+	if err := ensureClonedCheckout(io.Discard, defaultTemplateRepo, defaultTemplateBranch, projectDir); err != nil {
 		t.Fatalf("ensureClonedCheckout() error = %v", err)
 	}
 	if !cloned {
@@ -272,7 +276,7 @@ func TestEnsureClonedCheckoutSkipsNonEmptyDirectory(t *testing.T) {
 		return nil
 	}
 
-	if err := ensureClonedCheckout(defaultTemplateRepo, defaultTemplateBranch, projectDir); err != nil {
+	if err := ensureClonedCheckout(io.Discard, defaultTemplateRepo, defaultTemplateBranch, projectDir); err != nil {
 		t.Fatalf("ensureClonedCheckout() error = %v", err)
 	}
 }
@@ -311,14 +315,14 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	oldClone := createCloneTemplateRepo
 	oldConfigure := createConfigureTemplateRemotes
 	oldApply := createApply
-	oldRunProjectCommand := createRunProjectCommand
+	oldRunStartup := createRunStartup
 	t.Cleanup(func() {
 		commandSDK = oldSDK
 		createEnsureLocalContext = oldEnsure
 		createCloneTemplateRepo = oldClone
 		createConfigureTemplateRemotes = oldConfigure
 		createApply = oldApply
-		createRunProjectCommand = oldRunProjectCommand
+		createRunStartup = oldRunStartup
 	})
 
 	commandSDK = &plugin.SDK{}
@@ -330,14 +334,14 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	createConfigureTemplateRemotes = func(opts plugin.GitTemplateOptions) error { return nil }
 	createApply = func(opts createpkg.Options) error { return nil }
 
-	var ranProjectCommand bool
-	createRunProjectCommand = func(dir, name string, args ...string) error {
-		ranProjectCommand = true
-		if dir != projectDir {
-			t.Fatalf("expected make init up in %q, got %q", projectDir, dir)
+	var ranStartup bool
+	createRunStartup = func(_ io.Writer, ctx *config.Context) error {
+		ranStartup = true
+		if ctx.ProjectDir != projectDir {
+			t.Fatalf("expected startup in %q, got %q", projectDir, ctx.ProjectDir)
 		}
-		if name != "make" || len(args) != 2 || args[0] != "init" || args[1] != "up" {
-			t.Fatalf("expected make init up, got %s %v", name, args)
+		if ctx.Name != "isle-local-2" {
+			t.Fatalf("expected context isle-local-2, got %q", ctx.Name)
 		}
 		return nil
 	}
@@ -364,8 +368,8 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runCreateCommand() error = %v", err)
 	}
-	if !ranProjectCommand {
-		t.Fatal("expected make init up to run")
+	if !ranStartup {
+		t.Fatal("expected startup to run")
 	}
 
 	rendered := out.String()
@@ -392,14 +396,14 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	oldClone := createCloneTemplateRepo
 	oldConfigure := createConfigureTemplateRemotes
 	oldApply := createApply
-	oldRunProjectCommand := createRunProjectCommand
+	oldRunStartup := createRunStartup
 	t.Cleanup(func() {
 		commandSDK = oldSDK
 		createEnsureLocalContext = oldEnsure
 		createCloneTemplateRepo = oldClone
 		createConfigureTemplateRemotes = oldConfigure
 		createApply = oldApply
-		createRunProjectCommand = oldRunProjectCommand
+		createRunStartup = oldRunStartup
 	})
 
 	commandSDK = &plugin.SDK{}
@@ -410,8 +414,8 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error { return nil }
 	createConfigureTemplateRemotes = func(opts plugin.GitTemplateOptions) error { return nil }
 	createApply = func(opts createpkg.Options) error { return nil }
-	createRunProjectCommand = func(dir, name string, args ...string) error {
-		t.Fatal("did not expect make up to run")
+	createRunStartup = func(_ io.Writer, ctx *config.Context) error {
+		t.Fatal("did not expect startup to run")
 		return nil
 	}
 
