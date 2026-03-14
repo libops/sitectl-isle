@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -204,10 +205,11 @@ func TestCheckPrereqsSuccess(t *testing.T) {
 	}
 
 	rendered := out.String()
+	rendered = stripANSI(rendered)
 	if !strings.Contains(rendered, "PREREQUISITES") {
 		t.Fatalf("expected prerequisites heading, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "git is installed: ok") {
+	if !strings.Contains(rendered, "• git is installed: ok") {
 		t.Fatalf("expected git checklist item, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "bash is installed") {
@@ -241,8 +243,9 @@ func TestCheckPrereqsAllowsMissingMake(t *testing.T) {
 	if err := checkPrereqs(&out); err != nil {
 		t.Fatalf("checkPrereqs() error = %v", err)
 	}
-	if !strings.Contains(out.String(), "missing, so create will run bash ./scripts/up.sh instead") {
-		t.Fatalf("expected make fallback guidance, got:\n%s", out.String())
+	rendered := stripANSI(out.String())
+	if !strings.Contains(rendered, "missing, so create will run bash ./scripts/up.sh instead") {
+		t.Fatalf("expected make fallback guidance, got:\n%s", rendered)
 	}
 }
 
@@ -270,8 +273,9 @@ func TestCheckPrereqsFailsEarly(t *testing.T) {
 	if !strings.Contains(err.Error(), "git is installed") {
 		t.Fatalf("expected git failure in error, got %v", err)
 	}
-	if !strings.Contains(out.String(), "git is installed: failed") {
-		t.Fatalf("expected failed checklist line, got:\n%s", out.String())
+	rendered := stripANSI(out.String())
+	if !strings.Contains(rendered, "• git is installed: failed") {
+		t.Fatalf("expected failed checklist line, got:\n%s", rendered)
 	}
 }
 
@@ -506,4 +510,10 @@ func newCreateCommandForTest() *cobra.Command {
 	corecomponent.AddDrupalRootfsFlag(cmd, &createDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	cmd.Flags().String("isle-file-system-uri", "private", "")
 	return cmd
+}
+
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripANSI(value string) string {
+	return ansiPattern.ReplaceAllString(value, "")
 }
