@@ -2,41 +2,6 @@
 
 A [sitectl](https://github.com/libops/sitectl) plugin for Islandora (ISLE) utilities and migration tools.
 
-## Component States
-
-Some ISLE capabilities span more than one file or service. Changing a feature or stack state may require updates to:
-
-- `docker-compose.yml`
-- Drupal `config/sync` YAML
-- related follow-up actions such as config import
-
-This is useful for cases like `fcrepo` and `blazegraph`, but also for stack choices such as a minimal Drupal install versus a fuller stack with services like Solr, Memcached, Redis, or a specific database backend.
-
-The default path is still the upstream project as-is. Feature state changes are an advanced, explicit override for users who want to customize that baseline.
-
-Because these changes can be destructive, reconciliation is local-only and protected by a confirmation gate. Use `--yolo` only for automation or when you have already reviewed the impact.
-
-Each component definition also records operational metadata so commands can explain whether a change is idempotent, whether it requires a backfill, whether it requires a hard data migration before it is safe to apply, and which Drupal modules must be present when the component is enabled. Module dependencies can be marked as strict or enable-only so future component transitions do not assume every disabled component must uninstall its modules.
-
-## Planned Components
-
-Current components:
-
-- `fcrepo`
-- `blazegraph`
-
-Planned components include:
-
-- PostgreSQL
-- Memcached
-- Redis
-- self-managed TLS certificates
-- Let's Encrypt TLS certificates
-- load balancer support
-- `mergepdf`
-
-These will be added incrementally in separate PRs as their component definitions and migration requirements are finalized.
-
 ## Install
 
 ### Homebrew
@@ -83,9 +48,9 @@ Use "sitectl isle [command] --help" for more information about a command.
 
 ### sitectl
 
-If you need to make code changes to sitectl, which provides a lot of helpers this plugin uses, you can use a local, edited copy of sitectl with go.work files. Use `make work` to create a local `go.work` that points this plugin at `../sitectl`. The file is intentionally gitignored so local development can use unreleased sitectl features without affecting CI or releases.
+If you need to make code changes to sitectl, which provides a lot of helpers this plugin uses, you can use a local/altered copy of sitectl with go.work files. Use `make work` to create a local `go.work` that points this plugin at `../sitectl`. The file is intentionally gitignored so local development can use unreleased sitectl features without affecting CI or releases.
 
-Use `./scripts/check.sh` locally for the same lint and test invocation used in GitHub Actions.
+Use `make lint test` locally for the same lint and test invocation used in GitHub Actions.
 
 Use `make integration-test FCREPO_STATE=off ISLE_FILE_SYSTEM_URI=public SITECTL_CONTEXT=isle-test` to run the end-to-end `create` test locally. This is the same script the GitHub Actions integration workflow runs.
 
@@ -94,3 +59,40 @@ Use `make integration-test FCREPO_STATE=off ISLE_FILE_SYSTEM_URI=public SITECTL_
 Both `create` and `component status` accept `--drupal-rootfs`. The shared `sitectl` component SDK defaults this to `./`, and the ISLE plugin overrides the default to `./drupal/rootfs/var/www/drupal` so Drupal-specific paths like `composer.json` and `config/sync` resolve correctly for the site template layout.
 
 Use `sitectl isle component status --path /path/to/project` to inspect whether the currently supported components are on, off, or drifted.
+
+
+### Component States
+
+Some ISLE capabilities span more than one file or service. Changing a feature or stack state may require updates to:
+
+- Service(s), volume(s), secret(s), service environment variables in `docker-compose.yml`
+- Drupal `config/sync` YAML
+- related follow-up actions such as config import
+- helper text to make clear what turning a component on/off will impact future repository operations and maintenance
+
+So components are useful for cases like `fcrepo` and `blazegraph`, but also for stack choices such as a minimal Drupal install versus a fuller stack with services like Solr, Memcached, Redis, or a specific database backend.
+
+The default path is still the upstream project as-is. Component state changes are an advanced, explicit override for users who want to customize that baseline.
+
+Because these changes can be destructive, reconciliation is local-only and protected by a confirmation gate. Use `--yolo` only for automation or when you have already reviewed the impact.
+
+Each component definition also records operational metadata so commands can explain whether a change is idempotent, whether it requires a backfill, whether it requires a hard data migration before it is safe to apply, and which Drupal modules must be present when the component is enabled. Module dependencies can be marked as strict or enable-only so future component transitions do not assume every disabled component must uninstall its modules.
+
+### Planned Components
+
+Current components:
+
+- `fcrepo`
+- `blazegraph`
+
+Planned components include:
+
+- PostgreSQL
+- Memcached
+- Redis
+- self-managed TLS certificates
+- Let's Encrypt TLS certificates
+- load balancer support
+- `mergepdf`
+
+These will be added incrementally in separate PRs as their component definitions and migration requirements are finalized.
