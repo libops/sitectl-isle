@@ -34,7 +34,7 @@ func init() {
 	componentSetCmd.Flags().StringVar(&statusPath, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
 	corecomponent.AddDrupalRootfsFlag(componentSetCmd, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	componentSetCmd.Flags().BoolVar(&componentSetYolo, "yolo", false, "Apply the component change without confirmation")
-	componentSetCmd.Flags().StringVar(&componentSetTLSMode, "tls-mode", "", "TLS mode for isle-tls or isle-tls-override. Valid values are self-managed, mkcert, letsencrypt, and for isle-tls-override also http.")
+	componentSetCmd.Flags().StringVar(&componentSetTLSMode, "tls-mode", "", "TLS mode for the selected component. Valid values are http, self-managed, mkcert, or letsencrypt.")
 	componentCmd.AddCommand(componentSetCmd)
 }
 
@@ -184,8 +184,8 @@ func componentSetPrompt(def corecomponent.Definition, state corecomponent.State)
 	if strings.TrimSpace(summary) != "" {
 		body = append(body, "", summary)
 	}
-	if (def.Name == "isle-tls" || def.Name == "isle-tls-override") && strings.TrimSpace(componentSetTLSMode) != "" {
-		body = append(body, "", fmt.Sprintf("Requested mode: `%s`.", componentSetTLSMode))
+	if requestedMode := componentRequestedMode(def.Name); strings.TrimSpace(requestedMode) != "" {
+		body = append(body, "", fmt.Sprintf("Requested mode: `%s`.", requestedMode))
 	}
 	if migration != "" && migration != corecomponent.DataMigrationNone {
 		body = append(body, "", fmt.Sprintf("Migration impact: `%s`.", migration))
@@ -208,7 +208,9 @@ func runTLSComponentSet(cmd *cobra.Command, projectDir, name string, state corec
 			return fmt.Errorf("isle-tls=on requires --tls-mode self-managed, mkcert, or letsencrypt")
 		}
 		if state == corecomponent.StateOff {
-			mode = traefikconfig.ModeHTTP
+			if strings.TrimSpace(mode) == "" {
+				mode = traefikconfig.ModeHTTP
+			}
 		}
 		if err := traefikconfig.ApplyProd(projectDir, mode); err != nil {
 			return err
@@ -227,6 +229,17 @@ func runTLSComponentSet(cmd *cobra.Command, projectDir, name string, state corec
 
 	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", name, state)
 	return nil
+}
+
+func componentRequestedMode(name string) string {
+	switch name {
+	case "isle-tls":
+		return componentSetTLSMode
+	case "isle-tls-override":
+		return componentSetTLSMode
+	default:
+		return ""
+	}
 }
 
 func confirmComponentSet(prompt string) (bool, error) {
