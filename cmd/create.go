@@ -33,6 +33,7 @@ var (
 	createEnsureLocalContext = ensureLocalContext
 	createApply              = createpkg.Apply
 	createRunProjectCommand  = defaultRunProjectCommand
+	createBootstrapCheckout  = bootstrapCheckout
 	createRunStartup         = runStartup
 	createCheckPrereqs       = checkPrereqs
 	createLookPath           = exec.LookPath
@@ -180,12 +181,18 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureClonedCheckout(cmd.OutOrStdout(), req.TemplateRepo, req.TemplateBranch, ctx.ProjectDir); err != nil {
+	cloned, err := ensureClonedCheckout(cmd.OutOrStdout(), req.TemplateRepo, req.TemplateBranch, ctx.ProjectDir)
+	if err != nil {
 		return err
 	}
 	req.ContextName = ctx.Name
 	req.Path = ctx.ProjectDir
 	req.Apply.Path = ctx.ProjectDir
+	if cloned {
+		if err := createBootstrapCheckout(cmd.OutOrStdout(), ctx.ProjectDir); err != nil {
+			return err
+		}
+	}
 	if err := createApply(req.Apply); err != nil {
 		printCreateFailureSummary(cmd.OutOrStdout(), req)
 		return err
@@ -375,24 +382,24 @@ func checkPrereqs(out io.Writer) error {
 	return nil
 }
 
-func ensureClonedCheckout(out io.Writer, repoURL, branch, projectDir string) error {
+func ensureClonedCheckout(out io.Writer, repoURL, branch, projectDir string) (bool, error) {
 	if repoURL == "" {
-		return fmt.Errorf("template repo cannot be empty")
+		return false, fmt.Errorf("template repo cannot be empty")
 	}
 	if projectDir == "" {
-		return fmt.Errorf("project directory cannot be empty")
+		return false, fmt.Errorf("project directory cannot be empty")
 	}
 
 	entries, err := os.ReadDir(projectDir)
 	if err == nil && len(entries) > 0 {
-		return nil
+		return false, nil
 	}
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read project directory %q: %w", projectDir, err)
+		return false, fmt.Errorf("read project directory %q: %w", projectDir, err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(projectDir), 0o755); err != nil {
-		return fmt.Errorf("create parent directory for %q: %w", projectDir, err)
+		return false, fmt.Errorf("create parent directory for %q: %w", projectDir, err)
 	}
 
 	parent := corecomponent.RenderSection(
@@ -401,13 +408,44 @@ func ensureClonedCheckout(out io.Writer, repoURL, branch, projectDir string) err
 	)
 	fmt.Fprintln(out, parent)
 	fmt.Fprintln(out)
-	return runWithSpinner(out, "Cloning template repository", func() error {
+	if err := runWithSpinner(out, "Cloning template repository", func() error {
 		return createCloneTemplateRepo(plugin.GitTemplateOptions{
 			TemplateRepo:   repoURL,
 			TemplateBranch: branch,
 			ProjectDir:     projectDir,
 			Quiet:          true,
 		})
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func bootstrapCheckout(out io.Writer, projectDir string) error {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, corecomponent.RenderSection(
+		"Git bootstrap",
+		fmt.Sprintf("Recording the pristine template checkout in %s before applying any sitectl-isle changes.", projectDir),
+	))
+	fmt.Fprintln(out)
+
+	return runWithSpinner(out, "Creating initial git commit", func() error {
+		if err := createRunProjectCommand(projectDir, io.Discard, io.Discard, "git", "add", "."); err != nil {
+			return fmt.Errorf("stage initial checkout: %w", err)
+		}
+		if err := createRunProjectCommand(
+			projectDir,
+			io.Discard,
+			io.Discard,
+			"git",
+			"-c", "user.name=sitectl-isle",
+			"-c", "user.email=sitectl-isle@localhost",
+			"commit",
+			"-m", "initial commit.",
+		); err != nil {
+			return fmt.Errorf("create initial commit: %w", err)
+		}
+		return nil
 	})
 }
 

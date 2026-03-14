@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	corecomponent "github.com/libops/sitectl/pkg/component"
@@ -313,9 +314,9 @@ func TestEnsureClonedCheckoutClonesEmptyDirectory(t *testing.T) {
 		createCloneTemplateRepo = oldClone
 	})
 
-	var cloned bool
+	var cloneInvoked bool
 	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
-		cloned = true
+		cloneInvoked = true
 		if opts.TemplateRepo != defaultTemplateRepo {
 			t.Fatalf("expected repo %q, got %q", defaultTemplateRepo, opts.TemplateRepo)
 		}
@@ -331,10 +332,14 @@ func TestEnsureClonedCheckoutClonesEmptyDirectory(t *testing.T) {
 		return os.MkdirAll(opts.ProjectDir, 0o755)
 	}
 
-	if err := ensureClonedCheckout(io.Discard, defaultTemplateRepo, defaultTemplateBranch, projectDir); err != nil {
+	cloned, err := ensureClonedCheckout(io.Discard, defaultTemplateRepo, defaultTemplateBranch, projectDir)
+	if err != nil {
 		t.Fatalf("ensureClonedCheckout() error = %v", err)
 	}
 	if !cloned {
+		t.Fatal("expected checkout to be reported as cloned")
+	}
+	if !cloneInvoked {
 		t.Fatal("expected clone to run")
 	}
 }
@@ -359,8 +364,12 @@ func TestEnsureClonedCheckoutSkipsNonEmptyDirectory(t *testing.T) {
 		return nil
 	}
 
-	if err := ensureClonedCheckout(io.Discard, defaultTemplateRepo, defaultTemplateBranch, projectDir); err != nil {
+	cloned, err := ensureClonedCheckout(io.Discard, defaultTemplateRepo, defaultTemplateBranch, projectDir)
+	if err != nil {
 		t.Fatalf("ensureClonedCheckout() error = %v", err)
+	}
+	if cloned {
+		t.Fatal("did not expect checkout to be reported as cloned")
 	}
 }
 
@@ -369,12 +378,14 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	oldEnsure := createEnsureLocalContext
 	oldClone := createCloneTemplateRepo
 	oldApply := createApply
+	oldBootstrap := createBootstrapCheckout
 	oldRunStartup := createRunStartup
 	t.Cleanup(func() {
 		commandSDK = oldSDK
 		createEnsureLocalContext = oldEnsure
 		createCloneTemplateRepo = oldClone
 		createApply = oldApply
+		createBootstrapCheckout = oldBootstrap
 		createRunStartup = oldRunStartup
 	})
 
@@ -383,8 +394,18 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	createEnsureLocalContext = func(_ *plugin.SDK, req createRequest) (*config.Context, error) {
 		return &config.Context{Name: "isle-local-2", ProjectDir: projectDir}, nil
 	}
-	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error { return nil }
+	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
+		return os.MkdirAll(opts.ProjectDir, 0o755)
+	}
 	createApply = func(opts createpkg.Options) error { return nil }
+	var bootstrapped bool
+	createBootstrapCheckout = func(_ io.Writer, gotProjectDir string) error {
+		bootstrapped = true
+		if gotProjectDir != projectDir {
+			t.Fatalf("expected bootstrap in %q, got %q", projectDir, gotProjectDir)
+		}
+		return nil
+	}
 
 	var ranStartup bool
 	createRunStartup = func(_ io.Writer, ctx *config.Context) error {
@@ -420,6 +441,9 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	if !ranStartup {
 		t.Fatal("expected startup to run")
 	}
+	if !bootstrapped {
+		t.Fatal("expected bootstrap to run for a fresh clone")
+	}
 
 	rendered := out.String()
 	if !strings.Contains(rendered, "cd '") {
@@ -444,12 +468,14 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	oldEnsure := createEnsureLocalContext
 	oldClone := createCloneTemplateRepo
 	oldApply := createApply
+	oldBootstrap := createBootstrapCheckout
 	oldRunStartup := createRunStartup
 	t.Cleanup(func() {
 		commandSDK = oldSDK
 		createEnsureLocalContext = oldEnsure
 		createCloneTemplateRepo = oldClone
 		createApply = oldApply
+		createBootstrapCheckout = oldBootstrap
 		createRunStartup = oldRunStartup
 	})
 
@@ -458,8 +484,18 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	createEnsureLocalContext = func(_ *plugin.SDK, req createRequest) (*config.Context, error) {
 		return &config.Context{Name: "isle-local", ProjectDir: projectDir}, nil
 	}
-	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error { return nil }
+	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
+		return os.MkdirAll(opts.ProjectDir, 0o755)
+	}
 	createApply = func(opts createpkg.Options) error { return nil }
+	var bootstrapped bool
+	createBootstrapCheckout = func(_ io.Writer, gotProjectDir string) error {
+		bootstrapped = true
+		if gotProjectDir != projectDir {
+			t.Fatalf("expected bootstrap in %q, got %q", projectDir, gotProjectDir)
+		}
+		return nil
+	}
 	createRunStartup = func(_ io.Writer, ctx *config.Context) error {
 		t.Fatal("did not expect startup to run")
 		return nil
@@ -485,6 +521,9 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runCreateCommand() error = %v", err)
 	}
+	if !bootstrapped {
+		t.Fatal("expected bootstrap to run for a fresh clone")
+	}
 
 	rendered := out.String()
 	if !strings.Contains(rendered, "--setup-only") {
@@ -495,6 +534,45 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "prepared and left stopped because --setup-only was used") {
 		t.Fatalf("expected setup-only summary, got:\n%s", rendered)
+	}
+}
+
+func TestBootstrapCheckoutRunsGitAddAndInitialCommit(t *testing.T) {
+	projectDir := t.TempDir()
+
+	oldRunProject := createRunProjectCommand
+	oldSleep := createSleep
+	t.Cleanup(func() {
+		createRunProjectCommand = oldRunProject
+		createSleep = oldSleep
+	})
+
+	createSleep = func(time.Duration) {}
+
+	var commands [][]string
+	createRunProjectCommand = func(gotProjectDir string, stdout, stderr io.Writer, name string, args ...string) error {
+		if gotProjectDir != projectDir {
+			t.Fatalf("expected project dir %q, got %q", projectDir, gotProjectDir)
+		}
+		if name != "git" {
+			t.Fatalf("expected git command, got %q", name)
+		}
+		commands = append(commands, append([]string{name}, args...))
+		return nil
+	}
+
+	if err := bootstrapCheckout(io.Discard, projectDir); err != nil {
+		t.Fatalf("bootstrapCheckout() error = %v", err)
+	}
+
+	if len(commands) != 2 {
+		t.Fatalf("expected 2 git commands, got %#v", commands)
+	}
+	if got := strings.Join(commands[0], " "); got != "git add ." {
+		t.Fatalf("expected first command `git add .`, got %q", got)
+	}
+	if got := strings.Join(commands[1], " "); got != "git -c user.name=sitectl-isle -c user.email=sitectl-isle@localhost commit -m initial commit." {
+		t.Fatalf("unexpected commit command %q", got)
 	}
 }
 
