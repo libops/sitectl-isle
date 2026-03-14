@@ -113,6 +113,7 @@ services:
     environment:
       DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.example/fcrepo/rest/
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: ""
+      DRUPAL_ENABLE_HTTPS: "false"
   fcrepo:
     image: islandora/fcrepo6
 volumes:
@@ -138,6 +139,48 @@ volumes:
 	}
 	if !strings.Contains(err.Error(), `component "blazegraph" is drifted`) {
 		t.Fatalf("expected blazegraph drift error, got %v", err)
+	}
+}
+
+func TestRunComponentSetAppliesISLETLSOverrideHTTPOverride(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldTLSMode := componentSetTLSMode
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentSetTLSMode = oldTLSMode
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+	componentSetTLSMode = "http"
+
+	var out bytes.Buffer
+	cmd := componentSetCmd
+	cmd.SetOut(&out)
+
+	if err := runComponentSet(cmd, "isle-tls-override", "on"); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "isle-tls-override: on") {
+		t.Fatalf("expected component output, got:\n%s", rendered)
+	}
+
+	devOverride, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.dev.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(docker-compose.dev.yml) error = %v", err)
+	}
+	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") {
+		t.Fatalf("expected dev http override, got:\n%s", string(devOverride))
 	}
 }
 

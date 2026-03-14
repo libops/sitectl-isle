@@ -8,6 +8,7 @@ import (
 
 	"github.com/libops/sitectl-isle/pkg/components"
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
+	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/spf13/cobra"
@@ -15,6 +16,7 @@ import (
 
 var (
 	componentSetYolo      bool
+	componentSetTLSMode   string
 	componentSetInput     = config.GetInput
 	componentApplyOptions = createpkg.Apply
 )
@@ -32,6 +34,7 @@ func init() {
 	componentSetCmd.Flags().StringVar(&statusPath, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
 	corecomponent.AddDrupalRootfsFlag(componentSetCmd, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	componentSetCmd.Flags().BoolVar(&componentSetYolo, "yolo", false, "Apply the component change without confirmation")
+	componentSetCmd.Flags().StringVar(&componentSetTLSMode, "tls-mode", "", "TLS mode for the selected component. Valid values are http, self-managed, mkcert, or letsencrypt.")
 	componentCmd.AddCommand(componentSetCmd)
 }
 
@@ -55,10 +58,7 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 		return fmt.Errorf("unknown component %q", name)
 	}
 
-	statuses, err := corecomponent.DetectComponentStatuses(ctx, ctx.ProjectDir, corecomponent.DetectOptions{
-		ComposeRoot:  ctx.ProjectDir,
-		DrupalRootfs: statusDrupalRootfs,
-	}, components.Fcrepo(components.TemplateSource{}), components.Blazegraph(components.TemplateSource{}))
+	statuses, err := detectComponentViews(ctx.ProjectDir, statusDrupalRootfs)
 	if err != nil {
 		return err
 	}
@@ -88,6 +88,10 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 		if !confirmed {
 			return fmt.Errorf("component change cancelled")
 		}
+	}
+
+	if name == "isle-tls" || name == "isle-tls-override" {
+		return runTLSComponentSet(cmd, ctx.ProjectDir, name, state)
 	}
 
 	opts := createpkg.Options{
@@ -120,7 +124,7 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 }
 
 func componentDefinitions() map[string]corecomponent.Definition {
-	defs := orderedComponentDefinitions()
+	defs := managedComponentDefinitions()
 	out := make(map[string]corecomponent.Definition, len(defs))
 	for _, def := range defs {
 		out[def.Name] = def
@@ -133,6 +137,15 @@ func orderedComponentDefinitions() []corecomponent.Definition {
 		components.Fcrepo(components.TemplateSource{}),
 		components.Blazegraph(components.TemplateSource{}),
 	}
+}
+
+func managedComponentDefinitions() []corecomponent.Definition {
+	defs := append([]corecomponent.Definition{}, orderedComponentDefinitions()...)
+	defs = append(defs,
+		components.ISLEEntrypoint(),
+		components.ISLEEntrypointOverride(),
+	)
+	return defs
 }
 
 func resolveComponentCreateState(componentName, targetName string, targetState corecomponent.State, current map[string]corecomponent.DetectedState) corecomponent.State {
@@ -164,17 +177,69 @@ func componentSetPrompt(def corecomponent.Definition, state corecomponent.State)
 	if state == corecomponent.StateOff {
 		migration = def.Behavior.Disable.DataMigration
 	}
-	lines := []string{
-		fmt.Sprintf("Set %s=%s?", def.Name, state),
+
+	body := []string{
+		fmt.Sprintf("Set `%s` to `%s`.", def.Name, state),
 	}
 	if strings.TrimSpace(summary) != "" {
-		lines = append(lines, summary)
+		body = append(body, "", summary)
+	}
+	if requestedMode := componentRequestedMode(def.Name); strings.TrimSpace(requestedMode) != "" {
+		body = append(body, "", fmt.Sprintf("Requested mode: `%s`.", requestedMode))
 	}
 	if migration != "" && migration != corecomponent.DataMigrationNone {
-		lines = append(lines, fmt.Sprintf("Migration impact: %s.", migration))
+		body = append(body, "", fmt.Sprintf("Migration impact: `%s`.", migration))
 	}
-	lines = append(lines, "This updates docker compose and Drupal config. Continue? [y/N]: ")
-	return strings.Join(lines, "\n"), nil
+	body = append(body, "", "This updates docker compose and Drupal config.")
+
+	section := corecomponent.RenderSection("Confirm component change", strings.Join(body, "\n"))
+	prompt := corecomponent.RenderPromptLine("Continue? [y/N]: ")
+	return section + "\n\n" + prompt, nil
+}
+
+func runTLSComponentSet(cmd *cobra.Command, projectDir, name string, state corecomponent.State) error {
+	switch name {
+	case "isle-tls":
+		mode := componentSetTLSMode
+		if state == corecomponent.StateOn && strings.TrimSpace(mode) == "" {
+			mode = traefikconfig.ModeSelfManaged
+		}
+		if state == corecomponent.StateOn && mode == traefikconfig.ModeHTTP {
+			return fmt.Errorf("isle-tls=on requires --tls-mode self-managed, mkcert, or letsencrypt")
+		}
+		if state == corecomponent.StateOff {
+			if strings.TrimSpace(mode) == "" {
+				mode = traefikconfig.ModeHTTP
+			}
+		}
+		if err := traefikconfig.ApplyProd(projectDir, mode); err != nil {
+			return err
+		}
+	case "isle-tls-override":
+		mode := componentSetTLSMode
+		if state == corecomponent.StateOn && strings.TrimSpace(mode) == "" {
+			mode = traefikconfig.ModeMkcert
+		}
+		if err := traefikconfig.ApplyDev(projectDir, state == corecomponent.StateOn, mode); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported entrypoint component %q", name)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", name, state)
+	return nil
+}
+
+func componentRequestedMode(name string) string {
+	switch name {
+	case "isle-tls":
+		return componentSetTLSMode
+	case "isle-tls-override":
+		return componentSetTLSMode
+	default:
+		return ""
+	}
 }
 
 func confirmComponentSet(prompt string) (bool, error) {

@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: integration-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   create-fcrepo:
     runs-on: ubuntu-24.04
@@ -22,6 +26,11 @@ jobs:
         uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6
         with:
           go-version: ">=1.25.3"
+
+      - name: setup git identity
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
 
       - name: Run create integration test
         run: make integration-test FCREPO_STATE=${{ matrix.fcrepo_state }} BLAZEGRAPH_STATE=${{ matrix.blazegraph_state }}
