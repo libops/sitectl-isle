@@ -19,27 +19,25 @@ import (
 )
 
 var (
-	createPath               string
-	createDrupalRootfs       string
-	createISLEFileSystemURI  string
-	createTemplateRepo       string
-	createTemplateBranch     string
-	createGitRemoteURL       string
-	createGitRemoteName      string
-	createTemplateRemoteName string
-	createSetDefaultContext  bool
-	createSetupOnly          bool
-	createInput              = config.GetInput
-	createCloneTemplateRepo  = func(opts plugin.GitTemplateOptions) error {
+	createPath              string
+	createDrupalRootfs      string
+	createISLEFileSystemURI string
+	createTemplateRepo      string
+	createTemplateBranch    string
+	createSetDefaultContext bool
+	createSetupOnly         bool
+	createInput             = config.GetInput
+	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
 		return commandSDK.CloneTemplateRepo(opts)
-	}
-	createConfigureTemplateRemotes = func(opts plugin.GitTemplateOptions) error {
-		return commandSDK.ConfigureTemplateRemotes(opts)
 	}
 	createEnsureLocalContext = ensureLocalContext
 	createApply              = createpkg.Apply
 	createRunProjectCommand  = defaultRunProjectCommand
 	createRunStartup         = runStartup
+	createCheckPrereqs       = checkPrereqs
+	createLookPath           = exec.LookPath
+	createRunCheckCommand    = runCheckCommand
+	createSleep              = time.Sleep
 )
 
 const (
@@ -48,30 +46,30 @@ const (
 )
 
 type createRequest struct {
-	ContextName        string
-	Path               string
-	DrupalRootfs       string
-	TemplateRepo       string
-	TemplateBranch     string
-	GitRemoteURL       string
-	GitRemoteName      string
-	TemplateRemoteName string
-	SetDefaultContext  bool
-	SetupOnly          bool
-	Apply              createpkg.Options
+	ContextName       string
+	Path              string
+	DrupalRootfs      string
+	TemplateRepo      string
+	TemplateBranch    string
+	SetDefaultContext bool
+	SetupOnly         bool
+	Apply             createpkg.Options
 }
 
 var createCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a a new ISLE install",
-	Long: `Use Islandora' ISLE Site Template to install your own running version of Islandora.
+	Long: `Use Islandora's ISLE Site Template to install Islandora.
 
-This command will walk you through setting up Islandora.
+This command will walk you through setting up Islandora. After you answer a few questions, an Islandora site will be running on your machine.
 
-After you answer a few questions, an Islandora site will be running on your machine, so be sure docker is installed and running.
+Be sure docker is installed and running.
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		printIslandoraIntro(cmd, cmd.OutOrStdout())
+		if err := createCheckPrereqs(cmd.OutOrStdout()); err != nil {
+			return err
+		}
 		req, err := resolveCreateRequest(cmd)
 		if err != nil {
 			return err
@@ -84,9 +82,6 @@ func init() {
 	createCmd.Flags().StringVar(&createPath, "path", ".", "Path to the checked out isle-site-template project")
 	createCmd.Flags().StringVar(&createTemplateRepo, "template-repo", defaultTemplateRepo, "Source git repository to clone for the site template")
 	createCmd.Flags().StringVar(&createTemplateBranch, "template-branch", defaultTemplateBranch, "Git branch or ref to clone from the template repository")
-	createCmd.Flags().StringVar(&createGitRemoteURL, "git-remote-url", "", "Where you will host git. Git repository URL to set as the working checkout remote after cloning")
-	createCmd.Flags().StringVar(&createGitRemoteName, "git-remote-name", "origin", "Name of the user-facing git remote to configure when --git-remote-url is set")
-	createCmd.Flags().StringVar(&createTemplateRemoteName, "template-remote-name", "upstream", "Name to keep for the template repository remote when --git-remote-url is set")
 	createCmd.Flags().BoolVar(&createSetDefaultContext, "default-context", false, "Set the created sitectl context as the default context")
 	createCmd.Flags().BoolVar(&createSetupOnly, "setup-only", false, "Create and customize the checkout, but do not run make up")
 	corecomponent.AddCreateFlags(createCmd, createComponentOptions()...)
@@ -133,26 +128,15 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 		}
 	}
 
-	gitRemoteURL := createGitRemoteURL
-	if !cmd.Flags().Changed("git-remote-url") {
-		gitRemoteURL, err = promptGitRemoteURL()
-		if err != nil {
-			return createRequest{}, err
-		}
-	}
-
 	return createRequest{
-		ContextName:        contextName,
-		Path:               requestPath,
-		DrupalRootfs:       createDrupalRootfs,
-		TemplateRepo:       createTemplateRepo,
-		TemplateBranch:     createTemplateBranch,
-		GitRemoteURL:       gitRemoteURL,
-		GitRemoteName:      createGitRemoteName,
-		TemplateRemoteName: createTemplateRemoteName,
-		SetDefaultContext:  createSetDefaultContext,
-		SetupOnly:          setupOnly,
-		Apply:              opts,
+		ContextName:       contextName,
+		Path:              requestPath,
+		DrupalRootfs:      createDrupalRootfs,
+		TemplateRepo:      createTemplateRepo,
+		TemplateBranch:    createTemplateBranch,
+		SetDefaultContext: createSetDefaultContext,
+		SetupOnly:         setupOnly,
+		Apply:             opts,
 	}, nil
 }
 
@@ -168,7 +152,12 @@ func createComponentOptions() []corecomponent.CreateOption {
 func promptISLEFileSystemURI(defaultValue string) (string, error) {
 	question := corecomponent.RenderSection(
 		"File system URI",
-		fmt.Sprintf("When fcrepo is off, choose the Drupal filesystem URI to use for stored files. Common values are %q and %q.", createpkg.PublicISLEFileSystemURI, createpkg.PrivateISLEFileSystemURI),
+		fmt.Sprintf(`Since you chose to disable fedora, choose the Drupal filesystem URI to use for stored files. What you supply here needs to be a valid Drupal URI scheme.
+
+Common values are %q and %q.
+
+N.B. if you choose "public" as your URI scheme, you will not be able to provide access controls to files uploaded to Islandora (e.g. embargoes, local access, etc.)
+`, createpkg.PublicISLEFileSystemURI, createpkg.PrivateISLEFileSystemURI),
 	)
 	prompt := corecomponent.RenderPromptLine(fmt.Sprintf("Choose isle-file-system-uri [%s]: ", defaultValue))
 	input, err := createInput(append(strings.Split(question, "\n"), "", prompt)...)
@@ -180,19 +169,6 @@ func promptISLEFileSystemURI(defaultValue string) (string, error) {
 		return defaultValue, nil
 	}
 	return value, nil
-}
-
-func promptGitRemoteURL() (string, error) {
-	question := corecomponent.RenderSection(
-		"Git remote URL",
-		"Set the Git remote URL for your site repository. Leave this blank to keep the template repository as origin.",
-	)
-	prompt := corecomponent.RenderPromptLine("Git remote URL: ")
-	input, err := createInput(append(strings.Split(question, "\n"), "", prompt)...)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(input), nil
 }
 
 func runCreateCommand(cmd *cobra.Command, req createRequest) error {
@@ -207,10 +183,6 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	if err := ensureClonedCheckout(cmd.OutOrStdout(), req.TemplateRepo, req.TemplateBranch, ctx.ProjectDir); err != nil {
 		return err
 	}
-	if err := configureGitRemotes(req, ctx.ProjectDir); err != nil {
-		return err
-	}
-
 	req.ContextName = ctx.Name
 	req.Path = ctx.ProjectDir
 	req.Apply.Path = ctx.ProjectDir
@@ -248,14 +220,15 @@ func ensureLocalContext(sdk *plugin.SDK, req createRequest) (*config.Context, er
 		SetDefault:        req.SetDefaultContext,
 		Input:             createInput,
 		ContextNamePrompt: append(
-			strings.Split(corecomponent.RenderSection("sitectl context name", `Choose the sitectl context name to save for this local checkout.
+			strings.Split(corecomponent.RenderSection("sitectl context name", `Enter the sitectl context name to save for this local checkout.
 This is only important if you'll be running multiple ISLE installs on this machine. This is just a short label so you can easily identify multiple ISLE`), "\n"),
 			"",
 			corecomponent.RenderPromptLine("Context name [%s]: "),
 		),
 		ProjectDirPrompt: append(
-			strings.Split(corecomponent.RenderSection("Project directory", `Choose the full directory path where this ISLE install will live on your machine.
-ISLE Site Template will be cloned into this directory, so make sure it's empty of doesn't exist yet.`), "\n"),
+			strings.Split(corecomponent.RenderSection("Project directory", `Enter the full directory path where ISLE Site Template will be cloned.
+If the directory doesn't exist it will be created.
+If it does exist, ensure the directory is empty.`), "\n"),
 			"",
 			corecomponent.RenderPromptLine("Project directory [%s]: "),
 		),
@@ -263,6 +236,8 @@ ISLE Site Template will be cloned into this directory, so make sure it's empty o
 }
 
 func runStartup(out io.Writer, ctx *config.Context) error {
+	commandLabel, commandName, commandArgs := startupCommand()
+	cleanupLabel, _, _ := cleanupCommand()
 	logPath, err := startupLogPath(ctx.Name)
 	if err != nil {
 		return fmt.Errorf("resolve startup log path: %w", err)
@@ -278,13 +253,25 @@ func runStartup(out io.Writer, ctx *config.Context) error {
 	defer logFile.Close()
 
 	fmt.Fprintln(out, corecomponent.RenderSection(
-		"Install",
-		"The site install is now starting. Docker must be running, network access is required so Docker can pull images, and Docker Buildx is required because ISLE will build the Drupal container locally. Once docker compose brings the containers up, the site will install automatically and be configured using the Islandora starter site. Output is being written to a log file while the terminal shows progress. Expect your web browser to open when the site is ready.",
+		"Islandora install is now running",
+		fmt.Sprintf(`ISLE will now run %s from the checked out template.
+While this runs, Docker will pull images over the network and build the Drupal container locally before Docker Compose starts the stack.
+
+Once docker compose brings the containers up, the Islandora Drupal site will install automatically and be configured using the Islandora starter site.
+
+Output is being written to a log file while the terminal shows progress. Expect your web browser to open when the site is ready.
+
+If you need to cancel, press Ctrl+C, then run:
+
+  cd %s
+  %s
+
+This will completely stop and destroy the setup.`, commandLabel, shellPath(ctx.ProjectDir), cleanupLabel),
 	))
 	fmt.Fprintln(out)
 
-	if err := runWithSpinner(out, "Running make init up", func() error {
-		return createRunProjectCommand(ctx.ProjectDir, logFile, logFile, "make", "init", "up")
+	if err := runWithSpinner(out, "Starting the Islandora stack", func() error {
+		return createRunProjectCommand(ctx.ProjectDir, logFile, logFile, commandName, commandArgs...)
 	}); err != nil {
 		tail, tailErr := tailLines(logPath, 20)
 		fmt.Fprintln(out)
@@ -295,7 +282,7 @@ func runStartup(out io.Writer, ctx *config.Context) error {
 		if tailErr == nil && strings.TrimSpace(tail) != "" {
 			fmt.Fprintln(out, tail)
 		}
-		return fmt.Errorf("run make up: %w", err)
+		return fmt.Errorf("run %s: %w", commandLabel, err)
 	}
 
 	fmt.Fprintln(out)
@@ -303,6 +290,87 @@ func runStartup(out io.Writer, ctx *config.Context) error {
 		"Install log",
 		fmt.Sprintf("Startup logs were saved to %s.", logPath),
 	))
+	fmt.Fprintln(out)
+	return nil
+}
+
+type prereqCheck struct {
+	label string
+	run   func() error
+}
+
+func checkPrereqs(out io.Writer) error {
+	fmt.Fprintln(out, corecomponent.RenderSection(
+		"Prerequisites",
+		"Checking the local tools and services needed to clone, build, and start ISLE.",
+	))
+	checks := []prereqCheck{
+		{
+			label: "git is installed",
+			run: func() error {
+				_, err := createLookPath("git")
+				if err != nil {
+					return fmt.Errorf("git is not installed or not on PATH")
+				}
+				return nil
+			},
+		},
+		{
+			label: "bash is installed",
+			run: func() error {
+				_, err := createLookPath("bash")
+				if err != nil {
+					return fmt.Errorf("bash is not installed or not on PATH")
+				}
+				return nil
+			},
+		},
+		{
+			label: "docker is installed",
+			run: func() error {
+				_, err := createLookPath("docker")
+				if err != nil {
+					return fmt.Errorf("docker is not installed or not on PATH")
+				}
+				return nil
+			},
+		},
+		{
+			label: "docker daemon is running",
+			run: func() error {
+				return createRunCheckCommand("docker", "info")
+			},
+		},
+		{
+			label: "docker compose is available",
+			run: func() error {
+				return createRunCheckCommand("docker", "compose", "version")
+			},
+		},
+		{
+			label: "docker buildx is available",
+			run: func() error {
+				return createRunCheckCommand("docker", "buildx", "version")
+			},
+		},
+	}
+
+	for _, check := range checks {
+		if err := check.run(); err != nil {
+			fmt.Fprintln(out, corecomponent.RenderChecklistItem(check.label, "failed", "fix this before continuing"))
+			return fmt.Errorf("prerequisite check failed for %s: %w", check.label, err)
+		}
+		fmt.Fprintln(out, corecomponent.RenderChecklistItem(check.label, "ok", ""))
+	}
+	if _, err := createLookPath("make"); err != nil {
+		fmt.Fprintln(out, corecomponent.RenderChecklistItem(
+			"make is installed",
+			"fallback",
+			"missing, so create will run bash ./scripts/up.sh instead",
+		))
+	} else {
+		fmt.Fprintln(out, corecomponent.RenderChecklistItem("make is installed", "ok", ""))
+	}
 	fmt.Fprintln(out)
 	return nil
 }
@@ -343,19 +411,6 @@ func ensureClonedCheckout(out io.Writer, repoURL, branch, projectDir string) err
 	})
 }
 
-func configureGitRemotes(req createRequest, projectDir string) error {
-	if req.GitRemoteURL == "" {
-		return nil
-	}
-
-	return createConfigureTemplateRemotes(plugin.GitTemplateOptions{
-		ProjectDir:         projectDir,
-		GitRemoteURL:       req.GitRemoteURL,
-		GitRemoteName:      req.GitRemoteName,
-		TemplateRemoteName: req.TemplateRemoteName,
-	})
-}
-
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -377,6 +432,28 @@ func defaultRunProjectCommand(projectDir string, stdout, stderr io.Writer, name 
 	return command.Run()
 }
 
+func runCheckCommand(name string, args ...string) error {
+	command := exec.Command(name, args...)
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	command.Env = os.Environ()
+	return command.Run()
+}
+
+func startupCommand() (string, string, []string) {
+	if _, err := createLookPath("make"); err == nil {
+		return "make up", "make", []string{"up"}
+	}
+	return "bash ./scripts/up.sh", "bash", []string{"./scripts/up.sh"}
+}
+
+func cleanupCommand() (string, string, []string) {
+	if _, err := createLookPath("make"); err == nil {
+		return "make clean", "make", []string{"clean"}
+	}
+	return "bash ./scripts/clean.sh", "bash", []string{"./scripts/clean.sh"}
+}
+
 func startupLogPath(contextName string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -387,18 +464,23 @@ func startupLogPath(contextName string) (string, error) {
 
 func runWithSpinner(out io.Writer, label string, fn func() error) error {
 	done := make(chan error, 1)
+	started := time.Now()
 	go func() {
 		done <- fn()
 	}()
 
-	frames := []string{"|", "/", "-", `\`}
-	ticker := time.NewTicker(120 * time.Millisecond)
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	ticker := time.NewTicker(180 * time.Millisecond)
 	defer ticker.Stop()
+	minVisible := 1500 * time.Millisecond
 
 	index := 0
 	for {
 		select {
 		case err := <-done:
+			if remaining := minVisible - time.Since(started); remaining > 0 {
+				createSleep(remaining)
+			}
 			if err != nil {
 				fmt.Fprintf(out, "\r%s... failed\n", label)
 				return err
@@ -435,7 +517,8 @@ func tailLines(path string, limit int) (string, error) {
 
 func printCreateSummary(out io.Writer, req createRequest) {
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "ISLE site created locally.")
+	fmt.Fprintln(out, corecomponent.RenderSection("Create complete", "ISLE is ready locally. Review the generated changes, set your Git remote, and commit the checkout when you are ready."))
+	fmt.Fprintln(out)
 	if req.SetupOnly {
 		fmt.Fprintf(out, "Checkout: %s\n", req.Path)
 		fmt.Fprintf(out, "Context:  %s\n", req.ContextName)
@@ -443,11 +526,13 @@ func printCreateSummary(out io.Writer, req createRequest) {
 	} else {
 		fmt.Fprintf(out, "Checkout: %s\n", req.Path)
 		fmt.Fprintf(out, "Context:  %s\n", req.ContextName)
-		fmt.Fprintln(out, "The site was prepared and brought up with make up.")
+		fmt.Fprintln(out, "The site was prepared and started locally.")
 	}
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Review the generated changes and commit them.")
-	fmt.Fprintf(out, "Suggested commit:\n%s\n", buildCommitSuggestion(req))
+	fmt.Fprintln(out, corecomponent.RenderSection("Next steps", "Set your Git remote, review the generated changes, and commit the checkout."))
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, corecomponent.RenderCommandBlock(buildCommitSuggestion(req)))
+	fmt.Fprintln(out)
 }
 
 func printCreateFailureSummary(out io.Writer, req createRequest) {
@@ -460,14 +545,15 @@ func printCreateFailureSummary(out io.Writer, req createRequest) {
 	fmt.Fprintf(out, "Checkout: %s\n", req.Path)
 	fmt.Fprintf(out, "Context:  %s\n", req.ContextName)
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Retry command:")
-	fmt.Fprintln(out, buildRecreateCommand(req))
+	fmt.Fprintln(out, corecomponent.RenderCommandBlock(buildRecreateCommand(req)))
 	fmt.Fprintln(out)
 }
 
 func buildCommitSuggestion(req createRequest) string {
-	return fmt.Sprintf(
-		"cd %s\ngit add .\n%s",
+	return fmt.Sprintf(`cd %s
+git remote add origin git@github.com:your-org/your-repo.git
+git add .
+%s`,
 		shellPath(req.Path),
 		buildCommitCommand(req),
 	)
@@ -487,15 +573,10 @@ func buildRecreateCommand(req createRequest) string {
 		`--path=` + shellDoubleQuote(req.Path),
 		`--template-repo=` + shellDoubleQuote(req.TemplateRepo),
 		`--template-branch=` + shellDoubleQuote(req.TemplateBranch),
-		`--git-remote-name=` + shellDoubleQuote(req.GitRemoteName),
-		`--template-remote-name=` + shellDoubleQuote(req.TemplateRemoteName),
 		`--drupal-rootfs=` + shellDoubleQuote(req.DrupalRootfs),
 		`--fcrepo=` + req.Apply.Fcrepo,
 		`--blazegraph=` + req.Apply.Blazegraph,
 		`--isle-file-system-uri=` + shellDoubleQuote(req.Apply.ISLEFileSystemURI),
-	}
-	if req.GitRemoteURL != "" {
-		args = append(args, `--git-remote-url=`+shellDoubleQuote(req.GitRemoteURL))
 	}
 	if req.SetDefaultContext {
 		args = append(args, "--default-context")

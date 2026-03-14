@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -22,7 +24,7 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	})
 
 	var promptCount int
-	inputs := []string{"off", "on", "public", ""}
+	inputs := []string{"off", "on", "public"}
 	createInput = func(question ...string) (string, error) {
 		promptCount++
 		value := inputs[0]
@@ -35,9 +37,6 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	oldISLEFileSystemURI := createISLEFileSystemURI
 	oldTemplateRepo := createTemplateRepo
 	oldTemplateBranch := createTemplateBranch
-	oldGitRemoteURL := createGitRemoteURL
-	oldGitRemoteName := createGitRemoteName
-	oldTemplateRemoteName := createTemplateRemoteName
 	oldSetDefaultContext := createSetDefaultContext
 	oldSetupOnly := createSetupOnly
 	t.Cleanup(func() {
@@ -46,9 +45,6 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 		createISLEFileSystemURI = oldISLEFileSystemURI
 		createTemplateRepo = oldTemplateRepo
 		createTemplateBranch = oldTemplateBranch
-		createGitRemoteURL = oldGitRemoteURL
-		createGitRemoteName = oldGitRemoteName
-		createTemplateRemoteName = oldTemplateRemoteName
 		createSetDefaultContext = oldSetDefaultContext
 		createSetupOnly = oldSetupOnly
 	})
@@ -58,9 +54,6 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	createISLEFileSystemURI = "private"
 	createTemplateRepo = defaultTemplateRepo
 	createTemplateBranch = defaultTemplateBranch
-	createGitRemoteURL = ""
-	createGitRemoteName = "origin"
-	createTemplateRemoteName = "upstream"
 
 	cmd := newCreateCommandForTest()
 
@@ -69,8 +62,8 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if promptCount != 4 {
-		t.Fatalf("expected 4 prompts, got %d", promptCount)
+	if promptCount != 3 {
+		t.Fatalf("expected 3 prompts, got %d", promptCount)
 	}
 	if req.ContextName != "" {
 		t.Fatalf("expected context name prompt path, got %q", req.ContextName)
@@ -90,9 +83,6 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	if req.TemplateBranch != defaultTemplateBranch {
 		t.Fatalf("expected template branch %q, got %q", defaultTemplateBranch, req.TemplateBranch)
 	}
-	if req.GitRemoteURL != "" {
-		t.Fatalf("expected empty git remote url, got %q", req.GitRemoteURL)
-	}
 }
 
 func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
@@ -111,9 +101,6 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	oldISLEFileSystemURI := createISLEFileSystemURI
 	oldTemplateRepo := createTemplateRepo
 	oldTemplateBranch := createTemplateBranch
-	oldGitRemoteURL := createGitRemoteURL
-	oldGitRemoteName := createGitRemoteName
-	oldTemplateRemoteName := createTemplateRemoteName
 	oldSetDefaultContext := createSetDefaultContext
 	oldSetupOnly := createSetupOnly
 	t.Cleanup(func() {
@@ -122,9 +109,6 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 		createISLEFileSystemURI = oldISLEFileSystemURI
 		createTemplateRepo = oldTemplateRepo
 		createTemplateBranch = oldTemplateBranch
-		createGitRemoteURL = oldGitRemoteURL
-		createGitRemoteName = oldGitRemoteName
-		createTemplateRemoteName = oldTemplateRemoteName
 		createSetDefaultContext = oldSetDefaultContext
 		createSetupOnly = oldSetupOnly
 	})
@@ -134,16 +118,12 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	createISLEFileSystemURI = "public"
 	createTemplateRepo = defaultTemplateRepo
 	createTemplateBranch = defaultTemplateBranch
-	createGitRemoteURL = "git@github.com:example/site.git"
-	createGitRemoteName = "origin"
-	createTemplateRemoteName = "upstream"
 
 	cmd := newCreateCommandForTest()
 	_ = cmd.Flags().Set("context", "isle-local")
 	_ = cmd.Flags().Set("fcrepo", "off")
 	_ = cmd.Flags().Set("blazegraph", "on")
 	_ = cmd.Flags().Set("isle-file-system-uri", "public")
-	_ = cmd.Flags().Set("git-remote-url", "git@github.com:example/site.git")
 
 	req, err := resolveCreateRequest(cmd)
 	if err != nil {
@@ -152,9 +132,6 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 
 	if req.Apply.Fcrepo != "off" || req.Apply.Blazegraph != "on" || req.Apply.ISLEFileSystemURI != "public" {
 		t.Fatalf("unexpected options %+v", req.Apply)
-	}
-	if req.GitRemoteURL != "git@github.com:example/site.git" {
-		t.Fatalf("expected git remote url preserved, got %q", req.GitRemoteURL)
 	}
 }
 
@@ -174,9 +151,6 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 	oldISLEFileSystemURI := createISLEFileSystemURI
 	oldTemplateRepo := createTemplateRepo
 	oldTemplateBranch := createTemplateBranch
-	oldGitRemoteURL := createGitRemoteURL
-	oldGitRemoteName := createGitRemoteName
-	oldTemplateRemoteName := createTemplateRemoteName
 	oldSetDefaultContext := createSetDefaultContext
 	oldSetupOnly := createSetupOnly
 	t.Cleanup(func() {
@@ -185,9 +159,6 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 		createISLEFileSystemURI = oldISLEFileSystemURI
 		createTemplateRepo = oldTemplateRepo
 		createTemplateBranch = oldTemplateBranch
-		createGitRemoteURL = oldGitRemoteURL
-		createGitRemoteName = oldGitRemoteName
-		createTemplateRemoteName = oldTemplateRemoteName
 		createSetDefaultContext = oldSetDefaultContext
 		createSetupOnly = oldSetupOnly
 	})
@@ -197,16 +168,12 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 	createISLEFileSystemURI = "archive"
 	createTemplateRepo = defaultTemplateRepo
 	createTemplateBranch = defaultTemplateBranch
-	createGitRemoteURL = ""
-	createGitRemoteName = "origin"
-	createTemplateRemoteName = "upstream"
 
 	cmd := newCreateCommandForTest()
 	_ = cmd.Flags().Set("context", "isle-local")
 	_ = cmd.Flags().Set("fcrepo", "off")
 	_ = cmd.Flags().Set("blazegraph", "on")
 	_ = cmd.Flags().Set("isle-file-system-uri", "archive")
-	_ = cmd.Flags().Set("git-remote-url", "")
 
 	req, err := resolveCreateRequest(cmd)
 	if err != nil {
@@ -218,6 +185,122 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 	}
 	if req.Apply.DrupalRootfs != createpkg.DefaultDrupalRootfs {
 		t.Fatalf("expected drupal rootfs preserved, got %q", req.Apply.DrupalRootfs)
+	}
+}
+
+func TestCheckPrereqsSuccess(t *testing.T) {
+	oldLookPath := createLookPath
+	oldRunCheck := createRunCheckCommand
+	t.Cleanup(func() {
+		createLookPath = oldLookPath
+		createRunCheckCommand = oldRunCheck
+	})
+
+	createLookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	createRunCheckCommand = func(name string, args ...string) error { return nil }
+
+	var out bytes.Buffer
+	if err := checkPrereqs(&out); err != nil {
+		t.Fatalf("checkPrereqs() error = %v", err)
+	}
+
+	rendered := out.String()
+	rendered = stripANSI(rendered)
+	if !strings.Contains(rendered, "PREREQUISITES") {
+		t.Fatalf("expected prerequisites heading, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "• git is installed: ok") {
+		t.Fatalf("expected git checklist item, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "bash is installed") {
+		t.Fatalf("expected bash checklist item, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "make is installed") {
+		t.Fatalf("expected make checklist item, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "docker buildx is available: ok") {
+		t.Fatalf("expected buildx checklist item, got:\n%s", rendered)
+	}
+}
+
+func TestCheckPrereqsAllowsMissingMake(t *testing.T) {
+	oldLookPath := createLookPath
+	oldRunCheck := createRunCheckCommand
+	t.Cleanup(func() {
+		createLookPath = oldLookPath
+		createRunCheckCommand = oldRunCheck
+	})
+
+	createLookPath = func(file string) (string, error) {
+		if file == "make" {
+			return "", errors.New("missing")
+		}
+		return "/usr/bin/" + file, nil
+	}
+	createRunCheckCommand = func(name string, args ...string) error { return nil }
+
+	var out bytes.Buffer
+	if err := checkPrereqs(&out); err != nil {
+		t.Fatalf("checkPrereqs() error = %v", err)
+	}
+	rendered := stripANSI(out.String())
+	if !strings.Contains(rendered, "missing, so create will run bash ./scripts/up.sh instead") {
+		t.Fatalf("expected make fallback guidance, got:\n%s", rendered)
+	}
+}
+
+func TestCheckPrereqsFailsEarly(t *testing.T) {
+	oldLookPath := createLookPath
+	oldRunCheck := createRunCheckCommand
+	t.Cleanup(func() {
+		createLookPath = oldLookPath
+		createRunCheckCommand = oldRunCheck
+	})
+
+	createLookPath = func(file string) (string, error) {
+		if file == "git" {
+			return "", errors.New("missing")
+		}
+		return "/usr/bin/" + file, nil
+	}
+	createRunCheckCommand = func(name string, args ...string) error { return nil }
+
+	var out bytes.Buffer
+	err := checkPrereqs(&out)
+	if err == nil {
+		t.Fatal("expected prerequisite failure")
+	}
+	if !strings.Contains(err.Error(), "git is installed") {
+		t.Fatalf("expected git failure in error, got %v", err)
+	}
+	rendered := stripANSI(out.String())
+	if !strings.Contains(rendered, "• git is installed: failed") {
+		t.Fatalf("expected failed checklist line, got:\n%s", rendered)
+	}
+}
+
+func TestStartupCommandFallsBackToBash(t *testing.T) {
+	oldLookPath := createLookPath
+	t.Cleanup(func() {
+		createLookPath = oldLookPath
+	})
+
+	createLookPath = func(file string) (string, error) {
+		if file == "make" {
+			return "", errors.New("missing")
+		}
+		return "/usr/bin/" + file, nil
+	}
+
+	label, name, args := startupCommand()
+	if label != "bash ./scripts/up.sh" {
+		t.Fatalf("expected bash label, got %q", label)
+	}
+	if name != "bash" {
+		t.Fatalf("expected bash command, got %q", name)
+	}
+	if len(args) != 1 || args[0] != "./scripts/up.sh" {
+		t.Fatalf("expected bash up script args, got %#v", args)
 	}
 }
 
@@ -281,46 +364,16 @@ func TestEnsureClonedCheckoutSkipsNonEmptyDirectory(t *testing.T) {
 	}
 }
 
-func TestConfigureGitRemotesUsesConfiguredRemote(t *testing.T) {
-	oldConfigure := createConfigureTemplateRemotes
-	t.Cleanup(func() {
-		createConfigureTemplateRemotes = oldConfigure
-	})
-
-	var got plugin.GitTemplateOptions
-	createConfigureTemplateRemotes = func(opts plugin.GitTemplateOptions) error {
-		got = opts
-		return nil
-	}
-
-	err := configureGitRemotes(createRequest{
-		GitRemoteURL:       "git@github.com:example/site.git",
-		GitRemoteName:      "origin",
-		TemplateRemoteName: "upstream",
-	}, "/tmp/site")
-	if err != nil {
-		t.Fatalf("configureGitRemotes() error = %v", err)
-	}
-	if got.ProjectDir != "/tmp/site" {
-		t.Fatalf("expected project dir /tmp/site, got %q", got.ProjectDir)
-	}
-	if got.GitRemoteURL != "git@github.com:example/site.git" {
-		t.Fatalf("expected git remote url preserved, got %q", got.GitRemoteURL)
-	}
-}
-
 func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	oldSDK := commandSDK
 	oldEnsure := createEnsureLocalContext
 	oldClone := createCloneTemplateRepo
-	oldConfigure := createConfigureTemplateRemotes
 	oldApply := createApply
 	oldRunStartup := createRunStartup
 	t.Cleanup(func() {
 		commandSDK = oldSDK
 		createEnsureLocalContext = oldEnsure
 		createCloneTemplateRepo = oldClone
-		createConfigureTemplateRemotes = oldConfigure
 		createApply = oldApply
 		createRunStartup = oldRunStartup
 	})
@@ -331,7 +384,6 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 		return &config.Context{Name: "isle-local-2", ProjectDir: projectDir}, nil
 	}
 	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error { return nil }
-	createConfigureTemplateRemotes = func(opts plugin.GitTemplateOptions) error { return nil }
 	createApply = func(opts createpkg.Options) error { return nil }
 
 	var ranStartup bool
@@ -351,13 +403,10 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	cmd.SetOut(&out)
 
 	err := runCreateCommand(cmd, createRequest{
-		Path:               projectDir,
-		DrupalRootfs:       createpkg.DefaultDrupalRootfs,
-		TemplateRepo:       defaultTemplateRepo,
-		TemplateBranch:     defaultTemplateBranch,
-		GitRemoteURL:       "git@github.com:example/site.git",
-		GitRemoteName:      "origin",
-		TemplateRemoteName: "upstream",
+		Path:           projectDir,
+		DrupalRootfs:   createpkg.DefaultDrupalRootfs,
+		TemplateRepo:   defaultTemplateRepo,
+		TemplateBranch: defaultTemplateBranch,
 		Apply: createpkg.Options{
 			DrupalRootfs:      createpkg.DefaultDrupalRootfs,
 			Fcrepo:            createpkg.FcrepoStateOn,
@@ -376,17 +425,17 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	if !strings.Contains(rendered, "cd '") {
 		t.Fatalf("expected cd line in commit suggestion, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "\ngit add .\ngit commit -m") {
+	if !strings.Contains(rendered, "git add .") || !strings.Contains(rendered, "git commit -m") {
 		t.Fatalf("expected commit suggestion, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "-m 'sitectl isle create \\\n") {
-		t.Fatalf("expected multiline recreate command body, got:\n%s", rendered)
+	if !strings.Contains(rendered, "sitectl isle create") {
+		t.Fatalf("expected recreate command body, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "--fcrepo=on \\\n  --blazegraph=off") {
+	if !strings.Contains(rendered, "--fcrepo=on") || !strings.Contains(rendered, "--blazegraph=off") {
 		t.Fatalf("expected recreate command with component flags, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "--git-remote-url=") {
-		t.Fatalf("expected recreate command with git remote url, got:\n%s", rendered)
+	if !strings.Contains(rendered, "git remote add origin git@github.com:your-org/your-repo.git") {
+		t.Fatalf("expected git remote setup guidance, got:\n%s", rendered)
 	}
 }
 
@@ -394,14 +443,12 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	oldSDK := commandSDK
 	oldEnsure := createEnsureLocalContext
 	oldClone := createCloneTemplateRepo
-	oldConfigure := createConfigureTemplateRemotes
 	oldApply := createApply
 	oldRunStartup := createRunStartup
 	t.Cleanup(func() {
 		commandSDK = oldSDK
 		createEnsureLocalContext = oldEnsure
 		createCloneTemplateRepo = oldClone
-		createConfigureTemplateRemotes = oldConfigure
 		createApply = oldApply
 		createRunStartup = oldRunStartup
 	})
@@ -412,7 +459,6 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 		return &config.Context{Name: "isle-local", ProjectDir: projectDir}, nil
 	}
 	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error { return nil }
-	createConfigureTemplateRemotes = func(opts plugin.GitTemplateOptions) error { return nil }
 	createApply = func(opts createpkg.Options) error { return nil }
 	createRunStartup = func(_ io.Writer, ctx *config.Context) error {
 		t.Fatal("did not expect startup to run")
@@ -424,13 +470,11 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	cmd.SetOut(&out)
 
 	err := runCreateCommand(cmd, createRequest{
-		Path:               projectDir,
-		DrupalRootfs:       createpkg.DefaultDrupalRootfs,
-		TemplateRepo:       defaultTemplateRepo,
-		TemplateBranch:     defaultTemplateBranch,
-		GitRemoteName:      "origin",
-		TemplateRemoteName: "upstream",
-		SetupOnly:          true,
+		Path:           projectDir,
+		DrupalRootfs:   createpkg.DefaultDrupalRootfs,
+		TemplateRepo:   defaultTemplateRepo,
+		TemplateBranch: defaultTemplateBranch,
+		SetupOnly:      true,
 		Apply: createpkg.Options{
 			DrupalRootfs:      createpkg.DefaultDrupalRootfs,
 			Fcrepo:            createpkg.FcrepoStateOff,
@@ -460,13 +504,16 @@ func newCreateCommandForTest() *cobra.Command {
 	cmd.Flags().String("path", ".", "")
 	cmd.Flags().String("template-repo", defaultTemplateRepo, "")
 	cmd.Flags().String("template-branch", defaultTemplateBranch, "")
-	cmd.Flags().String("git-remote-url", "", "")
-	cmd.Flags().String("git-remote-name", "origin", "")
-	cmd.Flags().String("template-remote-name", "upstream", "")
 	cmd.Flags().Bool("default-context", false, "")
 	cmd.Flags().Bool("setup-only", false, "")
 	corecomponent.AddCreateFlags(cmd, createComponentOptions()...)
 	corecomponent.AddDrupalRootfsFlag(cmd, &createDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	cmd.Flags().String("isle-file-system-uri", "private", "")
 	return cmd
+}
+
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripANSI(value string) string {
+	return ansiPattern.ReplaceAllString(value, "")
 }
