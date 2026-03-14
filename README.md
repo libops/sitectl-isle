@@ -103,3 +103,4 @@ Planned components include:
 - `mergepdf`
 
 These will be added incrementally in separate PRs as their component definitions and migration requirements are finalized.
+
