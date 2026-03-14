@@ -23,25 +23,30 @@ Then put the binary in a directory that is in your `$PATH`
 
 ```bash
 $ sitectl isle --help
-Islandora (ISLE) utilities and migration tools
 
-Usage:
-  sitectl isle [command]
+  Islandora (ISLE) utilities and migration tools
 
-Available Commands:
-  completion  Generate the autocompletion script for the specified shell
-  component   Inspect and manage ISLE components
-  create      Clone an ISLE template, create a local context, and apply component-state mutations
-  help        Help about any command
-  migrate     Migration helpers
+  USAGE
 
-Flags:
-      --context string     The sitectl context to use. See sitectl config --help for more info (default "local")
-  -h, --help               help for sitectl-isle
-      --log-level string   The logging level for the command (default "DEBUG")
-  -v, --version            version for sitectl-isle
 
-Use "sitectl isle [command] --help" for more information about a command.
+    sitectl isle [command] [--flags]
+
+
+  COMMANDS
+
+    cache [command]       Cache warmer commands to speed up your ISLE site page load times
+    completion [command]  Generate the autocompletion script for the specified shell
+    component [command]   Inspect and manage ISLE components
+    create [--flags]      Create a a new ISLE install
+    help [command]        Help about any command
+    migrate [command]     Migration helpers
+
+  FLAGS
+
+    --context             The sitectl context to use. See sitectl config --help for more info (isle-local)
+    -h --help             Help for sitectl isle
+    --log-level           The logging level for the command (DEBUG)
+    -v --version          Version for sitectl isle
 ```
 
 ## Development
