@@ -35,20 +35,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-(
-	cd "${REPO_ROOT}" &&
-		go build -o "${PLUGIN_BIN}" .
-)
-
-"${PLUGIN_BIN}" create \
-	--path "${SITE_DIR}" \
-	--context "${SITECTL_CONTEXT}" \
-	--fcrepo "${FCREPO_STATE}" \
-	--blazegraph "${BLAZEGRAPH_STATE}" \
-	--isle-file-system-uri "${ISLE_FILE_SYSTEM_URI}" \
-	--setup-only \
-	--git-remote-url "${GIT_REMOTE_URL}"
-
 count_files() {
 	local service="$1"
 	local target="$2"
@@ -82,25 +68,6 @@ drupal_sql_query() {
 	)
 }
 
-if [ "${FCREPO_STATE}" = "on" ]; then
-	ASSERT_SERVICE="fcrepo"
-	ASSERT_PATH="/data"
-else
-	ASSERT_SERVICE="drupal"
-	case "${ISLE_FILE_SYSTEM_URI}" in
-	public)
-		ASSERT_PATH="/var/www/drupal/web/sites/default/files"
-		;;
-	private)
-		ASSERT_PATH="/var/www/drupal/private"
-		;;
-	*)
-		echo "unexpected isle-file-system-uri: ${ISLE_FILE_SYSTEM_URI}" >&2
-		exit 1
-		;;
-	esac
-fi
-
 run_compose_diagnostics() {
 	(
 		cd "${SITE_DIR}" &&
@@ -120,35 +87,72 @@ run_compose_diagnostics() {
 	)
 }
 
-if ! (
-	cd "${SITE_DIR}" &&
-		make init
-); then
-	run_compose_diagnostics
-	exit 1
-fi
+build_plugin() {
+	(
+		cd "${REPO_ROOT}" &&
+			go build -o "${PLUGIN_BIN}" .
+	)
+}
 
-if ! (
-	cd "${SITE_DIR}" &&
-		make up
-); then
-	run_compose_diagnostics
-	exit 1
-fi
+create_site() {
+	"${PLUGIN_BIN}" create \
+		--path "${SITE_DIR}" \
+		--context "${SITECTL_CONTEXT}" \
+		--fcrepo "${FCREPO_STATE}" \
+		--blazegraph "${BLAZEGRAPH_STATE}" \
+		--isle-file-system-uri "${ISLE_FILE_SYSTEM_URI}" \
+		--setup-only
+}
 
-BEFORE_COUNT="$(count_files "${ASSERT_SERVICE}" "${ASSERT_PATH}" | tr -d '[:space:]')"
+set_assert_target() {
+	if [ "${FCREPO_STATE}" = "on" ]; then
+		ASSERT_SERVICE="fcrepo"
+		ASSERT_PATH="/data"
+		return
+	fi
 
-(
-	cd "${SITE_DIR}" &&
-		make demo-objects
-)
+	ASSERT_SERVICE="drupal"
+	case "${ISLE_FILE_SYSTEM_URI}" in
+	public)
+		ASSERT_PATH="/var/www/drupal/web/sites/default/files"
+		;;
+	private)
+		ASSERT_PATH="/var/www/drupal/private"
+		;;
+	*)
+		echo "unexpected isle-file-system-uri: ${ISLE_FILE_SYSTEM_URI}" >&2
+		exit 1
+		;;
+	esac
+}
 
-if ! wait_for_growth "${ASSERT_SERVICE}" "${ASSERT_PATH}" "${BEFORE_COUNT}"; then
-	echo "expected ingested content to appear in ${ASSERT_SERVICE}:${ASSERT_PATH}" >&2
-	exit 1
-fi
+run_make_target() {
+	local target="$1"
+	if ! (
+		cd "${SITE_DIR}" &&
+			make "${target}"
+	); then
+		run_compose_diagnostics
+		exit 1
+	fi
+}
 
-if [ "${FCREPO_STATE}" = "off" ]; then
+verify_demo_objects_created() {
+	local before_count
+	before_count="$(count_files "${ASSERT_SERVICE}" "${ASSERT_PATH}" | tr -d '[:space:]')"
+
+	(
+		cd "${SITE_DIR}" &&
+			make demo-objects
+	)
+
+	if ! wait_for_growth "${ASSERT_SERVICE}" "${ASSERT_PATH}" "${before_count}"; then
+		echo "expected ingested content to appear in ${ASSERT_SERVICE}:${ASSERT_PATH}" >&2
+		exit 1
+	fi
+}
+
+verify_fcrepo_disabled() {
 	if (
 		cd "${SITE_DIR}" &&
 			docker compose config --services | grep -qx "fcrepo"
@@ -162,9 +166,9 @@ if [ "${FCREPO_STATE}" = "off" ]; then
 		echo "expected no fedora-backed file_managed URIs when fcrepo is off, got ${FEDORA_COUNT}" >&2
 		exit 1
 	fi
-fi
+}
 
-if [ "${BLAZEGRAPH_STATE}" = "off" ]; then
+verify_blazegraph_disabled() {
 	if (
 		cd "${SITE_DIR}" &&
 			docker compose config --services | grep -qx "blazegraph"
@@ -172,4 +176,23 @@ if [ "${BLAZEGRAPH_STATE}" = "off" ]; then
 		echo "blazegraph service still present after create --blazegraph off" >&2
 		exit 1
 	fi
-fi
+}
+
+main() {
+	build_plugin
+	create_site
+	set_assert_target
+	run_make_target init
+	run_make_target up
+	verify_demo_objects_created
+
+	if [ "${FCREPO_STATE}" = "off" ]; then
+		verify_fcrepo_disabled
+	fi
+
+	if [ "${BLAZEGRAPH_STATE}" = "off" ]; then
+		verify_blazegraph_disabled
+	fi
+}
+
+main "$@"
