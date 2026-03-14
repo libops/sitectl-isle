@@ -89,14 +89,16 @@ Current components:
 
 - `fcrepo`
 - `blazegraph`
+- `isle-tls`
+- `isle-tls-override`
+
+`isle-tls` represents whether the baseline `docker-compose.yml` stack is served over HTTP or HTTPS in staging or production. `isle-tls-override` represents whether `docker-compose.dev.yml` intentionally overrides that baseline for local development.
 
 Planned components include:
 
 - PostgreSQL
 - Memcached
 - Redis
-- self-managed TLS certificates
-- Let's Encrypt TLS certificates
 - load balancer support
 - `mergepdf`
 
