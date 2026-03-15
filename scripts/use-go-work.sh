@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-SITECTL_PATH="${1:-../}"
+SITECTL_PATH="${1:-../sitectl}"
 
 cat > go.work <<EOF
 go 1.25.3

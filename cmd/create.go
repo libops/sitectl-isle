@@ -160,16 +160,61 @@ Common values are %q and %q.
 N.B. if you choose "public" as your URI scheme, you will not be able to provide access controls to files uploaded to Islandora (e.g. embargoes, local access, etc.)
 `, createpkg.PublicISLEFileSystemURI, createpkg.PrivateISLEFileSystemURI),
 	)
-	prompt := corecomponent.RenderPromptLine(fmt.Sprintf("Choose isle-file-system-uri [%s]: ", defaultValue))
-	input, err := createInput(append(strings.Split(question, "\n"), "", prompt)...)
+	choice, err := corecomponent.PromptChoice(
+		"isle-file-system-uri",
+		[]corecomponent.Choice{
+			{
+				Value:   createpkg.PublicISLEFileSystemURI,
+				Label:   createpkg.PublicISLEFileSystemURI,
+				Help:    "Use Drupal's public URI (global/www access to all files).",
+				Aliases: []string{"1"},
+			},
+			{
+				Value:   createpkg.PrivateISLEFileSystemURI,
+				Label:   createpkg.PrivateISLEFileSystemURI,
+				Help:    "Use Drupal's private URI (fine-grained access control w/ performance overhead).",
+				Aliases: []string{"2"},
+			},
+			{
+				Value:            "other",
+				Label:            "other",
+				Help:             "Enter a custom Drupal URI scheme.",
+				Aliases:          []string{"3"},
+				AllowCustomInput: true,
+			},
+		},
+		defaultValue,
+		createInput,
+		strings.Split(question, "\n")...,
+	)
 	if err != nil {
 		return "", err
 	}
-	value := strings.TrimSpace(input)
-	if value == "" {
-		return defaultValue, nil
+	choice = strings.TrimSpace(choice)
+	if choice == "other" {
+		return promptCustomISLEFileSystemURI()
 	}
-	return value, nil
+	return choice, nil
+}
+
+func promptCustomISLEFileSystemURI() (string, error) {
+	question := corecomponent.RenderSection(
+		"Custom file system URI",
+		`Enter the custom Drupal URI scheme to use for Islandora-managed files.
+
+Examples include "archive" or another valid Drupal stream wrapper scheme.`,
+	)
+	value, err := createInput(
+		append(
+			strings.Split(question, "\n"),
+			"",
+			corecomponent.RenderPromptLine("Custom URI scheme: "),
+		)...,
+	)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(value), nil
 }
 
 func runCreateCommand(cmd *cobra.Command, req createRequest) error {
