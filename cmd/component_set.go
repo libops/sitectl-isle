@@ -16,23 +16,31 @@ import (
 
 var (
 	componentSetYolo      bool
+	componentSetState     string
 	componentSetTLSMode   string
 	componentSetInput     = config.GetInput
 	componentApplyOptions = createpkg.Apply
+	componentPromptChoice = corecomponent.PromptChoice
+	componentPromptState  = corecomponent.PromptState
 )
 
 var componentSetCmd = &cobra.Command{
-	Use:   "set <name> <on|off>",
+	Use:   "set <name> [on|off]",
 	Short: "Set an ISLE component on or off for the current project",
-	Args:  cobra.ExactArgs(2),
+	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runComponentSet(cmd, args[0], args[1])
+		stateValue, err := resolveComponentSetStateValue(cmd, args)
+		if err != nil {
+			return err
+		}
+		return runComponentSet(cmd, args[0], stateValue)
 	},
 }
 
 func init() {
 	componentSetCmd.Flags().StringVar(&statusPath, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
 	corecomponent.AddDrupalRootfsFlag(componentSetCmd, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
+	componentSetCmd.Flags().StringVar(&componentSetState, "state", "", "Component state to apply. Valid values are on or off. If omitted, the command prompts interactively.")
 	componentSetCmd.Flags().BoolVar(&componentSetYolo, "yolo", false, "Apply the component change without confirmation")
 	componentSetCmd.Flags().StringVar(&componentSetTLSMode, "tls-mode", "", "TLS mode for the selected component. Valid values are http, self-managed, mkcert, or letsencrypt.")
 	componentCmd.AddCommand(componentSetCmd)
@@ -47,9 +55,12 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 		return fmt.Errorf("component changes are local-only; context %q is %q", ctx.Name, ctx.DockerHostType)
 	}
 
-	state, err := corecomponent.ParseState(stateValue)
-	if err != nil {
-		return err
+	var state corecomponent.State
+	if strings.TrimSpace(stateValue) != "" {
+		state, err = corecomponent.ParseState(stateValue)
+		if err != nil {
+			return err
+		}
 	}
 
 	defs := componentDefinitions()
@@ -61,6 +72,10 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 	statuses, err := detectComponentViews(ctx.ProjectDir, statusDrupalRootfs)
 	if err != nil {
 		return err
+	}
+	statusByName := map[string]componentView{}
+	for _, status := range statuses {
+		statusByName[status.Name] = status
 	}
 
 	currentStates := map[string]corecomponent.DetectedState{}
@@ -76,7 +91,25 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 		}
 	}
 
+	if strings.TrimSpace(stateValue) == "" {
+		status, ok := statusByName[name]
+		if !ok {
+			return fmt.Errorf("missing detected status for component %q", name)
+		}
+		state, err = promptComponentSetState(status)
+		if err != nil {
+			return err
+		}
+	}
+
 	if !componentSetYolo {
+		if requiresTLSModeSelection(name, state) {
+			mode, err := resolveTLSComponentMode(name)
+			if err != nil {
+				return err
+			}
+			componentSetTLSMode = mode
+		}
 		prompt, err := componentSetPrompt(def, state)
 		if err != nil {
 			return err
@@ -184,7 +217,7 @@ func componentSetPrompt(def corecomponent.Definition, state corecomponent.State)
 	if strings.TrimSpace(summary) != "" {
 		body = append(body, "", summary)
 	}
-	if requestedMode := componentRequestedMode(def.Name); strings.TrimSpace(requestedMode) != "" {
+	if requestedMode := componentRequestedMode(def.Name, state); strings.TrimSpace(requestedMode) != "" {
 		body = append(body, "", fmt.Sprintf("Requested mode: `%s`.", requestedMode))
 	}
 	if migration != "" && migration != corecomponent.DataMigrationNone {
@@ -198,28 +231,20 @@ func componentSetPrompt(def corecomponent.Definition, state corecomponent.State)
 }
 
 func runTLSComponentSet(cmd *cobra.Command, projectDir, name string, state corecomponent.State) error {
+	mode, err := resolvedTLSMode(name, state)
+	if err != nil {
+		return err
+	}
+
 	switch name {
 	case "isle-tls":
-		mode := componentSetTLSMode
-		if state == corecomponent.StateOn && strings.TrimSpace(mode) == "" {
-			mode = traefikconfig.ModeSelfManaged
-		}
 		if state == corecomponent.StateOn && mode == traefikconfig.ModeHTTP {
 			return fmt.Errorf("isle-tls=on requires --tls-mode self-managed, mkcert, or letsencrypt")
-		}
-		if state == corecomponent.StateOff {
-			if strings.TrimSpace(mode) == "" {
-				mode = traefikconfig.ModeHTTP
-			}
 		}
 		if err := traefikconfig.ApplyProd(projectDir, mode); err != nil {
 			return err
 		}
 	case "isle-tls-override":
-		mode := componentSetTLSMode
-		if state == corecomponent.StateOn && strings.TrimSpace(mode) == "" {
-			mode = traefikconfig.ModeMkcert
-		}
 		if err := traefikconfig.ApplyDev(projectDir, state == corecomponent.StateOn, mode); err != nil {
 			return err
 		}
@@ -231,15 +256,12 @@ func runTLSComponentSet(cmd *cobra.Command, projectDir, name string, state corec
 	return nil
 }
 
-func componentRequestedMode(name string) string {
-	switch name {
-	case "isle-tls":
-		return componentSetTLSMode
-	case "isle-tls-override":
-		return componentSetTLSMode
-	default:
+func componentRequestedMode(name string, state corecomponent.State) string {
+	mode, err := resolvedTLSMode(name, state)
+	if err != nil {
 		return ""
 	}
+	return mode
 }
 
 func confirmComponentSet(prompt string) (bool, error) {
@@ -249,6 +271,115 @@ func confirmComponentSet(prompt string) (bool, error) {
 	}
 	value := strings.TrimSpace(strings.ToLower(response))
 	return value == "y" || value == "yes", nil
+}
+
+func requiresTLSModeSelection(name string, state corecomponent.State) bool {
+	return state == corecomponent.StateOn && strings.TrimSpace(componentSetTLSMode) == "" &&
+		(name == "isle-tls" || name == "isle-tls-override")
+}
+
+func resolveTLSComponentMode(name string) (string, error) {
+	defaultValue, err := defaultTLSPromptMode(name)
+	if err != nil {
+		return "", err
+	}
+	return promptTLSComponentMode(name, defaultValue, componentSetInput, componentPromptChoice)
+}
+
+func resolvedTLSMode(name string, state corecomponent.State) (string, error) {
+	switch name {
+	case "isle-tls":
+		if state == corecomponent.StateOff {
+			return traefikconfig.ModeHTTP, nil
+		}
+		if strings.TrimSpace(componentSetTLSMode) == "" {
+			return traefikconfig.ModeSelfManaged, nil
+		}
+		return componentSetTLSMode, nil
+	case "isle-tls-override":
+		if state == corecomponent.StateOff {
+			return traefikconfig.ModeInherited, nil
+		}
+		if strings.TrimSpace(componentSetTLSMode) == "" {
+			return traefikconfig.ModeMkcert, nil
+		}
+		return componentSetTLSMode, nil
+	default:
+		return "", fmt.Errorf("unsupported TLS component %q", name)
+	}
+}
+
+func defaultTLSPromptMode(name string) (string, error) {
+	switch name {
+	case "isle-tls":
+		return traefikconfig.ModeSelfManaged, nil
+	case "isle-tls-override":
+		return traefikconfig.ModeMkcert, nil
+	default:
+		return "", fmt.Errorf("unsupported TLS component %q", name)
+	}
+}
+
+func promptTLSComponentMode(name, defaultValue string, input corecomponent.InputFunc, promptChoice func(string, []corecomponent.Choice, string, corecomponent.InputFunc, ...string) (string, error)) (string, error) {
+	var question string
+	choices := []corecomponent.Choice{
+		{
+			Value:   traefikconfig.ModeSelfManaged,
+			Label:   traefikconfig.ModeSelfManaged,
+			Help:    "Use HTTPS with certificates you manage yourself.",
+			Aliases: []string{"1"},
+		},
+		{
+			Value:   traefikconfig.ModeMkcert,
+			Label:   traefikconfig.ModeMkcert,
+			Help:    "Use HTTPS with mkcert for local development.",
+			Aliases: []string{"2"},
+		},
+		{
+			Value:   traefikconfig.ModeLetsEncrypt,
+			Label:   traefikconfig.ModeLetsEncrypt,
+			Help:    "Use HTTPS with Let's Encrypt automation.",
+			Aliases: []string{"3"},
+		},
+	}
+
+	switch name {
+	case "isle-tls":
+		question = "Choose how the production stack frontend should be served."
+	case "isle-tls-override":
+		question = "Choose how the development stack frontend should be served."
+		choices = []corecomponent.Choice{
+			{
+				Value:   traefikconfig.ModeHTTP,
+				Label:   traefikconfig.ModeHTTP,
+				Help:    "Use HTTP only for the dev override.",
+				Aliases: []string{"1"},
+			},
+			{
+				Value:   traefikconfig.ModeMkcert,
+				Label:   traefikconfig.ModeMkcert,
+				Help:    "Use HTTPS with mkcert for local development.",
+				Aliases: []string{"2"},
+			},
+			{
+				Value:   traefikconfig.ModeSelfManaged,
+				Label:   traefikconfig.ModeSelfManaged,
+				Help:    "Use HTTPS with certificates you manage yourself.",
+				Aliases: []string{"3"},
+			},
+			{
+				Value:   traefikconfig.ModeLetsEncrypt,
+				Label:   traefikconfig.ModeLetsEncrypt,
+				Help:    "Use HTTPS with Let's Encrypt automation.",
+				Aliases: []string{"4"},
+			},
+		}
+	default:
+		return "", fmt.Errorf("unsupported TLS component %q", name)
+	}
+
+	section := corecomponent.RenderSection("Frontend mode", question)
+	return promptChoice(name+"-tls-mode", choices, defaultValue, input, strings.Split(section, "\n")...)
 }
 
 func resolveCurrentFileSystemURI(projectDir, drupalRootfs string) (string, error) {
@@ -265,4 +396,29 @@ func resolveCurrentFileSystemURI(projectDir, drupalRootfs string) (string, error
 		}
 	}
 	return createpkg.DefaultISLEFileSystemURI, nil
+}
+
+func resolveComponentSetStateValue(cmd *cobra.Command, args []string) (string, error) {
+	positionalState := ""
+	if len(args) > 1 {
+		positionalState = args[1]
+	}
+	flagChanged := cmd.Flags().Changed("state")
+	if positionalState != "" && flagChanged {
+		return "", fmt.Errorf("state specified twice: use either positional on|off or --state")
+	}
+	if positionalState != "" {
+		return positionalState, nil
+	}
+	if flagChanged {
+		return componentSetState, nil
+	}
+	return "", nil
+}
+
+func promptComponentSetState(status componentView) (corecomponent.State, error) {
+	guidance := status.Definition.Guidance
+	guidance.DefaultState = corecomponent.ReviewDefaultState(status)
+	guidance.Question = corecomponent.BuildReviewQuestion(status)
+	return componentPromptState(status.Name, guidance, componentSetInput)
 }

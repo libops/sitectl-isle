@@ -15,6 +15,7 @@ var (
 	statusPath         string
 	statusDrupalRootfs string
 	statusVerbose      bool
+	statusFormat       string
 )
 
 var statusCmd = &cobra.Command{
@@ -28,7 +29,7 @@ var statusCmd = &cobra.Command{
 func init() {
 	statusCmd.Flags().StringVar(&statusPath, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
 	corecomponent.AddDrupalRootfsFlag(statusCmd, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
-	statusCmd.Flags().BoolVar(&statusVerbose, "verbose", false, "Show drift details for components that do not match cleanly")
+	corecomponent.AddReportFlags(statusCmd, &statusVerbose, &statusFormat)
 }
 
 func runStatus(cmd *cobra.Command) error {
@@ -42,32 +43,10 @@ func runStatus(cmd *cobra.Command) error {
 		return err
 	}
 
-	for i, status := range statuses {
-		fmt.Fprintln(cmd.OutOrStdout(), renderComponentStatus(status))
-		if statusVerbose && status.State == corecomponent.StateDrifted {
-			if status.SDKStatus != nil {
-				writeDriftDetails(cmd, *status.SDKStatus)
-			} else if strings.TrimSpace(status.DriftDetail) != "" {
-				fmt.Fprintln(cmd.OutOrStdout(), "  drift:")
-				fmt.Fprintf(cmd.OutOrStdout(), "    %s\n", strings.TrimSpace(status.DriftDetail))
-			}
-		}
-		if i < len(statuses)-1 {
-			fmt.Fprintln(cmd.OutOrStdout())
-		}
-	}
-
-	return nil
+	return corecomponent.WriteComponentStatusReportWithFormat(cmd.OutOrStdout(), statuses, statusVerbose, statusFormat)
 }
 
-type componentView struct {
-	Definition  corecomponent.Definition
-	Name        string
-	State       corecomponent.DetectedState
-	Detail      string
-	DriftDetail string
-	SDKStatus   *corecomponent.ComponentStatus
-}
+type componentView = corecomponent.ReviewView
 
 func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, error) {
 	definitions := componentDefinitions()
@@ -103,6 +82,7 @@ func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, err
 		State:       renderTLSDetectedState(prodTLS),
 		Detail:      renderTLSDetail(prodTLS),
 		DriftDetail: prodTLS.Detail,
+		Extra:       &prodTLS,
 	})
 
 	devTLS, err := traefikconfig.DetectDev(projectDir)
@@ -115,6 +95,7 @@ func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, err
 		State:       renderTLSDetectedState(devTLS),
 		Detail:      renderTLSDetail(devTLS),
 		DriftDetail: devTLS.Detail,
+		Extra:       &devTLS,
 	})
 
 	return views, nil
@@ -145,66 +126,6 @@ func renderTLSDetail(status traefikconfig.Status) string {
 	}
 }
 
-func renderComponentStatus(status componentView) string {
-	lines := []string{
-		fmt.Sprintf("Current state: `%s`", status.State),
-	}
-	if strings.TrimSpace(status.Detail) != "" {
-		lines = append(lines, fmt.Sprintf("Detected mode: %s", status.Detail))
-	}
-	if guidance := renderCurrentGuidance(status); guidance != "" {
-		lines = append(lines, "", guidance)
-	}
-	lines = append(lines,
-		"",
-		fmt.Sprintf("If enabled: %s", renderTransitionSummary(status.Definition.Behavior.Enable)),
-		fmt.Sprintf("If disabled: %s", renderTransitionSummary(status.Definition.Behavior.Disable)),
-	)
-	return corecomponent.RenderSection(status.Name, strings.Join(lines, "\n"))
-}
-
-func renderCurrentGuidance(status componentView) string {
-	switch status.State {
-	case corecomponent.DetectedState(corecomponent.StateOn):
-		return strings.TrimSpace(status.Definition.Guidance.OnHelp)
-	case corecomponent.DetectedState(corecomponent.StateOff):
-		return strings.TrimSpace(status.Definition.Guidance.OffHelp)
-	default:
-		if strings.TrimSpace(status.Definition.Guidance.Question) != "" {
-			return strings.TrimSpace(status.Definition.Guidance.Question)
-		}
-		return "This component does not match a clean on/off state right now."
-	}
-}
-
-func renderTransitionSummary(behavior corecomponent.TransitionBehavior) string {
-	summary := strings.TrimSpace(behavior.Summary)
-	impact := renderMigrationImpact(behavior.DataMigration)
-	switch {
-	case summary == "" && impact == "":
-		return "No additional behavior recorded."
-	case summary == "":
-		return impact + "."
-	case impact == "":
-		return summary
-	default:
-		return fmt.Sprintf("%s Impact: %s.", summary, impact)
-	}
-}
-
-func renderMigrationImpact(migration corecomponent.DataMigrationRequirement) string {
-	switch migration {
-	case "", corecomponent.DataMigrationNone:
-		return "low consequence"
-	case corecomponent.DataMigrationBackfill:
-		return "backfill likely required"
-	case corecomponent.DataMigrationHard:
-		return "high consequence, plan a data migration first"
-	default:
-		return string(migration)
-	}
-}
-
 func resolveStatusContext() (*config.Context, error) {
 	if strings.TrimSpace(statusPath) != "" {
 		return &config.Context{
@@ -223,22 +144,4 @@ func resolveStatusContext() (*config.Context, error) {
 		return nil, fmt.Errorf("context %q does not define a project directory; pass --path or update the sitectl context", ctx.Name)
 	}
 	return ctx, nil
-}
-
-func writeDriftDetails(cmd *cobra.Command, status corecomponent.ComponentStatus) {
-	printedHeader := false
-	printFailures := func(label string, check corecomponent.StateCheck) {
-		for _, result := range check.Results {
-			if result.Match {
-				continue
-			}
-			if !printedHeader {
-				fmt.Fprintln(cmd.OutOrStdout(), "  drift:")
-				printedHeader = true
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "    %s %s %s %s\n", label, result.Domain, result.File, strings.TrimSpace(result.Detail))
-		}
-	}
-	printFailures("expected on:", status.On)
-	printFailures("expected off:", status.Off)
 }

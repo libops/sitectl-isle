@@ -8,6 +8,9 @@ import (
 	"testing"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
+	"github.com/libops/sitectl-isle/pkg/traefikconfig"
+	corecomponent "github.com/libops/sitectl/pkg/component"
+	"github.com/spf13/cobra"
 )
 
 func TestRunComponentSetPreservesOtherDetectedState(t *testing.T) {
@@ -19,12 +22,14 @@ func TestRunComponentSetPreservesOtherDetectedState(t *testing.T) {
 	oldYolo := componentSetYolo
 	oldApply := componentApplyOptions
 	oldInput := componentSetInput
+	oldPromptChoice := componentPromptChoice
 	t.Cleanup(func() {
 		statusPath = oldStatusPath
 		statusDrupalRootfs = oldDrupalRootfs
 		componentSetYolo = oldYolo
 		componentApplyOptions = oldApply
 		componentSetInput = oldInput
+		componentPromptChoice = oldPromptChoice
 	})
 
 	statusPath = projectDir
@@ -73,11 +78,13 @@ func TestRunComponentSetUsesCurrentFilesystemURIWhenTurningFcrepoOff(t *testing.
 	oldDrupalRootfs := statusDrupalRootfs
 	oldYolo := componentSetYolo
 	oldApply := componentApplyOptions
+	oldPromptChoice := componentPromptChoice
 	t.Cleanup(func() {
 		statusPath = oldStatusPath
 		statusDrupalRootfs = oldDrupalRootfs
 		componentSetYolo = oldYolo
 		componentApplyOptions = oldApply
+		componentPromptChoice = oldPromptChoice
 	})
 
 	statusPath = projectDir
@@ -123,10 +130,12 @@ volumes:
 	oldStatusPath := statusPath
 	oldDrupalRootfs := statusDrupalRootfs
 	oldYolo := componentSetYolo
+	oldPromptChoice := componentPromptChoice
 	t.Cleanup(func() {
 		statusPath = oldStatusPath
 		statusDrupalRootfs = oldDrupalRootfs
 		componentSetYolo = oldYolo
+		componentPromptChoice = oldPromptChoice
 	})
 
 	statusPath = projectDir
@@ -150,11 +159,13 @@ func TestRunComponentSetAppliesISLETLSOverrideHTTPOverride(t *testing.T) {
 	oldDrupalRootfs := statusDrupalRootfs
 	oldYolo := componentSetYolo
 	oldTLSMode := componentSetTLSMode
+	oldPromptChoice := componentPromptChoice
 	t.Cleanup(func() {
 		statusPath = oldStatusPath
 		statusDrupalRootfs = oldDrupalRootfs
 		componentSetYolo = oldYolo
 		componentSetTLSMode = oldTLSMode
+		componentPromptChoice = oldPromptChoice
 	})
 
 	statusPath = projectDir
@@ -181,6 +192,324 @@ func TestRunComponentSetAppliesISLETLSOverrideHTTPOverride(t *testing.T) {
 	}
 	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") {
 		t.Fatalf("expected dev http override, got:\n%s", string(devOverride))
+	}
+}
+
+func TestRunComponentSetPromptsForProdTLSModeWhenMissing(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldTLSMode := componentSetTLSMode
+	oldInput := componentSetInput
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentSetTLSMode = oldTLSMode
+		componentSetInput = oldInput
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = false
+	componentSetTLSMode = ""
+
+	var promptedName string
+	var promptedDefault string
+	componentPromptChoice = func(name string, choices []corecomponent.Choice, defaultValue string, input corecomponent.InputFunc, sections ...string) (string, error) {
+		promptedName = name
+		promptedDefault = defaultValue
+		return traefikconfig.ModeLetsEncrypt, nil
+	}
+	componentSetInput = func(question ...string) (string, error) {
+		return "y", nil
+	}
+
+	if err := runComponentSet(componentSetCmd, "isle-tls", "on"); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+
+	if promptedName != "isle-tls-tls-mode" {
+		t.Fatalf("expected prod tls prompt, got %q", promptedName)
+	}
+	if promptedDefault != traefikconfig.ModeSelfManaged {
+		t.Fatalf("expected self-managed default, got %q", promptedDefault)
+	}
+
+	envText, err := os.ReadFile(filepath.Join(projectDir, ".env"))
+	if err != nil {
+		t.Fatalf("ReadFile(.env) error = %v", err)
+	}
+	if !strings.Contains(string(envText), "URI_SCHEME=\"https\"") || !strings.Contains(string(envText), "TLS_PROVIDER=\"letsencrypt\"") {
+		t.Fatalf("expected letsencrypt env settings, got:\n%s", string(envText))
+	}
+
+	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
+	}
+	if !strings.Contains(string(composeText), "DRUPAL_ENABLE_HTTPS: \"true\"") {
+		t.Fatalf("expected https enabled in docker-compose.yml, got:\n%s", string(composeText))
+	}
+}
+
+func TestRunComponentSetPromptsForDevTLSModeWhenMissing(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldTLSMode := componentSetTLSMode
+	oldInput := componentSetInput
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentSetTLSMode = oldTLSMode
+		componentSetInput = oldInput
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = false
+	componentSetTLSMode = ""
+
+	var promptedName string
+	var promptedDefault string
+	componentPromptChoice = func(name string, choices []corecomponent.Choice, defaultValue string, input corecomponent.InputFunc, sections ...string) (string, error) {
+		promptedName = name
+		promptedDefault = defaultValue
+		return traefikconfig.ModeHTTP, nil
+	}
+	componentSetInput = func(question ...string) (string, error) {
+		return "y", nil
+	}
+
+	if err := runComponentSet(componentSetCmd, "isle-tls-override", "on"); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+
+	if promptedName != "isle-tls-override-tls-mode" {
+		t.Fatalf("expected dev tls prompt, got %q", promptedName)
+	}
+	if promptedDefault != traefikconfig.ModeMkcert {
+		t.Fatalf("expected mkcert default, got %q", promptedDefault)
+	}
+
+	devOverride, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.dev.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(docker-compose.dev.yml) error = %v", err)
+	}
+	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") {
+		t.Fatalf("expected dev http override, got:\n%s", string(devOverride))
+	}
+}
+
+func TestRunComponentSetForcesHTTPWhenTurningProdTLSOff(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+	if err := traefikconfig.ApplyProd(projectDir, traefikconfig.ModeMkcert); err != nil {
+		t.Fatalf("ApplyProd() error = %v", err)
+	}
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldTLSMode := componentSetTLSMode
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentSetTLSMode = oldTLSMode
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+	componentSetTLSMode = traefikconfig.ModeMkcert
+
+	if err := runComponentSet(componentSetCmd, "isle-tls", "off"); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+
+	envText, err := os.ReadFile(filepath.Join(projectDir, ".env"))
+	if err != nil {
+		t.Fatalf("ReadFile(.env) error = %v", err)
+	}
+	if !strings.Contains(string(envText), "URI_SCHEME=\"http\"") {
+		t.Fatalf("expected URI_SCHEME to be http, got:\n%s", string(envText))
+	}
+}
+
+func TestResolveComponentSetStateValueUsesFlag(t *testing.T) {
+	oldState := componentSetState
+	t.Cleanup(func() {
+		componentSetState = oldState
+	})
+
+	cmd := &cobra.Command{Use: "set"}
+	cmd.Flags().String("state", "", "")
+	componentSetState = "off"
+	if err := cmd.Flags().Set("state", "off"); err != nil {
+		t.Fatalf("Flags().Set(state) error = %v", err)
+	}
+
+	value, err := resolveComponentSetStateValue(cmd, []string{"fcrepo"})
+	if err != nil {
+		t.Fatalf("resolveComponentSetStateValue() error = %v", err)
+	}
+	if value != "off" {
+		t.Fatalf("expected off, got %q", value)
+	}
+}
+
+func TestResolveComponentSetStateValueRejectsDuplicateSources(t *testing.T) {
+	oldState := componentSetState
+	t.Cleanup(func() {
+		componentSetState = oldState
+	})
+
+	cmd := &cobra.Command{Use: "set"}
+	cmd.Flags().String("state", "", "")
+	componentSetState = "off"
+	if err := cmd.Flags().Set("state", "off"); err != nil {
+		t.Fatalf("Flags().Set(state) error = %v", err)
+	}
+
+	_, err := resolveComponentSetStateValue(cmd, []string{"fcrepo", "on"})
+	if err == nil {
+		t.Fatal("expected duplicate state source error")
+	}
+}
+
+func TestRunComponentSetPromptsForStateWhenMissing(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldApply := componentApplyOptions
+	oldPromptState := componentPromptState
+	oldPromptChoice := componentPromptChoice
+	oldInput := componentSetInput
+	oldState := componentSetState
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentApplyOptions = oldApply
+		componentPromptState = oldPromptState
+		componentPromptChoice = oldPromptChoice
+		componentSetInput = oldInput
+		componentSetState = oldState
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = false
+	componentSetState = ""
+
+	var promptedName string
+	componentPromptState = func(name string, guidance corecomponent.StateGuidance, input corecomponent.InputFunc) (corecomponent.State, error) {
+		promptedName = name
+		if !strings.Contains(guidance.Question, "Current state: `on`") {
+			t.Fatalf("expected current state in prompt, got:\n%s", guidance.Question)
+		}
+		return corecomponent.StateOff, nil
+	}
+	componentSetInput = func(question ...string) (string, error) {
+		return "y", nil
+	}
+
+	var got createpkg.Options
+	componentApplyOptions = func(opts createpkg.Options) error {
+		got = opts
+		return nil
+	}
+
+	if err := runComponentSet(componentSetCmd, "fcrepo", ""); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+
+	if promptedName != "fcrepo" {
+		t.Fatalf("expected fcrepo prompt, got %q", promptedName)
+	}
+	if got.Fcrepo != createpkg.FcrepoStateOff {
+		t.Fatalf("expected prompted off state to be applied, got %q", got.Fcrepo)
+	}
+}
+
+func TestRunComponentSetPromptsForStateAndTLSModeWhenMissing(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldTLSMode := componentSetTLSMode
+	oldPromptState := componentPromptState
+	oldPromptChoice := componentPromptChoice
+	oldInput := componentSetInput
+	oldState := componentSetState
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentSetTLSMode = oldTLSMode
+		componentPromptState = oldPromptState
+		componentPromptChoice = oldPromptChoice
+		componentSetInput = oldInput
+		componentSetState = oldState
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = false
+	componentSetTLSMode = ""
+	componentSetState = ""
+
+	var promptedStateName string
+	var promptedModeName string
+	componentPromptState = func(name string, guidance corecomponent.StateGuidance, input corecomponent.InputFunc) (corecomponent.State, error) {
+		promptedStateName = name
+		return corecomponent.StateOn, nil
+	}
+	componentPromptChoice = func(name string, choices []corecomponent.Choice, defaultValue string, input corecomponent.InputFunc, sections ...string) (string, error) {
+		promptedModeName = name
+		return traefikconfig.ModeLetsEncrypt, nil
+	}
+	componentSetInput = func(question ...string) (string, error) {
+		return "y", nil
+	}
+
+	if err := runComponentSet(componentSetCmd, "isle-tls", ""); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+
+	if promptedStateName != "isle-tls" {
+		t.Fatalf("expected state prompt for isle-tls, got %q", promptedStateName)
+	}
+	if promptedModeName != "isle-tls-tls-mode" {
+		t.Fatalf("expected tls mode prompt for isle-tls, got %q", promptedModeName)
+	}
+
+	envText, err := os.ReadFile(filepath.Join(projectDir, ".env"))
+	if err != nil {
+		t.Fatalf("ReadFile(.env) error = %v", err)
+	}
+	if !strings.Contains(string(envText), "TLS_PROVIDER=\"letsencrypt\"") {
+		t.Fatalf("expected letsencrypt env after prompts, got:\n%s", string(envText))
 	}
 }
 

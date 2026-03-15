@@ -25,7 +25,7 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	})
 
 	var promptCount int
-	inputs := []string{"off", "on", "public"}
+	inputs := []string{"2", "1", "public"}
 	createInput = func(question ...string) (string, error) {
 		promptCount++
 		value := inputs[0]
@@ -186,6 +186,59 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 	}
 	if req.Apply.DrupalRootfs != createpkg.DefaultDrupalRootfs {
 		t.Fatalf("expected drupal rootfs preserved, got %q", req.Apply.DrupalRootfs)
+	}
+}
+
+func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
+	oldInput := createInput
+	t.Cleanup(func() {
+		createInput = oldInput
+	})
+
+	var promptCount int
+	inputs := []string{"2", "1", "other", "archive"}
+	createInput = func(question ...string) (string, error) {
+		promptCount++
+		value := inputs[0]
+		inputs = inputs[1:]
+		return value, nil
+	}
+
+	oldPath := createPath
+	oldDrupalRootfs := createDrupalRootfs
+	oldISLEFileSystemURI := createISLEFileSystemURI
+	oldTemplateRepo := createTemplateRepo
+	oldTemplateBranch := createTemplateBranch
+	oldSetDefaultContext := createSetDefaultContext
+	oldSetupOnly := createSetupOnly
+	t.Cleanup(func() {
+		createPath = oldPath
+		createDrupalRootfs = oldDrupalRootfs
+		createISLEFileSystemURI = oldISLEFileSystemURI
+		createTemplateRepo = oldTemplateRepo
+		createTemplateBranch = oldTemplateBranch
+		createSetDefaultContext = oldSetDefaultContext
+		createSetupOnly = oldSetupOnly
+	})
+
+	createPath = "/tmp/site"
+	createDrupalRootfs = createpkg.DefaultDrupalRootfs
+	createISLEFileSystemURI = "private"
+	createTemplateRepo = defaultTemplateRepo
+	createTemplateBranch = defaultTemplateBranch
+
+	cmd := newCreateCommandForTest()
+
+	req, err := resolveCreateRequest(cmd)
+	if err != nil {
+		t.Fatalf("resolveCreateRequest() error = %v", err)
+	}
+
+	if promptCount != 4 {
+		t.Fatalf("expected 4 prompts, got %d", promptCount)
+	}
+	if req.Apply.ISLEFileSystemURI != "archive" {
+		t.Fatalf("expected prompted custom isle-file-system-uri archive, got %q", req.Apply.ISLEFileSystemURI)
 	}
 }
 
