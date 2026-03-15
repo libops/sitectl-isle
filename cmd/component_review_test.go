@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -272,5 +273,143 @@ func TestRunComponentReviewReportTableFormat(t *testing.T) {
 	rendered := out.String()
 	if !strings.Contains(rendered, "COMPONENT") || !strings.Contains(rendered, "blazegraph") {
 		t.Fatalf("expected table report output, got:\n%s", rendered)
+	}
+}
+
+func TestRunComponentReviewReportJSONFormatIncludesTLSDetails(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+	writeFileForTest(t, filepath.Join(projectDir, ".env"), "URI_SCHEME=\"https\"\nTLS_PROVIDER=\"letsencrypt\"\n")
+	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+services:
+  alpaca:
+    environment:
+      ALPACA_FCREPO_INDEXER_ENABLED: "true"
+      ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
+  blazegraph:
+    image: islandora/blazegraph
+  drupal:
+    environment:
+      DRUPAL_DEFAULT_FCREPO_URL: https://fcrepo.example/fcrepo/rest/
+      DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
+      DRUPAL_ENABLE_HTTPS: "true"
+  fcrepo:
+    image: islandora/fcrepo6
+  traefik:
+    command: >-
+      --ping=true
+      --entrypoints.https.http.tls.certResolver=letsencrypt
+      --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+volumes:
+  blazegraph-data: {}
+  fcrepo-data: {}
+`)
+	if err := traefikconfig.ApplyDev(projectDir, true, traefikconfig.ModeHTTP); err != nil {
+		t.Fatalf("ApplyDev() error = %v", err)
+	}
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldReport := componentReviewReport
+	oldVerbose := componentReviewVerbose
+	oldFormat := componentReviewFormat
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentReviewReport = oldReport
+		componentReviewVerbose = oldVerbose
+		componentReviewFormat = oldFormat
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentReviewReport = true
+	componentReviewVerbose = false
+	componentReviewFormat = corecomponent.ReportFormatJSON
+
+	var out bytes.Buffer
+	cmd := componentReviewCmd
+	cmd.SetOut(&out)
+
+	if err := runComponentReview(cmd); err != nil {
+		t.Fatalf("runComponentReview() error = %v", err)
+	}
+
+	var rows []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("Unmarshal() error = %v\noutput:\n%s", err, out.String())
+	}
+
+	var foundProd bool
+	var foundDev bool
+	for _, row := range rows {
+		switch row["name"] {
+		case "isle-tls":
+			foundProd = true
+			if row["detected_mode"] != "mode=letsencrypt, docker-compose.yml + .env" {
+				t.Fatalf("expected prod tls mode details, got %#v", row["detected_mode"])
+			}
+		case "isle-tls-override":
+			foundDev = true
+			if row["detected_mode"] != "mode=http, docker-compose.dev.yml" {
+				t.Fatalf("expected dev tls mode details, got %#v", row["detected_mode"])
+			}
+		}
+	}
+	if !foundProd || !foundDev {
+		t.Fatalf("expected tls rows in json output, got %#v", rows)
+	}
+}
+
+func TestRunComponentReviewReportVerboseIncludesDriftDetails(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+services:
+  alpaca:
+    environment:
+      ALPACA_FCREPO_INDEXER_ENABLED: "true"
+      ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
+  drupal:
+    environment:
+      DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.example/fcrepo/rest/
+      DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: ""
+      DRUPAL_ENABLE_HTTPS: "false"
+  fcrepo:
+    image: islandora/fcrepo6
+volumes:
+  fcrepo-data: {}
+`)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldReport := componentReviewReport
+	oldVerbose := componentReviewVerbose
+	oldFormat := componentReviewFormat
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentReviewReport = oldReport
+		componentReviewVerbose = oldVerbose
+		componentReviewFormat = oldFormat
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentReviewReport = true
+	componentReviewVerbose = true
+	componentReviewFormat = corecomponent.ReportFormatSection
+
+	var out bytes.Buffer
+	cmd := componentReviewCmd
+	cmd.SetOut(&out)
+
+	if err := runComponentReview(cmd); err != nil {
+		t.Fatalf("runComponentReview() error = %v", err)
+	}
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "Current state: `drifted`") || !strings.Contains(rendered, "drift:") {
+		t.Fatalf("expected verbose drift details in report output, got:\n%s", rendered)
 	}
 }

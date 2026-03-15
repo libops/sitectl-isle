@@ -450,6 +450,69 @@ func TestRunComponentSetPromptsForStateWhenMissing(t *testing.T) {
 	}
 }
 
+func TestRunComponentSetPromptsForStateAndTLSModeWhenMissing(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldTLSMode := componentSetTLSMode
+	oldPromptState := componentPromptState
+	oldPromptChoice := componentPromptChoice
+	oldInput := componentSetInput
+	oldState := componentSetState
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentSetTLSMode = oldTLSMode
+		componentPromptState = oldPromptState
+		componentPromptChoice = oldPromptChoice
+		componentSetInput = oldInput
+		componentSetState = oldState
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = false
+	componentSetTLSMode = ""
+	componentSetState = ""
+
+	var promptedStateName string
+	var promptedModeName string
+	componentPromptState = func(name string, guidance corecomponent.StateGuidance, input corecomponent.InputFunc) (corecomponent.State, error) {
+		promptedStateName = name
+		return corecomponent.StateOn, nil
+	}
+	componentPromptChoice = func(name string, choices []corecomponent.Choice, defaultValue string, input corecomponent.InputFunc, sections ...string) (string, error) {
+		promptedModeName = name
+		return traefikconfig.ModeLetsEncrypt, nil
+	}
+	componentSetInput = func(question ...string) (string, error) {
+		return "y", nil
+	}
+
+	if err := runComponentSet(componentSetCmd, "isle-tls", ""); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+
+	if promptedStateName != "isle-tls" {
+		t.Fatalf("expected state prompt for isle-tls, got %q", promptedStateName)
+	}
+	if promptedModeName != "isle-tls-tls-mode" {
+		t.Fatalf("expected tls mode prompt for isle-tls, got %q", promptedModeName)
+	}
+
+	envText, err := os.ReadFile(filepath.Join(projectDir, ".env"))
+	if err != nil {
+		t.Fatalf("ReadFile(.env) error = %v", err)
+	}
+	if !strings.Contains(string(envText), "TLS_PROVIDER=\"letsencrypt\"") {
+		t.Fatalf("expected letsencrypt env after prompts, got:\n%s", string(envText))
+	}
+}
+
 func writeFileForTest(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
