@@ -64,11 +64,22 @@ func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, err
 
 	views := make([]componentView, 0, len(sdkStatuses)+2)
 	for i := range sdkStatuses {
+		followUps := map[string]string{}
+		if sdkStatuses[i].Name == "fcrepo" && sdkStatuses[i].State == corecomponent.DetectedState(corecomponent.StateOff) {
+			scheme, err := resolveCurrentFileSystemURI(projectDir, drupalRootfs)
+			if err != nil {
+				return nil, err
+			}
+			if strings.TrimSpace(scheme) != "" {
+				followUps["isle-file-system-uri"] = scheme
+			}
+		}
 		views = append(views, componentView{
-			Definition: definitions[sdkStatuses[i].Name],
-			Name:       sdkStatuses[i].Name,
-			State:      sdkStatuses[i].State,
-			SDKStatus:  &sdkStatuses[i],
+			Definition:     definitions[sdkStatuses[i].Name],
+			Name:           sdkStatuses[i].Name,
+			State:          sdkStatuses[i].State,
+			SDKStatus:      &sdkStatuses[i],
+			FollowUpValues: followUps,
 		})
 	}
 
@@ -82,7 +93,10 @@ func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, err
 		State:       renderTLSDetectedState(prodTLS),
 		Detail:      renderTLSDetail(prodTLS),
 		DriftDetail: prodTLS.Detail,
-		Extra:       &prodTLS,
+		FollowUpValues: map[string]string{
+			"tls-mode": strings.TrimSpace(prodTLS.Mode),
+		},
+		Extra: &prodTLS,
 	})
 
 	devTLS, err := traefikconfig.DetectDev(projectDir)
@@ -95,7 +109,10 @@ func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, err
 		State:       renderTLSDetectedState(devTLS),
 		Detail:      renderTLSDetail(devTLS),
 		DriftDetail: devTLS.Detail,
-		Extra:       &devTLS,
+		FollowUpValues: map[string]string{
+			"tls-mode": strings.TrimSpace(devTLS.Mode),
+		},
+		Extra: &devTLS,
 	})
 
 	return views, nil

@@ -25,7 +25,7 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	})
 
 	var promptCount int
-	inputs := []string{"2", "1", "public"}
+	inputs := []string{"2", "1", "1"}
 	createInput = func(question ...string) (string, error) {
 		promptCount++
 		value := inputs[0]
@@ -35,7 +35,6 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 
 	oldPath := createPath
 	oldDrupalRootfs := createDrupalRootfs
-	oldISLEFileSystemURI := createISLEFileSystemURI
 	oldTemplateRepo := createTemplateRepo
 	oldTemplateBranch := createTemplateBranch
 	oldSetDefaultContext := createSetDefaultContext
@@ -43,7 +42,6 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	t.Cleanup(func() {
 		createPath = oldPath
 		createDrupalRootfs = oldDrupalRootfs
-		createISLEFileSystemURI = oldISLEFileSystemURI
 		createTemplateRepo = oldTemplateRepo
 		createTemplateBranch = oldTemplateBranch
 		createSetDefaultContext = oldSetDefaultContext
@@ -52,7 +50,6 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 
 	createPath = "/tmp/site"
 	createDrupalRootfs = createpkg.DefaultDrupalRootfs
-	createISLEFileSystemURI = "private"
 	createTemplateRepo = defaultTemplateRepo
 	createTemplateBranch = defaultTemplateBranch
 
@@ -99,7 +96,6 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 
 	oldPath := createPath
 	oldDrupalRootfs := createDrupalRootfs
-	oldISLEFileSystemURI := createISLEFileSystemURI
 	oldTemplateRepo := createTemplateRepo
 	oldTemplateBranch := createTemplateBranch
 	oldSetDefaultContext := createSetDefaultContext
@@ -107,7 +103,6 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	t.Cleanup(func() {
 		createPath = oldPath
 		createDrupalRootfs = oldDrupalRootfs
-		createISLEFileSystemURI = oldISLEFileSystemURI
 		createTemplateRepo = oldTemplateRepo
 		createTemplateBranch = oldTemplateBranch
 		createSetDefaultContext = oldSetDefaultContext
@@ -116,7 +111,6 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 
 	createPath = "/tmp/site"
 	createDrupalRootfs = createpkg.DefaultDrupalRootfs
-	createISLEFileSystemURI = "public"
 	createTemplateRepo = defaultTemplateRepo
 	createTemplateBranch = defaultTemplateBranch
 
@@ -149,7 +143,6 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 
 	oldPath := createPath
 	oldDrupalRootfs := createDrupalRootfs
-	oldISLEFileSystemURI := createISLEFileSystemURI
 	oldTemplateRepo := createTemplateRepo
 	oldTemplateBranch := createTemplateBranch
 	oldSetDefaultContext := createSetDefaultContext
@@ -157,7 +150,6 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 	t.Cleanup(func() {
 		createPath = oldPath
 		createDrupalRootfs = oldDrupalRootfs
-		createISLEFileSystemURI = oldISLEFileSystemURI
 		createTemplateRepo = oldTemplateRepo
 		createTemplateBranch = oldTemplateBranch
 		createSetDefaultContext = oldSetDefaultContext
@@ -166,7 +158,6 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 
 	createPath = "/tmp/site"
 	createDrupalRootfs = createpkg.DefaultDrupalRootfs
-	createISLEFileSystemURI = "archive"
 	createTemplateRepo = defaultTemplateRepo
 	createTemplateBranch = defaultTemplateBranch
 
@@ -196,7 +187,7 @@ func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
 	})
 
 	var promptCount int
-	inputs := []string{"2", "1", "other", "archive"}
+	inputs := []string{"2", "3", "archive", "1"}
 	createInput = func(question ...string) (string, error) {
 		promptCount++
 		value := inputs[0]
@@ -206,7 +197,6 @@ func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
 
 	oldPath := createPath
 	oldDrupalRootfs := createDrupalRootfs
-	oldISLEFileSystemURI := createISLEFileSystemURI
 	oldTemplateRepo := createTemplateRepo
 	oldTemplateBranch := createTemplateBranch
 	oldSetDefaultContext := createSetDefaultContext
@@ -214,7 +204,6 @@ func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
 	t.Cleanup(func() {
 		createPath = oldPath
 		createDrupalRootfs = oldDrupalRootfs
-		createISLEFileSystemURI = oldISLEFileSystemURI
 		createTemplateRepo = oldTemplateRepo
 		createTemplateBranch = oldTemplateBranch
 		createSetDefaultContext = oldSetDefaultContext
@@ -223,7 +212,6 @@ func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
 
 	createPath = "/tmp/site"
 	createDrupalRootfs = createpkg.DefaultDrupalRootfs
-	createISLEFileSystemURI = "private"
 	createTemplateRepo = defaultTemplateRepo
 	createTemplateBranch = defaultTemplateBranch
 
@@ -639,7 +627,6 @@ func newCreateCommandForTest() *cobra.Command {
 	cmd.Flags().Bool("setup-only", false, "")
 	corecomponent.AddCreateFlags(cmd, createComponentOptions()...)
 	corecomponent.AddDrupalRootfsFlag(cmd, &createDrupalRootfs, createpkg.DefaultDrupalRootfs)
-	cmd.Flags().String("isle-file-system-uri", "private", "")
 	return cmd
 }
 

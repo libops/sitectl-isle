@@ -42,8 +42,9 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 		"isle-tls-override": corecomponent.StateOn,
 	}
 	modes := map[string]string{
-		"isle-tls-tls-mode":          traefikconfig.ModeLetsEncrypt,
-		"isle-tls-override-tls-mode": traefikconfig.ModeHTTP,
+		"fcrepo-isle-file-system-uri": createpkg.PrivateISLEFileSystemURI,
+		"isle-tls-tls-mode":           traefikconfig.ModeLetsEncrypt,
+		"isle-tls-override-tls-mode":  traefikconfig.ModeHTTP,
 	}
 
 	var got createpkg.Options
@@ -349,10 +350,18 @@ volumes:
 			if row["detected_mode"] != "mode=letsencrypt, docker-compose.yml + .env" {
 				t.Fatalf("expected prod tls mode details, got %#v", row["detected_mode"])
 			}
+			followUps, _ := row["follow_ups"].(map[string]any)
+			if followUps["tls-mode"] != "letsencrypt" {
+				t.Fatalf("expected prod follow-up tls-mode, got %#v", row["follow_ups"])
+			}
 		case "isle-tls-override":
 			foundDev = true
 			if row["detected_mode"] != "mode=http, docker-compose.dev.yml" {
 				t.Fatalf("expected dev tls mode details, got %#v", row["detected_mode"])
+			}
+			followUps, _ := row["follow_ups"].(map[string]any)
+			if followUps["tls-mode"] != "http" {
+				t.Fatalf("expected dev follow-up tls-mode, got %#v", row["follow_ups"])
 			}
 		}
 	}

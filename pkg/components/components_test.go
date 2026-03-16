@@ -41,6 +41,9 @@ func TestFcrepoDefinition(t *testing.T) {
 	if definition.Behavior.Disable.DataMigration != corecomponent.DataMigrationHard {
 		t.Fatalf("expected fcrepo disable migration %q, got %q", corecomponent.DataMigrationHard, definition.Behavior.Disable.DataMigration)
 	}
+	if len(definition.FollowUps) != 1 || definition.FollowUps[0].Name != "isle-file-system-uri" {
+		t.Fatalf("expected fcrepo filesystem follow-up, got %#v", definition.FollowUps)
+	}
 
 	if len(definition.Off.Compose.Canonical) != 1 {
 		t.Fatalf("expected one canonical compose source, got %d", len(definition.Off.Compose.Canonical))

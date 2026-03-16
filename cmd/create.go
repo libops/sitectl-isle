@@ -21,7 +21,6 @@ import (
 var (
 	createPath              string
 	createDrupalRootfs      string
-	createISLEFileSystemURI string
 	createTemplateRepo      string
 	createTemplateBranch    string
 	createSetDefaultContext bool
@@ -87,7 +86,6 @@ func init() {
 	createCmd.Flags().BoolVar(&createSetupOnly, "setup-only", false, "Create and customize the checkout, but do not run make up")
 	corecomponent.AddCreateFlags(createCmd, createComponentOptions()...)
 	corecomponent.AddDrupalRootfsFlag(createCmd, &createDrupalRootfs, createpkg.DefaultDrupalRootfs)
-	createCmd.Flags().StringVar(&createISLEFileSystemURI, "isle-file-system-uri", createpkg.DefaultISLEFileSystemURI, "Filesystem scheme to use when FCRepo is off. Common values are public or private")
 }
 
 func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
@@ -109,24 +107,19 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 	}
 
 	opts := createpkg.Options{
-		Path:              createPath,
-		DrupalRootfs:      createDrupalRootfs,
-		ISLEFileSystemURI: createISLEFileSystemURI,
+		Path:         createPath,
+		DrupalRootfs: createDrupalRootfs,
 	}
 
-	states, err := corecomponent.ResolveCreateStates(cmd, createInput, createComponentOptions()...)
+	decisions, err := corecomponent.ResolveCreateDecisions(cmd, createInput, createComponentOptions()...)
 	if err != nil {
 		return createRequest{}, err
 	}
-	opts.Fcrepo = string(states["fcrepo"])
-	opts.Blazegraph = string(states["blazegraph"])
-
-	if opts.Fcrepo == createpkg.FcrepoStateOff && !cmd.Flags().Changed("isle-file-system-uri") {
-		var err error
-		opts.ISLEFileSystemURI, err = promptISLEFileSystemURI(createpkg.DefaultISLEFileSystemURI)
-		if err != nil {
-			return createRequest{}, err
-		}
+	opts.Fcrepo = string(decisions["fcrepo"].State)
+	opts.Blazegraph = string(decisions["blazegraph"].State)
+	opts.ISLEFileSystemURI = strings.TrimSpace(decisions["fcrepo"].Options["isle-file-system-uri"])
+	if opts.ISLEFileSystemURI == "" {
+		opts.ISLEFileSystemURI = createpkg.DefaultISLEFileSystemURI
 	}
 
 	return createRequest{
@@ -148,73 +141,6 @@ func createComponentOptions() []corecomponent.CreateOption {
 		options = append(options, def.CreateOption())
 	}
 	return options
-}
-
-func promptISLEFileSystemURI(defaultValue string) (string, error) {
-	question := corecomponent.RenderSection(
-		"File system URI",
-		fmt.Sprintf(`Since you chose to disable fedora, choose the Drupal filesystem URI to use for stored files. What you supply here needs to be a valid Drupal URI scheme.
-
-Common values are %q and %q.
-
-N.B. if you choose "public" as your URI scheme, you will not be able to provide access controls to files uploaded to Islandora (e.g. embargoes, local access, etc.)
-`, createpkg.PublicISLEFileSystemURI, createpkg.PrivateISLEFileSystemURI),
-	)
-	choice, err := corecomponent.PromptChoice(
-		"isle-file-system-uri",
-		[]corecomponent.Choice{
-			{
-				Value:   createpkg.PublicISLEFileSystemURI,
-				Label:   createpkg.PublicISLEFileSystemURI,
-				Help:    "Use Drupal's public URI (global/www access to all files).",
-				Aliases: []string{"1"},
-			},
-			{
-				Value:   createpkg.PrivateISLEFileSystemURI,
-				Label:   createpkg.PrivateISLEFileSystemURI,
-				Help:    "Use Drupal's private URI (fine-grained access control w/ performance overhead).",
-				Aliases: []string{"2"},
-			},
-			{
-				Value:            "other",
-				Label:            "other",
-				Help:             "Enter a custom Drupal URI scheme.",
-				Aliases:          []string{"3"},
-				AllowCustomInput: true,
-			},
-		},
-		defaultValue,
-		createInput,
-		strings.Split(question, "\n")...,
-	)
-	if err != nil {
-		return "", err
-	}
-	choice = strings.TrimSpace(choice)
-	if choice == "other" {
-		return promptCustomISLEFileSystemURI()
-	}
-	return choice, nil
-}
-
-func promptCustomISLEFileSystemURI() (string, error) {
-	question := corecomponent.RenderSection(
-		"Custom file system URI",
-		`Enter the custom Drupal URI scheme to use for Islandora-managed files.
-
-Examples include "archive" or another valid Drupal stream wrapper scheme.`,
-	)
-	value, err := createInput(
-		append(
-			strings.Split(question, "\n"),
-			"",
-			corecomponent.RenderPromptLine("Custom URI scheme: "),
-		)...,
-	)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(value), nil
 }
 
 func runCreateCommand(cmd *cobra.Command, req createRequest) error {

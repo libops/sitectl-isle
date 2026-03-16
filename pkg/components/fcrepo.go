@@ -7,6 +7,40 @@ func Fcrepo(source TemplateSource) Definition {
 		Name:           "fcrepo",
 		DefaultState:   corecomponent.StateOn,
 		PromptOnCreate: true,
+		FollowUps: []corecomponent.FollowUpSpec{
+			{
+				Name:           "isle-file-system-uri",
+				Label:          "Drupal filesystem URI",
+				FlagName:       "isle-file-system-uri",
+				FlagUsage:      "Filesystem scheme to use when fcrepo is off. Common values are public or private",
+				Question:       "Since you chose to disable fcrepo, choose the Drupal filesystem URI to use for stored files.",
+				DefaultValue:   "private",
+				PromptOnCreate: true,
+				AppliesTo:      corecomponent.StateOff,
+				CustomPrompt:   "Custom URI scheme: ",
+				Choices: []corecomponent.Choice{
+					{
+						Value:   "public",
+						Label:   "public",
+						Help:    "Use Drupal's public URI with global web access to all files.",
+						Aliases: []string{"1"},
+					},
+					{
+						Value:   "private",
+						Label:   "private",
+						Help:    "Use Drupal's private URI with per-file access control.",
+						Aliases: []string{"2"},
+					},
+					{
+						Value:            "__custom__",
+						Label:            "custom",
+						Help:             "Enter a custom Drupal stream wrapper scheme.",
+						Aliases:          []string{"3"},
+						AllowCustomInput: true,
+					},
+				},
+			},
+		},
 		Guidance: corecomponent.StateGuidance{
 			Question: `Fedora is the default backend repository that Islandora content will be synchronized with and stored in.
 If you plan to store your files in a different file system backend like AWS S3, you may want to turn the fcrepo component off.`,
