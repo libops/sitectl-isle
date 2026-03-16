@@ -45,3 +45,5 @@ func (s TemplateSource) DrupalAsset(path string) RepoAsset {
 }
 
 var ParseStateOverrides = corecomponent.ParseStateOverrides
+
+type FollowUpSpec = corecomponent.FollowUpSpec

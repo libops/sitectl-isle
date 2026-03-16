@@ -85,21 +85,26 @@ func DetectProd(projectDir string) (Status, error) {
 
 func DetectDev(projectDir string) (Status, error) {
 	devPath := filepath.Join(projectDir, "docker-compose.dev.yml")
+	return DetectOverride(projectDir, devPath)
+}
+
+func DetectOverride(projectDir, overridePath string) (Status, error) {
+	devPath := firstNonEmpty(overridePath, filepath.Join(projectDir, "docker-compose.override.yml"))
 	data, err := os.ReadFile(devPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Status{Mode: ModeInherited, Detail: "docker-compose.dev.yml not present"}, nil
+			return Status{Mode: ModeInherited, Detail: filepath.Base(devPath) + " not present"}, nil
 		}
 		return Status{}, err
 	}
 
 	doc := map[string]any{}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return Status{}, fmt.Errorf("parse docker-compose.dev.yml: %w", err)
+		return Status{}, fmt.Errorf("parse %s: %w", filepath.Base(devPath), err)
 	}
 	services := getMap(doc, "services")
 	if len(services) == 0 {
-		return Status{Mode: ModeInherited, Detail: "docker-compose.dev.yml has no service overrides"}, nil
+		return Status{Mode: ModeInherited, Detail: filepath.Base(devPath) + " has no service overrides"}, nil
 	}
 
 	drupalEnv := getMap(getMap(services, "drupal"), "environment")
@@ -109,7 +114,7 @@ func DetectDev(projectDir string) (Status, error) {
 
 	hasOverride := len(drupalEnv) > 0 || len(traefikEnv) > 0 || commandValue != ""
 	if !hasOverride {
-		return Status{Mode: ModeInherited, Detail: "docker-compose.dev.yml has no TLS override"}, nil
+		return Status{Mode: ModeInherited, Detail: filepath.Base(devPath) + " has no TLS override"}, nil
 	}
 
 	drupalHTTPS, drupalFound := mapStringValue(drupalEnv, "DRUPAL_ENABLE_HTTPS")
@@ -119,13 +124,13 @@ func DetectDev(projectDir string) (Status, error) {
 
 	switch {
 	case !drupalFound && !uriFound && !providerFound && !hasLE:
-		return Status{Mode: ModeInherited, Detail: "docker-compose.dev.yml inherits docker-compose.yml"}, nil
+		return Status{Mode: ModeInherited, Detail: filepath.Base(devPath) + " inherits docker-compose.yml"}, nil
 	case drupalFound && uriFound && providerFound && drupalHTTPS == "false" && uriScheme == ModeHTTP && tlsProvider == ModeSelfManaged && !hasLE:
-		return Status{Enabled: true, Mode: ModeHTTP, Detail: "docker-compose.dev.yml"}, nil
+		return Status{Enabled: true, Mode: ModeHTTP, Detail: filepath.Base(devPath)}, nil
 	case drupalFound && uriFound && providerFound && drupalHTTPS == "true" && uriScheme == "https" && tlsProvider == ModeLetsEncrypt && hasLE:
-		return Status{Enabled: true, Mode: ModeLetsEncrypt, Detail: "docker-compose.dev.yml"}, nil
+		return Status{Enabled: true, Mode: ModeLetsEncrypt, Detail: filepath.Base(devPath)}, nil
 	case drupalFound && uriFound && providerFound && drupalHTTPS == "true" && uriScheme == "https" && tlsProvider == ModeSelfManaged && !hasLE:
-		return Status{Enabled: true, Mode: detectSelfManagedMode(projectDir), Detail: "docker-compose.dev.yml"}, nil
+		return Status{Enabled: true, Mode: detectSelfManagedMode(projectDir), Detail: filepath.Base(devPath)}, nil
 	default:
 		return Status{
 			Drifted: true,
@@ -159,6 +164,10 @@ func ApplyProd(projectDir, mode string) error {
 }
 
 func ApplyDev(projectDir string, enabled bool, mode string) error {
+	return ApplyOverride(projectDir, filepath.Join(projectDir, "docker-compose.dev.yml"), enabled, mode)
+}
+
+func ApplyOverride(projectDir, overridePath string, enabled bool, mode string) error {
 	if enabled {
 		if err := validateMode(mode, true); err != nil {
 			return err
@@ -167,11 +176,11 @@ func ApplyDev(projectDir string, enabled bool, mode string) error {
 		mode = ModeInherited
 	}
 
-	devPath := filepath.Join(projectDir, "docker-compose.dev.yml")
+	devPath := firstNonEmpty(overridePath, filepath.Join(projectDir, "docker-compose.override.yml"))
 	doc := map[string]any{}
 	if data, err := os.ReadFile(devPath); err == nil {
 		if err := yaml.Unmarshal(data, &doc); err != nil {
-			return fmt.Errorf("parse docker-compose.dev.yml: %w", err)
+			return fmt.Errorf("parse %s: %w", filepath.Base(devPath), err)
 		}
 	} else if !os.IsNotExist(err) {
 		return err

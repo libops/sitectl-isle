@@ -37,11 +37,14 @@ func TestStatusCommandReportsOn(t *testing.T) {
 	}
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "BLAZEGRAPH") || !strings.Contains(rendered, "Current state: `on`") {
+	if !strings.Contains(rendered, "BLAZEGRAPH") || !strings.Contains(rendered, "Current disposition: `enabled`") {
 		t.Fatalf("expected blazegraph on, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "FCREPO") {
 		t.Fatalf("expected fcrepo on, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "EXTERNAL-CANTALOUPE") || !strings.Contains(rendered, "Current disposition: `disabled`") {
+		t.Fatalf("expected external-cantaloupe off, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "ISLE-TLS") || !strings.Contains(rendered, "Detected mode: mode=http") {
 		t.Fatalf("expected isle-tls off, got:\n%s", rendered)
@@ -84,7 +87,7 @@ func TestStatusCommandReportsOff(t *testing.T) {
 	}
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "BLAZEGRAPH") || !strings.Contains(rendered, "Current state: `off`") {
+	if !strings.Contains(rendered, "BLAZEGRAPH") || !strings.Contains(rendered, "Current disposition: `disabled`") {
 		t.Fatalf("expected blazegraph off, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "FCREPO") {
@@ -93,7 +96,10 @@ func TestStatusCommandReportsOff(t *testing.T) {
 	if !strings.Contains(rendered, "Drupal filesystem URI: public") {
 		t.Fatalf("expected fcrepo filesystem follow-up, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "ISLE-TLS-OVERRIDE") || !strings.Contains(rendered, "docker-compose.dev.yml not present") {
+	if !strings.Contains(rendered, "EXTERNAL-CANTALOUPE") || !strings.Contains(rendered, "Current disposition: `disabled`") {
+		t.Fatalf("expected external-cantaloupe off, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "ISLE-TLS-OVERRIDE") || !strings.Contains(rendered, "docker-compose.local.yml not present") {
 		t.Fatalf("expected isle-tls-override off, got:\n%s", rendered)
 	}
 }
@@ -141,7 +147,7 @@ volumes:
 	}
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "Current state: `drifted`") {
+	if !strings.Contains(rendered, "Current disposition: `drifted`") {
 		t.Fatalf("expected blazegraph drifted, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "drift:") {
@@ -158,6 +164,8 @@ func TestStatusCommandUsesActiveContextProjectDir(t *testing.T) {
 
 	if err := config.SaveContext(&config.Context{
 		Name:           "isle-local",
+		Site:           "isle-local",
+		Plugin:         "isle",
 		DockerHostType: config.ContextLocal,
 		DockerSocket:   "/var/run/docker.sock",
 		ProjectDir:     projectDir,
@@ -195,7 +203,7 @@ func TestStatusCommandUsesActiveContextProjectDir(t *testing.T) {
 	}
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "BLAZEGRAPH") || !strings.Contains(rendered, "Current state: `on`") {
+	if !strings.Contains(rendered, "BLAZEGRAPH") || !strings.Contains(rendered, "Current disposition: `enabled`") {
 		t.Fatalf("expected blazegraph on from active context project dir, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "FCREPO") {
@@ -236,7 +244,7 @@ volumes:
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.dev.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.local.yml"), []byte(`
 services:
   drupal:
     environment:
@@ -253,7 +261,7 @@ services:
       TLS_PROVIDER: self-managed
       URI_SCHEME: http
 `), 0o644); err != nil {
-		t.Fatalf("WriteFile(dev compose) error = %v", err)
+		t.Fatalf("WriteFile(local compose) error = %v", err)
 	}
 
 	oldStatusPath := statusPath
@@ -309,19 +317,29 @@ services:
     image: islandora/blazegraph
   drupal:
     environment:
+      DRUPAL_DEFAULT_CANTALOUPE_URL: http://${DOMAIN}/cantaloupe/iiif/2
       DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.example/fcrepo/rest/
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
       DRUPAL_ENABLE_HTTPS: "false"
+  cantaloupe:
+    image: islandora/cantaloupe
   fcrepo:
     image: islandora/fcrepo6
 volumes:
   blazegraph-data: {}
+  cantaloupe-data: {}
   fcrepo-data: {}
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte("URI_SCHEME=\"http\"\nTLS_PROVIDER=\"self-managed\"\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(.env) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, "conf", "traefik"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(conf/traefik) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "conf", "traefik", "cantaloupe.yml"), []byte("http:\n  middlewares:\n    cantaloupe-strip-prefix:\n      stripPrefix:\n        prefixes:\n          - /cantaloupe\n    cantaloupe-custom-request-headers:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-Path: /cantaloupe\n    cantaloupe:\n      chain:\n        middlewares:\n          - cantaloupe-strip-prefix\n          - cantaloupe-custom-request-headers\n\n  services:\n    cantaloupe:\n      loadBalancer:\n        servers:\n          - url: http://cantaloupe:8182\n  routers:\n    cantaloupe:\n      rule: Host(`{{ env \"DOMAIN\" }}`) && PathPrefix(`/cantaloupe`)\n      middlewares:\n        - cantaloupe\n      service: cantaloupe\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(conf/traefik/cantaloupe.yml) error = %v", err)
 	}
 
 	files := []string{

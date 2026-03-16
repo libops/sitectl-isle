@@ -4,20 +4,22 @@ import corecomponent "github.com/libops/sitectl/pkg/component"
 
 func Fcrepo(source TemplateSource) Definition {
 	return Definition{
-		Name:           "fcrepo",
-		DefaultState:   corecomponent.StateOn,
-		PromptOnCreate: true,
+		Name:                "fcrepo",
+		DefaultState:        corecomponent.StateOn,
+		DefaultDisposition:  corecomponent.DispositionEnabled,
+		AllowedDispositions: []corecomponent.Disposition{corecomponent.DispositionEnabled, corecomponent.DispositionSuperseded},
+		PromptOnCreate:      true,
 		FollowUps: []corecomponent.FollowUpSpec{
 			{
-				Name:           "isle-file-system-uri",
-				Label:          "Drupal filesystem URI",
-				FlagName:       "isle-file-system-uri",
-				FlagUsage:      "Filesystem scheme to use when fcrepo is off. Common values are public or private",
-				Question:       "Since you chose to disable fcrepo, choose the Drupal filesystem URI to use for stored files.",
-				DefaultValue:   "private",
-				PromptOnCreate: true,
-				AppliesTo:      corecomponent.StateOff,
-				CustomPrompt:   "Custom URI scheme: ",
+				Name:                 "isle-file-system-uri",
+				Label:                "Drupal filesystem URI",
+				FlagName:             "isle-file-system-uri",
+				FlagUsage:            "Filesystem scheme to use when fcrepo is off. Common values are public or private",
+				Question:             "Since you chose to disable fcrepo, choose the Drupal filesystem URI to use for stored files.",
+				DefaultValue:         "private",
+				PromptOnCreate:       true,
+				AppliesToDisposition: corecomponent.DispositionSuperseded,
+				CustomPrompt:         "Custom URI scheme: ",
 				Choices: []corecomponent.Choice{
 					{
 						Value:   "public",
@@ -44,8 +46,8 @@ func Fcrepo(source TemplateSource) Definition {
 		Guidance: corecomponent.StateGuidance{
 			Question: `Fedora is the default backend repository that Islandora content will be synchronized with and stored in.
 If you plan to store your files in a different file system backend like AWS S3, you may want to turn the fcrepo component off.`,
-			OnHelp:  "Keep the default Islandora repository stack with Fedora-backed storage.",
-			OffHelp: "Store files directly in Drupal's filesystem and remove Fedora-specific wiring.",
+			EnabledHelp:    "Keep the default Islandora repository stack with Fedora-backed storage.",
+			SupersededHelp: "Replace Fedora-backed storage with another storage approach and rewire Drupal to use a different filesystem URI.",
 		},
 		Gates: corecomponent.GateSpec{
 			LocalOnly: true,

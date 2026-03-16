@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
+	"github.com/libops/sitectl-isle/pkg/externalcantaloupe"
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 )
@@ -36,15 +37,17 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
 
 	states := map[string]corecomponent.State{
-		"fcrepo":            corecomponent.StateOff,
-		"blazegraph":        corecomponent.StateOn,
-		"isle-tls":          corecomponent.StateOn,
-		"isle-tls-override": corecomponent.StateOn,
+		"fcrepo":              corecomponent.StateOff,
+		"blazegraph":          corecomponent.StateOn,
+		"external-cantaloupe": corecomponent.StateOn,
+		"isle-tls":            corecomponent.StateOn,
+		"isle-tls-override":   corecomponent.StateOn,
 	}
 	modes := map[string]string{
-		"fcrepo-isle-file-system-uri": createpkg.PrivateISLEFileSystemURI,
-		"isle-tls-tls-mode":           traefikconfig.ModeLetsEncrypt,
-		"isle-tls-override-tls-mode":  traefikconfig.ModeHTTP,
+		"fcrepo-isle-file-system-uri":      createpkg.PrivateISLEFileSystemURI,
+		"external-cantaloupe-upstream-url": "http://cantaloupe.example:8182",
+		"isle-tls-tls-mode":                traefikconfig.ModeLetsEncrypt,
+		"isle-tls-override-tls-mode":       traefikconfig.ModeHTTP,
 	}
 
 	var got createpkg.Options
@@ -58,7 +61,12 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 	componentReviewPromptChoice = func(name string, choices []corecomponent.Choice, defaultValue string, input corecomponent.InputFunc, sections ...string) (string, error) {
 		return modes[name], nil
 	}
+	inputCalls := 0
 	componentReviewInput = func(question ...string) (string, error) {
+		inputCalls++
+		if inputCalls == 1 {
+			return "http://cantaloupe.example:8182", nil
+		}
 		return "y", nil
 	}
 
@@ -88,19 +96,29 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 		t.Fatalf("expected prod letsencrypt settings, got:\n%s", string(envText))
 	}
 
-	devOverride, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.dev.yml"))
+	devOverride, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.local.yml"))
 	if err != nil {
-		t.Fatalf("ReadFile(docker-compose.dev.yml) error = %v", err)
+		t.Fatalf("ReadFile(docker-compose.local.yml) error = %v", err)
 	}
-	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") {
+	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") || !strings.Contains(string(devOverride), "\n  cantaloupe:\n") {
 		t.Fatalf("expected dev http override, got:\n%s", string(devOverride))
+	}
+	traefikText, err := os.ReadFile(filepath.Join(projectDir, externalcantaloupe.DefaultTraefikConfigPath))
+	if err != nil {
+		t.Fatalf("ReadFile(cantaloupe.yml) error = %v", err)
+	}
+	if !strings.Contains(string(traefikText), "http://cantaloupe.example:8182") {
+		t.Fatalf("expected external cantaloupe upstream, got:\n%s", string(traefikText))
 	}
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "isle-tls: on (letsencrypt)") {
+	if !strings.Contains(rendered, "external-cantaloupe: distributed (http://cantaloupe.example:8182)") {
+		t.Fatalf("expected review output to include external cantaloupe decision, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "isle-tls: enabled (letsencrypt)") {
 		t.Fatalf("expected review output to include prod tls decision, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "isle-tls-override: on (http)") {
+	if !strings.Contains(rendered, "isle-tls-override: enabled (http)") {
 		t.Fatalf("expected review output to include dev tls decision, got:\n%s", rendered)
 	}
 }
@@ -111,7 +129,7 @@ func TestRunComponentReviewUsesDetectedTLSModeAsPromptDefault(t *testing.T) {
 	if err := traefikconfig.ApplyProd(projectDir, traefikconfig.ModeLetsEncrypt); err != nil {
 		t.Fatalf("ApplyProd() error = %v", err)
 	}
-	if err := traefikconfig.ApplyDev(projectDir, true, traefikconfig.ModeHTTP); err != nil {
+	if err := traefikconfig.ApplyOverride(projectDir, filepath.Join(projectDir, "docker-compose.local.yml"), true, traefikconfig.ModeHTTP); err != nil {
 		t.Fatalf("ApplyDev() error = %v", err)
 	}
 
@@ -140,6 +158,8 @@ func TestRunComponentReviewUsesDetectedTLSModeAsPromptDefault(t *testing.T) {
 		switch name {
 		case "isle-tls", "isle-tls-override":
 			return corecomponent.StateOn, nil
+		case "external-cantaloupe":
+			return corecomponent.StateOff, nil
 		default:
 			return corecomponent.StateOn, nil
 		}
@@ -235,7 +255,7 @@ func TestRunComponentReviewReportDoesNotPromptOrApply(t *testing.T) {
 	}
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "BLAZEGRAPH") || !strings.Contains(rendered, "Current state: `on`") {
+	if !strings.Contains(rendered, "BLAZEGRAPH") || !strings.Contains(rendered, "Current disposition: `enabled`") {
 		t.Fatalf("expected report output, got:\n%s", rendered)
 	}
 }
@@ -305,7 +325,7 @@ volumes:
   blazegraph-data: {}
   fcrepo-data: {}
 `)
-	if err := traefikconfig.ApplyDev(projectDir, true, traefikconfig.ModeHTTP); err != nil {
+	if err := traefikconfig.ApplyOverride(projectDir, filepath.Join(projectDir, "docker-compose.local.yml"), true, traefikconfig.ModeHTTP); err != nil {
 		t.Fatalf("ApplyDev() error = %v", err)
 	}
 
@@ -356,7 +376,7 @@ volumes:
 			}
 		case "isle-tls-override":
 			foundDev = true
-			if row["detected_mode"] != "mode=http, docker-compose.dev.yml" {
+			if row["detected_mode"] != "mode=http, docker-compose.local.yml" {
 				t.Fatalf("expected dev tls mode details, got %#v", row["detected_mode"])
 			}
 			followUps, _ := row["follow_ups"].(map[string]any)
@@ -418,7 +438,7 @@ volumes:
 	}
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "Current state: `drifted`") || !strings.Contains(rendered, "drift:") {
+	if !strings.Contains(rendered, "Current disposition: `drifted`") || !strings.Contains(rendered, "drift:") {
 		t.Fatalf("expected verbose drift details in report output, got:\n%s", rendered)
 	}
 }

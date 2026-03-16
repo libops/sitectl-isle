@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
+	"github.com/libops/sitectl-isle/pkg/externalcantaloupe"
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
@@ -12,18 +13,21 @@ import (
 )
 
 var (
-	componentReviewInput        = config.GetInput
-	componentReviewPromptState  = corecomponent.PromptState
-	componentReviewPromptChoice = corecomponent.PromptChoice
-	componentReviewReport       bool
-	componentReviewVerbose      bool
-	componentReviewFormat       string
+	componentReviewInput             = config.GetInput
+	componentReviewPromptState       = corecomponent.PromptState
+	componentReviewPromptDisposition corecomponent.PromptDispositionFunc
+	componentReviewPromptChoice      = corecomponent.PromptChoice
+	componentReviewReport            bool
+	componentReviewVerbose           bool
+	componentReviewFormat            string
 )
 
 type componentReviewDecision struct {
+	Disposition   corecomponent.Disposition
 	State         corecomponent.State
 	TLSMode       string
 	FileSystemURI string
+	UpstreamURL   string
 }
 
 type promptReviewDecision = corecomponent.ReviewDecision
@@ -52,7 +56,7 @@ func runComponentReview(cmd *cobra.Command) error {
 		return fmt.Errorf("component review is local-only; context %q is %q", ctx.Name, ctx.DockerHostType)
 	}
 
-	statuses, err := detectComponentViews(ctx.ProjectDir, statusDrupalRootfs)
+	statuses, err := detectComponentViewsForContext(ctx, statusDrupalRootfs)
 	if err != nil {
 		return err
 	}
@@ -61,26 +65,29 @@ func runComponentReview(cmd *cobra.Command) error {
 	}
 
 	rawDecisions, err := corecomponent.RunReview(statuses, corecomponent.ReviewOptions{
-		Input:        componentReviewInput,
-		PromptState:  componentReviewPromptState,
-		PromptChoice: componentReviewPromptChoice,
-		SummaryLine:  componentReviewSummaryLine,
-		Confirm:      confirmComponentReview,
+		Input:             componentReviewInput,
+		PromptState:       componentReviewPromptState,
+		PromptDisposition: componentReviewPromptDisposition,
+		PromptChoice:      componentReviewPromptChoice,
+		SummaryLine:       componentReviewSummaryLine,
+		Confirm:           confirmComponentReview,
 	})
 	if err != nil {
 		return err
 	}
 	decisions := convertComponentReviewDecisions(rawDecisions)
 
-	if err := applyComponentReview(ctx.ProjectDir, statusDrupalRootfs, decisions); err != nil {
+	if err := applyComponentReview(ctx, statusDrupalRootfs, decisions); err != nil {
 		return err
 	}
 
 	for _, status := range statuses {
 		decision := decisions[status.Name]
-		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", status.Name, decision.State)
+		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", status.Name, reviewDecisionLabel(decision))
 		if strings.TrimSpace(decision.TLSMode) != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), " (%s)", decision.TLSMode)
+		} else if strings.TrimSpace(decision.UpstreamURL) != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), " (%s)", decision.UpstreamURL)
 		}
 		fmt.Fprintln(cmd.OutOrStdout())
 	}
@@ -88,7 +95,7 @@ func runComponentReview(cmd *cobra.Command) error {
 }
 
 func componentReviewSummaryLine(status componentView, decision promptReviewDecision) (string, error) {
-	line := fmt.Sprintf("Set `%s` to `%s`.", status.Name, decision.State)
+	line := fmt.Sprintf("Set `%s` to `%s`.", status.Name, reviewPromptDecisionLabel(decision))
 	if rendered := corecomponent.RenderDecisionFollowUps(status.Definition, decision); rendered != "" {
 		line = fmt.Sprintf("%s %s", line, rendered)
 	}
@@ -108,17 +115,19 @@ func convertComponentReviewDecisions(raw map[string]promptReviewDecision) map[st
 	decisions := make(map[string]componentReviewDecision, len(raw))
 	for name, decision := range raw {
 		decisions[name] = componentReviewDecision{
+			Disposition:   decision.Disposition,
 			State:         decision.State,
 			TLSMode:       strings.TrimSpace(decision.Options["tls-mode"]),
 			FileSystemURI: strings.TrimSpace(decision.Options["isle-file-system-uri"]),
+			UpstreamURL:   strings.TrimSpace(decision.Options["upstream-url"]),
 		}
 	}
 	return decisions
 }
 
-func applyComponentReview(projectDir, drupalRootfs string, decisions map[string]componentReviewDecision) error {
+func applyComponentReview(ctx *config.Context, drupalRootfs string, decisions map[string]componentReviewDecision) error {
 	opts := createpkg.Options{
-		Path:         projectDir,
+		Path:         ctx.ProjectDir,
 		DrupalRootfs: drupalRootfs,
 		Fcrepo:       string(decisions["fcrepo"].State),
 		Blazegraph:   string(decisions["blazegraph"].State),
@@ -133,7 +142,7 @@ func applyComponentReview(projectDir, drupalRootfs string, decisions map[string]
 	if opts.Fcrepo == createpkg.FcrepoStateOff {
 		opts.ISLEFileSystemURI = strings.TrimSpace(decisions["fcrepo"].FileSystemURI)
 		if opts.ISLEFileSystemURI == "" {
-			scheme, err := resolveCurrentFileSystemURI(projectDir, drupalRootfs)
+			scheme, err := resolveCurrentFileSystemURI(ctx.ProjectDir, drupalRootfs)
 			if err != nil {
 				return err
 			}
@@ -144,10 +153,30 @@ func applyComponentReview(projectDir, drupalRootfs string, decisions map[string]
 	if err := componentApplyOptions(opts); err != nil {
 		return err
 	}
-	if err := traefikconfig.ApplyProd(projectDir, reviewResolvedTLSMode("isle-tls", decisions["isle-tls"])); err != nil {
+	if err := externalcantaloupe.Apply(ctx.ProjectDir, resolveEnvironmentOverridePath(ctx), strings.TrimSpace(decisions["external-cantaloupe"].UpstreamURL), decisions["external-cantaloupe"].Disposition == corecomponent.DispositionDistributed); err != nil {
 		return err
 	}
-	return traefikconfig.ApplyDev(projectDir, decisions["isle-tls-override"].State == corecomponent.StateOn, reviewResolvedTLSMode("isle-tls-override", decisions["isle-tls-override"]))
+	if err := traefikconfig.ApplyProd(ctx.ProjectDir, reviewResolvedTLSMode("isle-tls", decisions["isle-tls"])); err != nil {
+		return err
+	}
+	if err := traefikconfig.ApplyOverride(ctx.ProjectDir, resolveEnvironmentOverridePath(ctx), decisions["isle-tls-override"].State == corecomponent.StateOn, reviewResolvedTLSMode("isle-tls-override", decisions["isle-tls-override"])); err != nil {
+		return err
+	}
+	return ctx.EnsureTrackedComposeOverrideSymlink()
+}
+
+func reviewDecisionLabel(decision componentReviewDecision) string {
+	if decision.Disposition != "" {
+		return string(decision.Disposition)
+	}
+	return string(corecomponent.StateToDisposition(decision.State))
+}
+
+func reviewPromptDecisionLabel(decision promptReviewDecision) string {
+	if decision.Disposition != "" {
+		return string(decision.Disposition)
+	}
+	return string(corecomponent.StateToDisposition(decision.State))
 }
 
 func reviewResolvedTLSMode(name string, decision componentReviewDecision) string {

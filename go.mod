@@ -4,7 +4,7 @@ go 1.25.3
 
 require (
 	github.com/chromedp/chromedp v0.14.2
-	github.com/libops/sitectl v0.8.0
+	github.com/libops/sitectl v0.9.0
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
