@@ -21,8 +21,9 @@ var (
 )
 
 type componentReviewDecision struct {
-	State   corecomponent.State
-	TLSMode string
+	State         corecomponent.State
+	TLSMode       string
+	FileSystemURI string
 }
 
 type promptReviewDecision = corecomponent.ReviewDecision
@@ -60,11 +61,11 @@ func runComponentReview(cmd *cobra.Command) error {
 	}
 
 	rawDecisions, err := corecomponent.RunReview(statuses, corecomponent.ReviewOptions{
-		Input:       componentReviewInput,
-		PromptState: componentReviewPromptState,
-		PromptExtra: promptComponentReviewExtra,
-		SummaryLine: componentReviewSummaryLine,
-		Confirm:     confirmComponentReview,
+		Input:        componentReviewInput,
+		PromptState:  componentReviewPromptState,
+		PromptChoice: componentReviewPromptChoice,
+		SummaryLine:  componentReviewSummaryLine,
+		Confirm:      confirmComponentReview,
 	})
 	if err != nil {
 		return err
@@ -86,39 +87,10 @@ func runComponentReview(cmd *cobra.Command) error {
 	return nil
 }
 
-func promptComponentReviewExtra(status componentView, decision *promptReviewDecision) error {
-	if !isTLSComponent(status.Name) || decision.State != corecomponent.StateOn {
-		return nil
-	}
-	defaultMode, err := reviewDefaultTLSMode(status)
-	if err != nil {
-		return err
-	}
-	mode, err := promptTLSComponentMode(status.Name, defaultMode, componentReviewInput, componentReviewPromptChoice)
-	if err != nil {
-		return err
-	}
-	decision.Options["tls-mode"] = mode
-	return nil
-}
-
-func reviewDefaultTLSMode(status componentView) (string, error) {
-	tlsStatus, _ := status.Extra.(*traefikconfig.Status)
-	if tlsStatus != nil && strings.TrimSpace(tlsStatus.Mode) != "" && tlsStatus.Mode != traefikconfig.ModeInherited {
-		if status.Name == "isle-tls" && tlsStatus.Mode != traefikconfig.ModeHTTP && isValidReviewTLSMode(status.Name, tlsStatus.Mode) {
-			return tlsStatus.Mode, nil
-		}
-		if status.Name == "isle-tls-override" && isValidReviewTLSMode(status.Name, tlsStatus.Mode) {
-			return tlsStatus.Mode, nil
-		}
-	}
-	return defaultTLSPromptMode(status.Name)
-}
-
 func componentReviewSummaryLine(status componentView, decision promptReviewDecision) (string, error) {
 	line := fmt.Sprintf("Set `%s` to `%s`.", status.Name, decision.State)
-	if requestedMode := strings.TrimSpace(decision.Options["tls-mode"]); requestedMode != "" {
-		line = fmt.Sprintf("%s Requested mode: `%s`.", line, requestedMode)
+	if rendered := corecomponent.RenderDecisionFollowUps(status.Definition, decision); rendered != "" {
+		line = fmt.Sprintf("%s %s", line, rendered)
 	}
 	return line, nil
 }
@@ -136,8 +108,9 @@ func convertComponentReviewDecisions(raw map[string]promptReviewDecision) map[st
 	decisions := make(map[string]componentReviewDecision, len(raw))
 	for name, decision := range raw {
 		decisions[name] = componentReviewDecision{
-			State:   decision.State,
-			TLSMode: strings.TrimSpace(decision.Options["tls-mode"]),
+			State:         decision.State,
+			TLSMode:       strings.TrimSpace(decision.Options["tls-mode"]),
+			FileSystemURI: strings.TrimSpace(decision.Options["isle-file-system-uri"]),
 		}
 	}
 	return decisions
@@ -158,11 +131,14 @@ func applyComponentReview(projectDir, drupalRootfs string, decisions map[string]
 	}
 
 	if opts.Fcrepo == createpkg.FcrepoStateOff {
-		scheme, err := resolveCurrentFileSystemURI(projectDir, drupalRootfs)
-		if err != nil {
-			return err
+		opts.ISLEFileSystemURI = strings.TrimSpace(decisions["fcrepo"].FileSystemURI)
+		if opts.ISLEFileSystemURI == "" {
+			scheme, err := resolveCurrentFileSystemURI(projectDir, drupalRootfs)
+			if err != nil {
+				return err
+			}
+			opts.ISLEFileSystemURI = scheme
 		}
-		opts.ISLEFileSystemURI = scheme
 	}
 
 	if err := componentApplyOptions(opts); err != nil {
@@ -189,19 +165,4 @@ func reviewResolvedTLSMode(name string, decision componentReviewDecision) string
 		return ""
 	}
 	return mode
-}
-
-func isTLSComponent(name string) bool {
-	return name == "isle-tls" || name == "isle-tls-override"
-}
-
-func isValidReviewTLSMode(name, mode string) bool {
-	switch name {
-	case "isle-tls":
-		return mode == traefikconfig.ModeSelfManaged || mode == traefikconfig.ModeMkcert || mode == traefikconfig.ModeLetsEncrypt
-	case "isle-tls-override":
-		return mode == traefikconfig.ModeHTTP || mode == traefikconfig.ModeSelfManaged || mode == traefikconfig.ModeMkcert || mode == traefikconfig.ModeLetsEncrypt
-	default:
-		return false
-	}
 }

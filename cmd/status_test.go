@@ -90,6 +90,9 @@ func TestStatusCommandReportsOff(t *testing.T) {
 	if !strings.Contains(rendered, "FCREPO") {
 		t.Fatalf("expected fcrepo off, got:\n%s", rendered)
 	}
+	if !strings.Contains(rendered, "Drupal filesystem URI: public") {
+		t.Fatalf("expected fcrepo filesystem follow-up, got:\n%s", rendered)
+	}
 	if !strings.Contains(rendered, "ISLE-TLS-OVERRIDE") || !strings.Contains(rendered, "docker-compose.dev.yml not present") {
 		t.Fatalf("expected isle-tls-override off, got:\n%s", rendered)
 	}
@@ -277,8 +280,14 @@ services:
 	if !strings.Contains(rendered, "ISLE-TLS") || !strings.Contains(rendered, "Detected mode: mode=letsencrypt") {
 		t.Fatalf("expected prod letsencrypt mode, got:\n%s", rendered)
 	}
+	if !strings.Contains(rendered, "TLS mode: letsencrypt") {
+		t.Fatalf("expected prod tls follow-up, got:\n%s", rendered)
+	}
 	if !strings.Contains(rendered, "ISLE-TLS-OVERRIDE") || !strings.Contains(rendered, "Detected mode: mode=http") {
 		t.Fatalf("expected dev http override mode, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "TLS mode: http") {
+		t.Fatalf("expected dev tls follow-up, got:\n%s", rendered)
 	}
 }
 
