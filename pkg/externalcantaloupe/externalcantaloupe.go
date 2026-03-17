@@ -143,19 +143,17 @@ func applyOn(projectDir, overridePath, upstreamURL string) error {
 			return err
 		}
 	}
-	if volumeBlock, ok := baseCompose.VolumeBlock(cantaloupeVolumeName); ok {
-		if err := overrideCompose.AddVolumeBlock(cantaloupeVolumeName, volumeBlock); err != nil {
-			return err
-		}
-		if err := overrideCompose.Save(); err != nil {
-			return err
-		}
+	if err := copyVolumeDefinition(basePath, overridePath, cantaloupeVolumeName); err != nil {
+		return err
 	}
 	if err := ensureServiceEnv(baseCompose, traefikServiceName, traefikUpstreamEnvKey, strings.TrimSpace(upstreamURL)); err != nil {
 		return err
 	}
 
 	if err := baseCompose.DeleteService("cantaloupe"); err != nil {
+		return err
+	}
+	if err := deleteVolumeDefinition(basePath, cantaloupeVolumeName); err != nil {
 		return err
 	}
 	if err := baseCompose.DeleteVolume(cantaloupeVolumeName); err != nil {
@@ -196,13 +194,8 @@ func applyOff(projectDir, overridePath string) error {
 			return err
 		}
 	}
-	if volumeBlock, ok := overrideCompose.VolumeBlock(cantaloupeVolumeName); ok {
-		if err := baseCompose.AddVolumeBlock(cantaloupeVolumeName, volumeBlock); err != nil {
-			return err
-		}
-		if err := baseCompose.Save(); err != nil {
-			return err
-		}
+	if err := copyVolumeDefinition(overridePath, basePath, cantaloupeVolumeName); err != nil {
+		return err
 	}
 	if err := overrideCompose.DeleteServiceEnv(traefikServiceName, traefikUpstreamEnvKey); err != nil {
 		return err
@@ -210,13 +203,43 @@ func applyOff(projectDir, overridePath string) error {
 	if err := overrideCompose.DeleteService("cantaloupe"); err != nil {
 		return err
 	}
-	if err := overrideCompose.DeleteVolume(cantaloupeVolumeName); err != nil {
+	if err := deleteVolumeDefinition(overridePath, cantaloupeVolumeName); err != nil {
 		return err
 	}
 	if err := overrideCompose.Save(); err != nil {
 		return err
 	}
 	return ensureUpstreamURLTemplate(filepath.Join(projectDir, DefaultTraefikConfigPath))
+}
+
+func copyVolumeDefinition(sourcePath, targetPath, volumeName string) error {
+	sourceCompose, err := corecomponent.LoadComposeFileOptional(sourcePath)
+	if err != nil {
+		return err
+	}
+	block, ok := sourceCompose.SectionEntryBlock("volumes", volumeName)
+	if !ok {
+		return nil
+	}
+	targetCompose, err := corecomponent.LoadComposeFileOptional(targetPath)
+	if err != nil {
+		return err
+	}
+	if err := targetCompose.AddSectionEntryBlock("volumes", volumeName, block); err != nil {
+		return err
+	}
+	return targetCompose.Save()
+}
+
+func deleteVolumeDefinition(path, volumeName string) error {
+	compose, err := corecomponent.LoadComposeFileOptional(path)
+	if err != nil {
+		return err
+	}
+	if err := compose.DeleteSectionEntry("volumes", volumeName); err != nil {
+		return err
+	}
+	return compose.Save()
 }
 
 func extractServiceBlock(path, name string) (string, error) {
