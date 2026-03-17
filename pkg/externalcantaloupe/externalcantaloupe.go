@@ -2,17 +2,22 @@ package externalcantaloupe
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
+	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
-	yaml "gopkg.in/yaml.v3"
 )
 
 const (
 	DefaultLocalUpstream     = "http://cantaloupe:8182"
 	DefaultTraefikConfigPath = "conf/traefik/cantaloupe.yml"
+	cantaloupeVolumeName     = "cantaloupe-data"
+	traefikServiceName       = "traefik"
+	traefikUpstreamEnvKey    = "CANTALOUPE_UPSTREAM_URL"
+	traefikUpstreamTemplate  = `{{ env "CANTALOUPE_UPSTREAM_URL" }}`
 )
 
 type Status struct {
@@ -24,19 +29,19 @@ type Status struct {
 
 func Detect(projectDir, overridePath string) (Status, error) {
 	baseComposePath := filepath.Join(projectDir, "docker-compose.yml")
-	baseDoc, err := readCompose(baseComposePath)
+	baseCompose, err := corecomponent.LoadComposeFile(baseComposePath)
 	if err != nil {
 		return Status{}, err
 	}
-	baseHasCantaloupe := hasService(baseDoc, "cantaloupe")
+	baseHasCantaloupe := baseCompose.HasService("cantaloupe")
 
-	overrideDoc, err := readComposeOptional(overridePath)
+	overrideCompose, err := corecomponent.LoadComposeFileOptional(overridePath)
 	if err != nil {
 		return Status{}, err
 	}
-	overrideHasCantaloupe := hasService(overrideDoc, "cantaloupe")
+	overrideHasCantaloupe := overrideCompose.HasService("cantaloupe")
 
-	upstreamURL, err := currentUpstreamURL(filepath.Join(projectDir, DefaultTraefikConfigPath))
+	upstreamURL, err := currentUpstreamURL(baseCompose, overrideCompose, filepath.Join(projectDir, DefaultTraefikConfigPath))
 	if err != nil {
 		return Status{}, err
 	}
@@ -67,75 +72,204 @@ func Detect(projectDir, overridePath string) (Status, error) {
 
 func Apply(projectDir, overridePath, upstreamURL string, enabled bool) error {
 	if enabled {
-		if strings.TrimSpace(upstreamURL) == "" {
-			return fmt.Errorf("external cantaloupe upstream URL cannot be empty")
+		if err := validateUpstreamURL(upstreamURL); err != nil {
+			return err
 		}
 		return applyOn(projectDir, overridePath, upstreamURL)
 	}
 	return applyOff(projectDir, overridePath)
 }
 
+func validateUpstreamURL(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fmt.Errorf("external cantaloupe upstream URL cannot be empty")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("invalid external cantaloupe upstream URL %q: %w", trimmed, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("invalid external cantaloupe upstream URL %q: scheme must be http or https", trimmed)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("invalid external cantaloupe upstream URL %q: host is required", trimmed)
+	}
+	return nil
+}
+
 func applyOn(projectDir, overridePath, upstreamURL string) error {
 	basePath := filepath.Join(projectDir, "docker-compose.yml")
-	baseDoc, err := readCompose(basePath)
+	overrideCompose, err := corecomponent.LoadComposeFileOptional(overridePath)
 	if err != nil {
 		return err
 	}
-	overrideDoc, err := readComposeOptional(overridePath)
+	baseCompose, err := corecomponent.LoadComposeFile(basePath)
 	if err != nil {
 		return err
 	}
-	cantaloupeSvc := getService(baseDoc, "cantaloupe")
-	if cantaloupeSvc == nil {
-		cantaloupeSvc = getService(overrideDoc, "cantaloupe")
-		if cantaloupeSvc == nil {
+	if err := ensureServiceEnv(overrideCompose, traefikServiceName, traefikUpstreamEnvKey, DefaultLocalUpstream); err != nil {
+		return err
+	}
+	if !baseCompose.HasService("cantaloupe") {
+		serviceBlock, err := extractServiceBlock(overridePath, "cantaloupe")
+		if err != nil {
+			return err
+		}
+		if serviceBlock == "" {
 			return fmt.Errorf("no cantaloupe service found in docker-compose.yml or %s", overridePath)
 		}
+		if err := overrideCompose.AddServiceBlock("cantaloupe", serviceBlock); err != nil {
+			return err
+		}
+		if err := overrideCompose.SetServiceStringList("cantaloupe", "ports", []string{"8182:8182"}); err != nil {
+			return err
+		}
+		if err := overrideCompose.Save(); err != nil {
+			return err
+		}
+	} else {
+		serviceBlock, ok := baseCompose.ServiceBlock("cantaloupe")
+		if !ok {
+			return fmt.Errorf("no cantaloupe service block found in %s", basePath)
+		}
+		if err := overrideCompose.AddServiceBlock("cantaloupe", serviceBlock); err != nil {
+			return err
+		}
+		if err := overrideCompose.SetServiceStringList("cantaloupe", "ports", []string{"8182:8182"}); err != nil {
+			return err
+		}
+		if err := overrideCompose.Save(); err != nil {
+			return err
+		}
 	}
-	setService(overrideDoc, "cantaloupe", cloneMap(cantaloupeSvc))
-	ports := ensureStringList(ensureMap(ensureMap(overrideDoc, "services"), "cantaloupe"), "ports")
-	if !containsString(ports, "8182:8182") {
-		ports = append(ports, "8182:8182")
+	if volumeBlock, ok := baseCompose.VolumeBlock(cantaloupeVolumeName); ok {
+		if err := overrideCompose.AddVolumeBlock(cantaloupeVolumeName, volumeBlock); err != nil {
+			return err
+		}
+		if err := overrideCompose.Save(); err != nil {
+			return err
+		}
 	}
-	ensureMap(ensureMap(overrideDoc, "services"), "cantaloupe")["ports"] = toAnySlice(ports)
-	if err := writeCompose(overridePath, overrideDoc); err != nil {
+	if err := ensureServiceEnv(baseCompose, traefikServiceName, traefikUpstreamEnvKey, strings.TrimSpace(upstreamURL)); err != nil {
 		return err
 	}
 
-	deleteService(baseDoc, "cantaloupe")
-	if err := writeCompose(basePath, baseDoc); err != nil {
+	if err := baseCompose.DeleteService("cantaloupe"); err != nil {
+		return err
+	}
+	if err := baseCompose.DeleteVolume(cantaloupeVolumeName); err != nil {
+		return err
+	}
+	if err := baseCompose.Save(); err != nil {
 		return err
 	}
 
-	return replaceUpstreamURL(filepath.Join(projectDir, DefaultTraefikConfigPath), upstreamURL)
+	return ensureUpstreamURLTemplate(filepath.Join(projectDir, DefaultTraefikConfigPath))
 }
 
 func applyOff(projectDir, overridePath string) error {
 	basePath := filepath.Join(projectDir, "docker-compose.yml")
-	baseDoc, err := readCompose(basePath)
+	overrideCompose, err := corecomponent.LoadComposeFileOptional(overridePath)
 	if err != nil {
 		return err
 	}
-	overrideDoc, err := readComposeOptional(overridePath)
+	baseCompose, err := corecomponent.LoadComposeFile(basePath)
 	if err != nil {
 		return err
 	}
-	if svc := getService(overrideDoc, "cantaloupe"); svc != nil {
-		restored := cloneMap(svc)
-		delete(restored, "ports")
-		setService(baseDoc, "cantaloupe", restored)
-	}
-	deleteService(overrideDoc, "cantaloupe")
-	if err := writeCompose(basePath, baseDoc); err != nil {
+	if err := ensureServiceEnv(baseCompose, traefikServiceName, traefikUpstreamEnvKey, DefaultLocalUpstream); err != nil {
 		return err
 	}
-	if err := writeCompose(overridePath, overrideDoc); err != nil {
+	if overrideCompose.HasService("cantaloupe") {
+		serviceBlock, err := extractServiceBlock(overridePath, "cantaloupe")
+		if err != nil {
+			return err
+		}
+		if serviceBlock == "" {
+			return fmt.Errorf("no cantaloupe service block found in %s", overridePath)
+		}
+		if err := baseCompose.AddServiceBlock("cantaloupe", stripServicePorts(serviceBlock)); err != nil {
+			return err
+		}
+		if err := baseCompose.Save(); err != nil {
+			return err
+		}
+	}
+	if volumeBlock, ok := overrideCompose.VolumeBlock(cantaloupeVolumeName); ok {
+		if err := baseCompose.AddVolumeBlock(cantaloupeVolumeName, volumeBlock); err != nil {
+			return err
+		}
+		if err := baseCompose.Save(); err != nil {
+			return err
+		}
+	}
+	if err := overrideCompose.DeleteServiceEnv(traefikServiceName, traefikUpstreamEnvKey); err != nil {
 		return err
 	}
-	return replaceUpstreamURL(filepath.Join(projectDir, DefaultTraefikConfigPath), DefaultLocalUpstream)
+	if err := overrideCompose.DeleteService("cantaloupe"); err != nil {
+		return err
+	}
+	if err := overrideCompose.DeleteVolume(cantaloupeVolumeName); err != nil {
+		return err
+	}
+	if err := overrideCompose.Save(); err != nil {
+		return err
+	}
+	return ensureUpstreamURLTemplate(filepath.Join(projectDir, DefaultTraefikConfigPath))
 }
 
-func currentUpstreamURL(path string) (string, error) {
+func extractServiceBlock(path, name string) (string, error) {
+	compose, err := corecomponent.LoadComposeFile(path)
+	if err != nil {
+		return "", err
+	}
+	block, ok := compose.ServiceBlock(name)
+	if !ok {
+		return "", nil
+	}
+	return block, nil
+}
+
+func stripServicePorts(serviceBlock string) string {
+	lines := strings.Split(serviceBlock, "\n")
+	filtered := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) != "ports:" {
+			filtered = append(filtered, line)
+			continue
+		}
+		filtered = removeTrailingBlankLines(filtered)
+		for i+1 < len(lines) {
+			next := lines[i+1]
+			if strings.TrimSpace(next) == "" {
+				i++
+				continue
+			}
+			if leadingSpaces(next) <= 4 {
+				break
+			}
+			i++
+		}
+	}
+	return strings.Join(filtered, "\n")
+}
+
+func removeTrailingBlankLines(lines []string) []string {
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+func currentUpstreamURL(baseCompose, overrideCompose *corecomponent.ComposeFile, path string) (string, error) {
+	if value := composeServiceEnvValue(overrideCompose, traefikServiceName, traefikUpstreamEnvKey); strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value), nil
+	}
+	if value := composeServiceEnvValue(baseCompose, traefikServiceName, traefikUpstreamEnvKey); strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value), nil
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -143,13 +277,17 @@ func currentUpstreamURL(path string) (string, error) {
 	for _, line := range strings.Split(string(data), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "- url: ") {
-			return strings.TrimSpace(strings.TrimPrefix(trimmed, "- url: ")), nil
+			value := strings.TrimSpace(strings.TrimPrefix(trimmed, "- url: "))
+			if value == traefikUpstreamTemplate {
+				return DefaultLocalUpstream, nil
+			}
+			return value, nil
 		}
 	}
 	return "", nil
 }
 
-func replaceUpstreamURL(path, value string) error {
+func ensureUpstreamURLTemplate(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -159,186 +297,104 @@ func replaceUpstreamURL(path, value string) error {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "- url: ") {
 			prefix := line[:len(line)-len(strings.TrimLeft(line, " "))]
-			lines[i] = prefix + "- url: " + value
+			lines[i] = prefix + "- url: " + traefikUpstreamTemplate
 			return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 		}
 	}
 	return fmt.Errorf("no Traefik cantaloupe upstream url found in %s", path)
 }
 
-func readCompose(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	doc := map[string]any{}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, err
-	}
-	return doc, nil
-}
-
-func readComposeOptional(path string) (map[string]any, error) {
-	if path == "" {
-		return map[string]any{}, nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return map[string]any{}, nil
-		}
-		return nil, err
-	}
-	doc := map[string]any{}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, err
-	}
-	return doc, nil
-}
-
-func writeCompose(path string, doc map[string]any) error {
-	if path == "" {
-		return nil
-	}
-	if isEmptyDoc(doc) {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+func ensureServiceEnv(compose *corecomponent.ComposeFile, service, key, value string) error {
+	if !compose.HasService(service) {
+		if err := compose.AddServiceBlock(service, "  "+service+":"); err != nil {
 			return err
 		}
-		return nil
 	}
-	data, err := yaml.Marshal(doc)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o644)
+	return compose.SetServiceEnv(service, key, value)
 }
 
-func isEmptyDoc(doc map[string]any) bool {
-	return len(doc) == 0 || (len(doc) == 1 && len(getMap(doc, "services")) == 0)
-}
-
-func hasService(doc map[string]any, name string) bool {
-	_, ok := getMap(getMap(doc, "services"), name)["image"]
-	if ok {
-		return true
+func composeServiceEnvValue(compose *corecomponent.ComposeFile, service, key string) string {
+	if compose == nil {
+		return ""
 	}
-	_, ok = getMap(doc, "services")[name]
-	return ok
-}
-
-func getService(doc map[string]any, name string) map[string]any {
-	return getMap(getMap(doc, "services"), name)
-}
-
-func setService(doc map[string]any, name string, service map[string]any) {
-	ensureMap(doc, "services")[name] = service
-}
-
-func deleteService(doc map[string]any, name string) {
-	services := getMap(doc, "services")
-	delete(services, name)
-	if len(services) == 0 {
-		delete(doc, "services")
-	}
-}
-
-func getMap(doc map[string]any, key string) map[string]any {
-	if doc == nil {
-		return map[string]any{}
-	}
-	value, ok := doc[key]
+	block, ok := compose.ServiceBlock(service)
 	if !ok {
-		return map[string]any{}
+		return ""
 	}
-	out, ok := value.(map[string]any)
-	if ok {
-		return out
-	}
-	if out2, ok := value.(map[string]interface{}); ok {
-		converted := map[string]any{}
-		for k, v := range out2 {
-			converted[k] = v
-		}
-		doc[key] = converted
-		return converted
-	}
-	return map[string]any{}
-}
-
-func ensureMap(doc map[string]any, key string) map[string]any {
-	value := getMap(doc, key)
-	if len(value) == 0 {
-		value = map[string]any{}
-		doc[key] = value
-	}
-	return value
-}
-
-func ensureStringList(doc map[string]any, key string) []string {
-	value, ok := doc[key]
+	lines := strings.Split(block, "\n")
+	envIdx, envStyle, ok := findEnvironmentBlock(lines, 0)
 	if !ok {
-		return nil
+		return ""
 	}
-	switch list := value.(type) {
-	case []any:
-		out := make([]string, 0, len(list))
-		for _, item := range list {
-			if str, ok := item.(string); ok {
-				out = append(out, str)
-			}
+	if envStyle == envInlineEmpty {
+		return ""
+	}
+	keyIdx, ok := findMapKey(lines, envIdx+1, key, 6)
+	if !ok {
+		return ""
+	}
+	line := strings.TrimSpace(lines[keyIdx])
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	return strings.Trim(strings.TrimSpace(parts[1]), `"`)
+}
+
+type envBlockStyle int
+
+const (
+	envBlock envBlockStyle = iota
+	envInlineEmpty
+)
+
+func findEnvironmentBlock(lines []string, serviceIdx int) (int, envBlockStyle, bool) {
+	serviceEnd := findBlockEnd(lines, serviceIdx, 2)
+	for i := serviceIdx + 1; i < serviceEnd; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "environment:" {
+			return i, envBlock, true
 		}
-		return out
-	case []string:
-		return append([]string{}, list...)
-	default:
-		return nil
-	}
-}
-
-func toAnySlice(values []string) []any {
-	out := make([]any, 0, len(values))
-	for _, value := range values {
-		out = append(out, value)
-	}
-	return out
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
+		if trimmed == "environment: {}" {
+			return i, envInlineEmpty, true
 		}
 	}
-	return false
+	return 0, envBlock, false
 }
 
-func cloneMap(in map[string]any) map[string]any {
-	if in == nil {
-		return nil
-	}
-	out := map[string]any{}
-	for key, value := range in {
-		out[key] = cloneValue(value)
-	}
-	return out
-}
-
-func cloneValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		return cloneMap(typed)
-	case []any:
-		out := make([]any, 0, len(typed))
-		for _, item := range typed {
-			out = append(out, cloneValue(item))
+func findMapKey(lines []string, start int, key string, indent int) (int, bool) {
+	prefix := strings.Repeat(" ", indent) + key + ":"
+	for i := start; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
 		}
-		return out
-	default:
-		return typed
+		currentIndent := leadingSpaces(line)
+		if currentIndent < indent {
+			break
+		}
+		if currentIndent == indent && strings.HasPrefix(line, prefix) {
+			return i, true
+		}
 	}
+	return 0, false
+}
+
+func findBlockEnd(lines []string, start int, indent int) int {
+	for i := start + 1; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if leadingSpaces(line) <= indent {
+			return i
+		}
+	}
+	return len(lines)
+}
+
+func leadingSpaces(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " "))
 }
 
 func EnsureOverrideSymlink(ctx *config.Context) error {

@@ -103,12 +103,22 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") || !strings.Contains(string(devOverride), "\n  cantaloupe:\n") {
 		t.Fatalf("expected dev http override, got:\n%s", string(devOverride))
 	}
+	if !strings.Contains(string(devOverride), "CANTALOUPE_UPSTREAM_URL: http://cantaloupe:8182") {
+		t.Fatalf("expected local traefik upstream override, got:\n%s", string(devOverride))
+	}
 	traefikText, err := os.ReadFile(filepath.Join(projectDir, externalcantaloupe.DefaultTraefikConfigPath))
 	if err != nil {
 		t.Fatalf("ReadFile(cantaloupe.yml) error = %v", err)
 	}
-	if !strings.Contains(string(traefikText), "http://cantaloupe.example:8182") {
-		t.Fatalf("expected external cantaloupe upstream, got:\n%s", string(traefikText))
+	if !strings.Contains(string(traefikText), `{{ env "CANTALOUPE_UPSTREAM_URL" }}`) {
+		t.Fatalf("expected templated cantaloupe upstream, got:\n%s", string(traefikText))
+	}
+	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
+	}
+	if !strings.Contains(string(composeText), "CANTALOUPE_UPSTREAM_URL: \"http://cantaloupe.example:8182\"") {
+		t.Fatalf("expected external cantaloupe upstream env, got:\n%s", string(composeText))
 	}
 
 	rendered := out.String()
