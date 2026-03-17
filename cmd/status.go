@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
+	"github.com/libops/sitectl-isle/pkg/externalcantaloupe"
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
@@ -38,7 +40,7 @@ func runStatus(cmd *cobra.Command) error {
 		return err
 	}
 
-	statuses, err := detectComponentViews(ctx.ProjectDir, statusDrupalRootfs)
+	statuses, err := detectComponentViewsForContext(ctx, statusDrupalRootfs)
 	if err != nil {
 		return err
 	}
@@ -48,14 +50,10 @@ func runStatus(cmd *cobra.Command) error {
 
 type componentView = corecomponent.ReviewView
 
-func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, error) {
+func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string) ([]componentView, error) {
 	definitions := componentDefinitions()
-	ctx := &config.Context{
-		DockerHostType: config.ContextLocal,
-		ProjectDir:     projectDir,
-	}
-	sdkStatuses, err := corecomponent.DetectComponentStatuses(ctx, projectDir, corecomponent.DetectOptions{
-		ComposeRoot:  projectDir,
+	sdkStatuses, err := corecomponent.DetectComponentStatuses(siteCtx, siteCtx.ProjectDir, corecomponent.DetectOptions{
+		ComposeRoot:  siteCtx.ProjectDir,
 		DrupalRootfs: drupalRootfs,
 	}, orderedComponentDefinitions()...)
 	if err != nil {
@@ -65,8 +63,10 @@ func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, err
 	views := make([]componentView, 0, len(sdkStatuses)+2)
 	for i := range sdkStatuses {
 		followUps := map[string]string{}
+		disposition := dispositionFromDetectedState(sdkStatuses[i].State)
 		if sdkStatuses[i].Name == "fcrepo" && sdkStatuses[i].State == corecomponent.DetectedState(corecomponent.StateOff) {
-			scheme, err := resolveCurrentFileSystemURI(projectDir, drupalRootfs)
+			disposition = corecomponent.DispositionSuperseded
+			scheme, err := resolveCurrentFileSystemURI(siteCtx.ProjectDir, drupalRootfs)
 			if err != nil {
 				return nil, err
 			}
@@ -78,12 +78,36 @@ func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, err
 			Definition:     definitions[sdkStatuses[i].Name],
 			Name:           sdkStatuses[i].Name,
 			State:          sdkStatuses[i].State,
+			Disposition:    disposition,
 			SDKStatus:      &sdkStatuses[i],
 			FollowUpValues: followUps,
 		})
 	}
 
-	prodTLS, err := traefikconfig.DetectProd(projectDir)
+	externalStatus, err := externalcantaloupe.Detect(siteCtx.ProjectDir, resolveEnvironmentOverridePath(siteCtx))
+	if err != nil {
+		return nil, err
+	}
+	externalState := corecomponent.DetectedState(corecomponent.StateOff)
+	if externalStatus.Drifted {
+		externalState = corecomponent.StateDrifted
+	} else if externalStatus.Enabled {
+		externalState = corecomponent.DetectedState(corecomponent.StateOn)
+	}
+	views = append(views, componentView{
+		Definition:  definitions["external-cantaloupe"],
+		Name:        "external-cantaloupe",
+		State:       externalState,
+		Disposition: externalCantaloupeDisposition(externalStatus),
+		Detail:      strings.TrimSpace(externalStatus.Detail),
+		DriftDetail: strings.TrimSpace(externalStatus.Detail),
+		FollowUpValues: map[string]string{
+			"upstream-url": strings.TrimSpace(externalStatus.UpstreamURL),
+		},
+		Extra: &externalStatus,
+	})
+
+	prodTLS, err := traefikconfig.DetectProd(siteCtx.ProjectDir)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +115,7 @@ func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, err
 		Definition:  definitions["isle-tls"],
 		Name:        "isle-tls",
 		State:       renderTLSDetectedState(prodTLS),
+		Disposition: dispositionFromDetectedState(renderTLSDetectedState(prodTLS)),
 		Detail:      renderTLSDetail(prodTLS),
 		DriftDetail: prodTLS.Detail,
 		FollowUpValues: map[string]string{
@@ -99,7 +124,8 @@ func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, err
 		Extra: &prodTLS,
 	})
 
-	devTLS, err := traefikconfig.DetectDev(projectDir)
+	overridePath := resolveEnvironmentOverridePath(siteCtx)
+	devTLS, err := traefikconfig.DetectOverride(siteCtx.ProjectDir, overridePath)
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +133,7 @@ func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, err
 		Definition:  definitions["isle-tls-override"],
 		Name:        "isle-tls-override",
 		State:       renderTLSDetectedState(devTLS),
+		Disposition: dispositionFromDetectedState(renderTLSDetectedState(devTLS)),
 		Detail:      renderTLSDetail(devTLS),
 		DriftDetail: devTLS.Detail,
 		FollowUpValues: map[string]string{
@@ -116,6 +143,38 @@ func detectComponentViews(projectDir, drupalRootfs string) ([]componentView, err
 	})
 
 	return views, nil
+}
+
+func dispositionFromDetectedState(state corecomponent.DetectedState) corecomponent.Disposition {
+	switch state {
+	case corecomponent.DetectedState(corecomponent.StateOn):
+		return corecomponent.DispositionEnabled
+	case corecomponent.DetectedState(corecomponent.StateOff):
+		return corecomponent.DispositionDisabled
+	default:
+		return ""
+	}
+}
+
+func externalCantaloupeDisposition(status externalcantaloupe.Status) corecomponent.Disposition {
+	switch {
+	case status.Drifted:
+		return ""
+	case status.Enabled:
+		return corecomponent.DispositionDistributed
+	default:
+		return corecomponent.DispositionDisabled
+	}
+}
+
+func resolveEnvironmentOverridePath(siteCtx *config.Context) string {
+	if siteCtx == nil {
+		return ""
+	}
+	if path := strings.TrimSpace(siteCtx.TrackedComposeOverridePath()); path != "" {
+		return path
+	}
+	return filepath.Join(siteCtx.ProjectDir, "docker-compose.local.yml")
 }
 
 func renderTLSDetectedState(status traefikconfig.Status) corecomponent.DetectedState {
@@ -145,9 +204,17 @@ func renderTLSDetail(status traefikconfig.Status) string {
 
 func resolveStatusContext() (*config.Context, error) {
 	if strings.TrimSpace(statusPath) != "" {
+		projectDir := filepath.Clean(statusPath)
+		projectName := filepath.Base(projectDir)
 		return &config.Context{
 			DockerHostType: config.ContextLocal,
-			ProjectDir:     statusPath,
+			Name:           projectName,
+			Site:           projectName,
+			Plugin:         "isle",
+			Environment:    "local",
+			DockerSocket:   config.GetDefaultLocalDockerSocket("/var/run/docker.sock"),
+			ProjectName:    projectName,
+			ProjectDir:     projectDir,
 		}, nil
 	}
 	if commandSDK == nil {

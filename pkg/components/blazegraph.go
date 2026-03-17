@@ -4,13 +4,15 @@ import corecomponent "github.com/libops/sitectl/pkg/component"
 
 func Blazegraph(source TemplateSource) Definition {
 	return Definition{
-		Name:           "blazegraph",
-		DefaultState:   corecomponent.StateOn,
-		PromptOnCreate: true,
+		Name:                "blazegraph",
+		DefaultState:        corecomponent.StateOn,
+		DefaultDisposition:  corecomponent.DispositionEnabled,
+		AllowedDispositions: []corecomponent.Disposition{corecomponent.DispositionEnabled, corecomponent.DispositionDisabled},
+		PromptOnCreate:      true,
 		Guidance: corecomponent.StateGuidance{
-			Question: `Blazegraph will store representative graph data about the repository that can be queried using SPARQL. If you do not plan to query Islandora content using SPARQL, you may want to turn this off.`,
-			OnHelp:   "Keep triplestore indexing enabled for the standard Islandora stack.",
-			OffHelp:  "Remove triplestore indexing services.",
+			Question:     `Blazegraph will store representative graph data about the repository that can be queried using SPARQL. If you do not plan to query Islandora content using SPARQL, you may want to turn this off.`,
+			EnabledHelp:  "Keep triplestore indexing enabled for the standard Islandora stack.",
+			DisabledHelp: "Remove triplestore indexing services.",
 		},
 		Gates: corecomponent.GateSpec{
 			LocalOnly: true,

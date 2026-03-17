@@ -20,13 +20,16 @@ func TestFcrepoDefinition(t *testing.T) {
 	if definition.DefaultState != corecomponent.StateOn {
 		t.Fatalf("expected default state on, got %q", definition.DefaultState)
 	}
+	if definition.DefaultDisposition != corecomponent.DispositionEnabled {
+		t.Fatalf("expected default disposition enabled, got %q", definition.DefaultDisposition)
+	}
 	if !definition.PromptOnCreate {
 		t.Fatal("expected fcrepo to prompt on create")
 	}
 	if definition.Guidance.Question == "" {
 		t.Fatal("expected fcrepo guidance question")
 	}
-	if definition.Guidance.OnHelp == "" || definition.Guidance.OffHelp == "" {
+	if definition.Guidance.EnabledHelp == "" || definition.Guidance.SupersededHelp == "" {
 		t.Fatal("expected fcrepo guidance help text")
 	}
 	if !definition.Gates.LocalOnly {
@@ -83,13 +86,16 @@ func TestBlazegraphDefinition(t *testing.T) {
 	if definition.DefaultState != corecomponent.StateOn {
 		t.Fatalf("expected default state on, got %q", definition.DefaultState)
 	}
+	if definition.DefaultDisposition != corecomponent.DispositionEnabled {
+		t.Fatalf("expected default disposition enabled, got %q", definition.DefaultDisposition)
+	}
 	if !definition.PromptOnCreate {
 		t.Fatal("expected blazegraph to prompt on create")
 	}
 	if definition.Guidance.Question == "" {
 		t.Fatal("expected blazegraph guidance question")
 	}
-	if definition.Guidance.OnHelp == "" || definition.Guidance.OffHelp == "" {
+	if definition.Guidance.EnabledHelp == "" || definition.Guidance.DisabledHelp == "" {
 		t.Fatal("expected blazegraph guidance help text")
 	}
 	if !definition.Gates.LocalOnly {
@@ -133,6 +139,31 @@ func TestBlazegraphDefinition(t *testing.T) {
 	assertHasRule(t, definition.Off.Drupal.Rules, OpDelete, ".reactions.delete.actions.delete_taxonomy_term_in_triplestore")
 	assertHasRule(t, definition.On.Drupal.Rules, OpRestore, ".reactions.index.actions.index_node_in_triplestore")
 	assertHasRule(t, definition.On.Drupal.Rules, OpRestore, ".reactions.delete.actions.delete_taxonomy_term_in_triplestore")
+}
+
+func TestExternalCantaloupeDefinition(t *testing.T) {
+	t.Parallel()
+
+	definition := ExternalCantaloupe()
+
+	if definition.Name != "external-cantaloupe" {
+		t.Fatalf("expected name external-cantaloupe, got %q", definition.Name)
+	}
+	if definition.DefaultState != corecomponent.StateOff {
+		t.Fatalf("expected default state off, got %q", definition.DefaultState)
+	}
+	if definition.DefaultDisposition != corecomponent.DispositionDisabled {
+		t.Fatalf("expected default disposition disabled, got %q", definition.DefaultDisposition)
+	}
+	if len(definition.FollowUps) != 1 || definition.FollowUps[0].Name != "upstream-url" {
+		t.Fatalf("expected upstream-url follow-up, got %#v", definition.FollowUps)
+	}
+	if definition.Guidance.Question == "" || definition.Guidance.DistributedHelp == "" || definition.Guidance.DisabledHelp == "" {
+		t.Fatal("expected external-cantaloupe guidance")
+	}
+	if definition.Behavior.Enable.Summary == "" || definition.Behavior.Disable.Summary == "" {
+		t.Fatal("expected external-cantaloupe behavior summaries")
+	}
 }
 
 func assertHasWholeFileRule(t *testing.T, rules []YAMLRule, op RuleOp, file string) {

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	corecomponent "github.com/libops/sitectl/pkg/component"
 	"gopkg.in/yaml.v3"
 )
 
@@ -85,47 +86,40 @@ func DetectProd(projectDir string) (Status, error) {
 
 func DetectDev(projectDir string) (Status, error) {
 	devPath := filepath.Join(projectDir, "docker-compose.dev.yml")
-	data, err := os.ReadFile(devPath)
+	return DetectOverride(projectDir, devPath)
+}
+
+func DetectOverride(projectDir, overridePath string) (Status, error) {
+	devPath := firstNonEmpty(overridePath, filepath.Join(projectDir, "docker-compose.override.yml"))
+	compose, err := corecomponent.LoadComposeFileOptional(devPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return Status{Mode: ModeInherited, Detail: "docker-compose.dev.yml not present"}, nil
-		}
 		return Status{}, err
 	}
-
-	doc := map[string]any{}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return Status{}, fmt.Errorf("parse docker-compose.dev.yml: %w", err)
-	}
-	services := getMap(doc, "services")
-	if len(services) == 0 {
-		return Status{Mode: ModeInherited, Detail: "docker-compose.dev.yml has no service overrides"}, nil
+	if !compose.HasService("drupal") && !compose.HasService("traefik") && !compose.HasService("fcrepo") {
+		return Status{Mode: ModeInherited, Detail: filepath.Base(devPath) + " has no service overrides"}, nil
 	}
 
-	drupalEnv := getMap(getMap(services, "drupal"), "environment")
-	traefikSvc := getMap(services, "traefik")
-	traefikEnv := getMap(traefikSvc, "environment")
-	commandValue, _ := traefikSvc["command"].(string)
+	drupalHTTPS, drupalFound := composeServiceEnvValue(compose, "drupal", "DRUPAL_ENABLE_HTTPS")
+	uriScheme, uriFound := composeServiceEnvValue(compose, "traefik", "URI_SCHEME")
+	tlsProvider, providerFound := composeServiceEnvValue(compose, "traefik", "TLS_PROVIDER")
+	commandValue := composeServiceCommand(compose, "traefik")
 
-	hasOverride := len(drupalEnv) > 0 || len(traefikEnv) > 0 || commandValue != ""
+	hasOverride := drupalFound || uriFound || providerFound || commandValue != ""
 	if !hasOverride {
-		return Status{Mode: ModeInherited, Detail: "docker-compose.dev.yml has no TLS override"}, nil
+		return Status{Mode: ModeInherited, Detail: filepath.Base(devPath) + " has no TLS override"}, nil
 	}
 
-	drupalHTTPS, drupalFound := mapStringValue(drupalEnv, "DRUPAL_ENABLE_HTTPS")
-	uriScheme, uriFound := mapStringValue(traefikEnv, "URI_SCHEME")
-	tlsProvider, providerFound := mapStringValue(traefikEnv, "TLS_PROVIDER")
 	hasLE := hasLetsEncryptCommand(commandValue)
 
 	switch {
 	case !drupalFound && !uriFound && !providerFound && !hasLE:
-		return Status{Mode: ModeInherited, Detail: "docker-compose.dev.yml inherits docker-compose.yml"}, nil
+		return Status{Mode: ModeInherited, Detail: filepath.Base(devPath) + " inherits docker-compose.yml"}, nil
 	case drupalFound && uriFound && providerFound && drupalHTTPS == "false" && uriScheme == ModeHTTP && tlsProvider == ModeSelfManaged && !hasLE:
-		return Status{Enabled: true, Mode: ModeHTTP, Detail: "docker-compose.dev.yml"}, nil
+		return Status{Enabled: true, Mode: ModeHTTP, Detail: filepath.Base(devPath)}, nil
 	case drupalFound && uriFound && providerFound && drupalHTTPS == "true" && uriScheme == "https" && tlsProvider == ModeLetsEncrypt && hasLE:
-		return Status{Enabled: true, Mode: ModeLetsEncrypt, Detail: "docker-compose.dev.yml"}, nil
+		return Status{Enabled: true, Mode: ModeLetsEncrypt, Detail: filepath.Base(devPath)}, nil
 	case drupalFound && uriFound && providerFound && drupalHTTPS == "true" && uriScheme == "https" && tlsProvider == ModeSelfManaged && !hasLE:
-		return Status{Enabled: true, Mode: detectSelfManagedMode(projectDir), Detail: "docker-compose.dev.yml"}, nil
+		return Status{Enabled: true, Mode: detectSelfManagedMode(projectDir), Detail: filepath.Base(devPath)}, nil
 	default:
 		return Status{
 			Drifted: true,
@@ -133,6 +127,112 @@ func DetectDev(projectDir string) (Status, error) {
 			Detail:  fmt.Sprintf("dev_override drupal_enable_https=%s uri_scheme=%s tls_provider=%s letsencrypt=%t", drupalHTTPS, uriScheme, tlsProvider, hasLE),
 		}, nil
 	}
+}
+
+func composeServiceEnvValue(compose *corecomponent.ComposeFile, service, key string) (string, bool) {
+	if compose == nil {
+		return "", false
+	}
+	block, ok := compose.ServiceBlock(service)
+	if !ok {
+		return "", false
+	}
+	lines := strings.Split(block, "\n")
+	envIdx, envStyle, ok := findComposeEnvironmentBlock(lines, 0)
+	if !ok || envStyle == composeEnvInlineEmpty {
+		return "", false
+	}
+	keyIdx, ok := findComposeMapKey(lines, envIdx+1, key, 6)
+	if !ok {
+		return "", false
+	}
+	line := strings.TrimSpace(lines[keyIdx])
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) != 2 {
+		return "", false
+	}
+	return strings.Trim(strings.TrimSpace(parts[1]), `"`), true
+}
+
+func composeServiceCommand(compose *corecomponent.ComposeFile, service string) string {
+	if compose == nil {
+		return ""
+	}
+	block, ok := compose.ServiceBlock(service)
+	if !ok {
+		return ""
+	}
+	lines := strings.Split(block, "\n")
+	commandIdx, ok := findComposeMapKey(lines, 1, "command", 4)
+	if !ok {
+		return ""
+	}
+	line := strings.TrimSpace(lines[commandIdx])
+	if strings.HasPrefix(line, "command: ") && !strings.HasSuffix(line, ">|") && !strings.HasSuffix(line, ">-") && !strings.HasSuffix(line, "|") {
+		return strings.TrimSpace(strings.TrimPrefix(line, "command: "))
+	}
+	end := findComposeBlockEnd(lines, commandIdx, 4)
+	commandLines := make([]string, 0, end-commandIdx-1)
+	for i := commandIdx + 1; i < end; i++ {
+		commandLines = append(commandLines, strings.TrimSpace(lines[i]))
+	}
+	return strings.Join(commandLines, "\n")
+}
+
+type composeEnvBlockStyle int
+
+const (
+	composeEnvBlock composeEnvBlockStyle = iota
+	composeEnvInlineEmpty
+)
+
+func findComposeEnvironmentBlock(lines []string, serviceIdx int) (int, composeEnvBlockStyle, bool) {
+	serviceEnd := findComposeBlockEnd(lines, serviceIdx, 2)
+	for i := serviceIdx + 1; i < serviceEnd; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "environment:" {
+			return i, composeEnvBlock, true
+		}
+		if trimmed == "environment: {}" {
+			return i, composeEnvInlineEmpty, true
+		}
+	}
+	return 0, composeEnvBlock, false
+}
+
+func findComposeMapKey(lines []string, start int, key string, indent int) (int, bool) {
+	prefix := strings.Repeat(" ", indent) + key + ":"
+	for i := start; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		currentIndent := leadingSpaces(line)
+		if currentIndent < indent {
+			break
+		}
+		if currentIndent == indent && strings.HasPrefix(line, prefix) {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func findComposeBlockEnd(lines []string, start int, indent int) int {
+	for i := start + 1; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if leadingSpaces(line) <= indent {
+			return i
+		}
+	}
+	return len(lines)
+}
+
+func leadingSpaces(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " "))
 }
 
 func ApplyProd(projectDir, mode string) error {
@@ -159,6 +259,10 @@ func ApplyProd(projectDir, mode string) error {
 }
 
 func ApplyDev(projectDir string, enabled bool, mode string) error {
+	return ApplyOverride(projectDir, filepath.Join(projectDir, "docker-compose.dev.yml"), enabled, mode)
+}
+
+func ApplyOverride(projectDir, overridePath string, enabled bool, mode string) error {
 	if enabled {
 		if err := validateMode(mode, true); err != nil {
 			return err
@@ -167,11 +271,11 @@ func ApplyDev(projectDir string, enabled bool, mode string) error {
 		mode = ModeInherited
 	}
 
-	devPath := filepath.Join(projectDir, "docker-compose.dev.yml")
+	devPath := firstNonEmpty(overridePath, filepath.Join(projectDir, "docker-compose.override.yml"))
 	doc := map[string]any{}
 	if data, err := os.ReadFile(devPath); err == nil {
 		if err := yaml.Unmarshal(data, &doc); err != nil {
-			return fmt.Errorf("parse docker-compose.dev.yml: %w", err)
+			return fmt.Errorf("parse %s: %w", filepath.Base(devPath), err)
 		}
 	} else if !os.IsNotExist(err) {
 		return err
@@ -440,13 +544,6 @@ func getMap(parent map[string]any, key string) map[string]any {
 		}
 	}
 	return map[string]any{}
-}
-
-func mapStringValue(values map[string]any, key string) (string, bool) {
-	if raw, ok := values[key]; ok {
-		return fmt.Sprintf("%v", raw), true
-	}
-	return "", false
 }
 
 func firstNonEmpty(value, fallback string) string {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
+	"github.com/libops/sitectl-isle/pkg/externalcantaloupe"
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/spf13/cobra"
@@ -62,7 +63,7 @@ func TestRunComponentSetPreservesOtherDetectedState(t *testing.T) {
 	if got.ISLEFileSystemURI != createpkg.DefaultISLEFileSystemURI {
 		t.Fatalf("expected default filesystem uri %q, got %q", createpkg.DefaultISLEFileSystemURI, got.ISLEFileSystemURI)
 	}
-	if !strings.Contains(out.String(), "fcrepo: off") {
+	if !strings.Contains(out.String(), "fcrepo: superceded") {
 		t.Fatalf("expected command output, got:\n%s", out.String())
 	}
 }
@@ -182,16 +183,119 @@ func TestRunComponentSetAppliesISLETLSOverrideHTTPOverride(t *testing.T) {
 	}
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "isle-tls-override: on") {
+	if !strings.Contains(rendered, "isle-tls-override: enabled") {
 		t.Fatalf("expected component output, got:\n%s", rendered)
 	}
 
-	devOverride, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.dev.yml"))
+	devOverride, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.local.yml"))
 	if err != nil {
-		t.Fatalf("ReadFile(docker-compose.dev.yml) error = %v", err)
+		t.Fatalf("ReadFile(docker-compose.local.yml) error = %v", err)
 	}
 	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") {
 		t.Fatalf("expected dev http override, got:\n%s", string(devOverride))
+	}
+}
+
+func TestRunComponentSetEnablesExternalCantaloupe(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldInput := componentSetInput
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentSetInput = oldInput
+		componentPromptChoice = oldPromptChoice
+		if flag := componentSetCmd.Flags().Lookup("external-cantaloupe-upstream-url"); flag != nil {
+			flag.Changed = false
+		}
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+	_ = componentSetCmd.Flags().Set("external-cantaloupe-upstream-url", "http://cantaloupe.example:8182")
+
+	var out bytes.Buffer
+	cmd := componentSetCmd
+	cmd.SetOut(&out)
+
+	if err := runComponentSet(cmd, "external-cantaloupe", "on"); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+
+	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
+	}
+	if strings.Contains(string(composeText), "\n  cantaloupe:\n") {
+		t.Fatalf("expected base cantaloupe removed, got:\n%s", string(composeText))
+	}
+	if strings.Contains(string(composeText), "\n  cantaloupe-data:") {
+		t.Fatalf("expected base cantaloupe volume removed, got:\n%s", string(composeText))
+	}
+
+	overrideText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.local.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(docker-compose.local.yml) error = %v", err)
+	}
+	if !strings.Contains(string(overrideText), "cantaloupe:") || !strings.Contains(string(overrideText), "8182:8182") || !strings.Contains(string(overrideText), "cantaloupe-data:") {
+		t.Fatalf("expected cantaloupe local override, got:\n%s", string(overrideText))
+	}
+	if !strings.Contains(string(overrideText), "CANTALOUPE_UPSTREAM_URL: \"http://cantaloupe:8182\"") {
+		t.Fatalf("expected local traefik upstream override, got:\n%s", string(overrideText))
+	}
+
+	traefikText, err := os.ReadFile(filepath.Join(projectDir, externalcantaloupe.DefaultTraefikConfigPath))
+	if err != nil {
+		t.Fatalf("ReadFile(cantaloupe.yml) error = %v", err)
+	}
+	if !strings.Contains(string(traefikText), `{{ env "CANTALOUPE_UPSTREAM_URL" }}`) {
+		t.Fatalf("expected templated upstream in traefik config, got:\n%s", string(traefikText))
+	}
+	if strings.Contains(string(traefikText), "http://cantaloupe.example:8182") {
+		t.Fatalf("expected traefik config to avoid hard-coded upstream, got:\n%s", string(traefikText))
+	}
+	if !strings.Contains(string(composeText), "CANTALOUPE_UPSTREAM_URL: \"http://cantaloupe.example:8182\"") {
+		t.Fatalf("expected base traefik upstream env, got:\n%s", string(composeText))
+	}
+	if !strings.Contains(out.String(), "external-cantaloupe: distributed (http://cantaloupe.example:8182)") {
+		t.Fatalf("expected command output, got:\n%s", out.String())
+	}
+}
+
+func TestRunComponentSetRejectsInvalidExternalCantaloupeURL(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		if flag := componentSetCmd.Flags().Lookup("external-cantaloupe-upstream-url"); flag != nil {
+			flag.Changed = false
+		}
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+	_ = componentSetCmd.Flags().Set("external-cantaloupe-upstream-url", "ok")
+
+	err := runComponentSet(componentSetCmd, "external-cantaloupe", "on")
+	if err == nil {
+		t.Fatal("expected invalid upstream url error")
+	}
+	if !strings.Contains(err.Error(), "invalid external cantaloupe upstream URL") {
+		t.Fatalf("expected invalid upstream url error, got %v", err)
 	}
 }
 
@@ -304,9 +408,9 @@ func TestRunComponentSetPromptsForDevTLSModeWhenMissing(t *testing.T) {
 		t.Fatalf("expected mkcert default, got %q", promptedDefault)
 	}
 
-	devOverride, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.dev.yml"))
+	devOverride, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.local.yml"))
 	if err != nil {
-		t.Fatalf("ReadFile(docker-compose.dev.yml) error = %v", err)
+		t.Fatalf("ReadFile(docker-compose.local.yml) error = %v", err)
 	}
 	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") {
 		t.Fatalf("expected dev http override, got:\n%s", string(devOverride))
@@ -423,8 +527,8 @@ func TestRunComponentSetPromptsForStateWhenMissing(t *testing.T) {
 	var promptedName string
 	componentPromptState = func(name string, guidance corecomponent.StateGuidance, input corecomponent.InputFunc) (corecomponent.State, error) {
 		promptedName = name
-		if !strings.Contains(guidance.Question, "Current state: `on`") {
-			t.Fatalf("expected current state in prompt, got:\n%s", guidance.Question)
+		if !strings.Contains(guidance.Question, "Current disposition: `enabled`") {
+			t.Fatalf("expected current disposition in prompt, got:\n%s", guidance.Question)
 		}
 		return corecomponent.StateOff, nil
 	}
