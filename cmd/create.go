@@ -204,7 +204,8 @@ func ensureLocalContext(sdk *plugin.SDK, req createRequest) (*config.Context, er
 		Input:             createInput,
 		ContextNamePrompt: append(
 			strings.Split(corecomponent.RenderSection("sitectl context name", `Enter the sitectl context name to save for this local checkout.
-This is only important if you'll be running multiple ISLE installs on this machine. This is just a short label so you can easily identify multiple ISLE`), "\n"),
+This is the saved sitectl target for this stack. A good pattern is <site>-<environment>, for example preserve-local or preserve-prod.
+This is only important if you'll be running multiple ISLE installs on this machine. This is just a short label so you can easily identify multiple ISLE installs.`), "\n"),
 			"",
 			corecomponent.RenderPromptLine("Context name [%s]: "),
 		),
