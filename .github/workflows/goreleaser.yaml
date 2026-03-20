@@ -8,26 +8,26 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   goreleaser:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6
-        with:
-          go-version: '>=1.25.8'
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.HOMEBREW_REPO }}
+    uses: libops/terraform-linux-packages/.github/workflows/reusable-goreleaser.yaml@main
+    permissions:
+      contents: write
+      id-token: write
+    secrets: inherit
+    with:
+      go-version: ">=1.25.3"
+      publish-package-repo: true
+      package-name: sitectl-isle
+      package-repo-prefix: sitectl
+      package-repo-label: sitectl
+      package-public-key-name: sitectl-archive-keyring
+      gcp-project: ${{ vars.LIBOPS_PACKAGES_GCLOUD_PROJECT }}
+      workload-identity-provider: ${{ vars.LIBOPS_PACKAGES_GCLOUD_OIDC_POOL }}
+      service-account: ${{ vars.LIBOPS_PACKAGES_GSA }}
+      gcs-bucket: ${{ vars.LIBOPS_PACKAGES_GCS_BUCKET }}
+      aptly-gpg-key-id: ${{ vars.LIBOPS_PACKAGES_APTLY_GPG_KEY_ID }}
+      aptly-gpg-private-key-secret: ${{ vars.LIBOPS_PACKAGES_APTLY_GPG_PRIVATE_KEY_SECRET }}
+      aptly-gpg-passphrase-secret: ${{ vars.LIBOPS_PACKAGES_APTLY_GPG_PASSPHRASE_SECRET }}
