@@ -17,6 +17,7 @@ var (
 	componentReviewPromptState       = corecomponent.PromptState
 	componentReviewPromptDisposition corecomponent.PromptDispositionFunc
 	componentReviewPromptChoice      = corecomponent.PromptChoice
+	componentReviewName              string
 	componentReviewReport            bool
 	componentReviewVerbose           bool
 	componentReviewFormat            string
@@ -43,11 +44,16 @@ var componentReviewCmd = &cobra.Command{
 func init() {
 	componentReviewCmd.Flags().StringVar(&statusPath, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
 	corecomponent.AddDrupalRootfsFlag(componentReviewCmd, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
+	componentReviewCmd.Flags().StringVarP(&componentReviewName, "component", "c", "", "Specific component to reconcile")
 	corecomponent.AddReviewFlags(componentReviewCmd, &componentReviewReport, &componentReviewVerbose, &componentReviewFormat)
 	componentCmd.AddCommand(componentReviewCmd)
 }
 
 func runComponentReview(cmd *cobra.Command) error {
+	return runComponentReconcile(cmd, componentReviewName)
+}
+
+func runComponentReconcile(cmd *cobra.Command, componentName string) error {
 	ctx, err := resolveStatusContext()
 	if err != nil {
 		return err
@@ -57,6 +63,20 @@ func runComponentReview(cmd *cobra.Command) error {
 	}
 
 	statuses, err := detectComponentViewsForContext(ctx, statusDrupalRootfs)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(componentName) != "" {
+		for _, status := range statuses {
+			if status.Name == componentName {
+				continue
+			}
+			if status.State == corecomponent.StateDrifted && blocksComponentSetOnDrift(status.Name) {
+				return fmt.Errorf("component %q is drifted; resolve it first or target it explicitly", status.Name)
+			}
+		}
+	}
+	statuses, err = filterComponentViews(statuses, componentName)
 	if err != nil {
 		return err
 	}
@@ -76,6 +96,9 @@ func runComponentReview(cmd *cobra.Command) error {
 		return err
 	}
 	decisions := convertComponentReviewDecisions(rawDecisions)
+	if strings.TrimSpace(componentName) != "" {
+		decisions = mergeCurrentComponentReviewDecisions(ctx, decisions)
+	}
 
 	if err := applyComponentReview(ctx, statusDrupalRootfs, decisions); err != nil {
 		return err
@@ -92,6 +115,45 @@ func runComponentReview(cmd *cobra.Command) error {
 		fmt.Fprintln(cmd.OutOrStdout())
 	}
 	return nil
+}
+
+func mergeCurrentComponentReviewDecisions(ctx *config.Context, decisions map[string]componentReviewDecision) map[string]componentReviewDecision {
+	statuses, err := detectComponentViewsForContext(ctx, statusDrupalRootfs)
+	if err != nil {
+		return decisions
+	}
+
+	merged := make(map[string]componentReviewDecision, len(statuses))
+	for name, decision := range decisions {
+		merged[name] = decision
+	}
+
+	for _, status := range statuses {
+		if _, ok := merged[status.Name]; ok {
+			continue
+		}
+		decision := componentReviewDecision{
+			Disposition:   status.Disposition,
+			State:         corecomponent.DispositionToState(status.Disposition),
+			TLSMode:       strings.TrimSpace(status.FollowUpValues["tls-mode"]),
+			FileSystemURI: strings.TrimSpace(status.FollowUpValues["isle-file-system-uri"]),
+			UpstreamURL:   strings.TrimSpace(status.FollowUpValues["upstream-url"]),
+		}
+		if decision.State == "" {
+			switch status.State {
+			case corecomponent.DetectedState(corecomponent.StateOn):
+				decision.State = corecomponent.StateOn
+			case corecomponent.DetectedState(corecomponent.StateOff):
+				decision.State = corecomponent.StateOff
+			}
+		}
+		if decision.Disposition == "" && decision.State != "" {
+			decision.Disposition = corecomponent.StateToDisposition(decision.State)
+		}
+		merged[status.Name] = decision
+	}
+
+	return merged
 }
 
 func componentReviewSummaryLine(status componentView, decision promptReviewDecision) (string, error) {

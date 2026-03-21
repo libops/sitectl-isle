@@ -19,6 +19,7 @@ func main() {
 		Version:     fmt.Sprintf("%s (Built on %s from Git SHA %s)", version, date, commit),
 		Description: "Islandora (ISLE) utilities and migration tools",
 		Author:      "libops",
+		Includes:    []string{"drupal"},
 	})
 
 	cmd.RegisterCommands(sdk)

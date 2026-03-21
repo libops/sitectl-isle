@@ -35,6 +35,10 @@ func init() {
 }
 
 func runStatus(cmd *cobra.Command) error {
+	return runComponentDescribe(cmd, "", true)
+}
+
+func runComponentDescribe(cmd *cobra.Command, componentName string, includeIncluded bool) error {
 	ctx, err := resolveStatusContext()
 	if err != nil {
 		return err
@@ -44,8 +48,29 @@ func runStatus(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	statuses, err = filterComponentViews(statuses, componentName)
+	if err != nil {
+		return err
+	}
 
-	return corecomponent.WriteComponentStatusReportWithFormat(cmd.OutOrStdout(), statuses, statusVerbose, statusFormat)
+	if err := corecomponent.WriteComponentStatusReportWithFormat(cmd.OutOrStdout(), statuses, statusVerbose, statusFormat); err != nil {
+		return err
+	}
+	if includeIncluded && strings.TrimSpace(componentName) == "" && commandSDK != nil {
+		outputs, err := commandSDK.InvokeIncludedPlugins([]string{"__component", "describe"})
+		if err != nil {
+			return err
+		}
+		for _, output := range outputs {
+			if strings.TrimSpace(output) == "" {
+				continue
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "\n%s\n", output); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 type componentView = corecomponent.ReviewView
@@ -228,4 +253,22 @@ func resolveStatusContext() (*config.Context, error) {
 		return nil, fmt.Errorf("context %q does not define a project directory; pass --path or update the sitectl context", ctx.Name)
 	}
 	return ctx, nil
+}
+
+func filterComponentViews(statuses []componentView, componentName string) ([]componentView, error) {
+	componentName = strings.TrimSpace(componentName)
+	if componentName == "" {
+		return statuses, nil
+	}
+
+	filtered := make([]componentView, 0, 1)
+	for _, status := range statuses {
+		if status.Name == componentName {
+			filtered = append(filtered, status)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, fmt.Errorf("unknown component %q", componentName)
+	}
+	return filtered, nil
 }
