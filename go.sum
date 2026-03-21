@@ -98,8 +98,8 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80 h1:6Yzfa6GP0rIo/kULo2bwGEkFvCePZ3qHDDTC3/J9Swo=
 github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80/go.mod h1:imJHygn/1yfhB7XSJJKlFZKl/J+dCPAknuiaGOshXAs=
-github.com/libops/sitectl v0.11.0 h1:EDGcD95Vg76ZmmAVAYaowmKxTv6g8mG06w5scconcKM=
-github.com/libops/sitectl v0.11.0/go.mod h1:QykPh7hrFKFBA1mp9euyKEWP1x5xB6bmEq6zT/tzeTU=
+github.com/libops/sitectl v0.12.0 h1:xkpqskZnbfoZusyi0aVECRKluwwLDMYVcuForhMCMM0=
+github.com/libops/sitectl v0.12.0/go.mod h1:QykPh7hrFKFBA1mp9euyKEWP1x5xB6bmEq6zT/tzeTU=
 github.com/lucasb-eyer/go-colorful v1.3.0 h1:2/yBRLdWBZKrf7gB40FoiKfAWYQ0lqNcbuQwVHXptag=
 github.com/lucasb-eyer/go-colorful v1.3.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/mattn/go-runewidth v0.0.20 h1:WcT52H91ZUAwy8+HUkdM3THM6gXqXuLJi9O3rjcQQaQ=
