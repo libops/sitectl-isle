@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -86,7 +88,7 @@ var debugExtensionCmd = &cobra.Command{
 	Short:  "Internal debug extension command",
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		rendered, err := renderISLEDebug()
+		rendered, err := renderISLEDebug(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -125,11 +127,13 @@ func init() {
 	debugExtensionCmd.Flags().BoolVar(&debugExtensionVerbose, "verbose", false, "Include verbose debug details")
 }
 
-func renderISLEDebug() (string, error) {
+func renderISLEDebug(runCtx context.Context) (string, error) {
+	slog.Debug("starting plugin debug", "plugin", "isle")
 	ctx, err := resolveStatusContext()
 	if err != nil {
 		return "", err
 	}
+	slog.Debug("resolved plugin context", "plugin", "isle", "context", ctx.Name, "project_dir", ctx.ProjectDir)
 
 	rows := []debugRow{
 		{Label: "Context", Value: ctx.Name},
@@ -150,15 +154,23 @@ func renderISLEDebug() (string, error) {
 	if overrideSummary != "" {
 		rows = append(rows, debugRow{Label: "Service overrides", Value: overrideSummary})
 	}
-	files, err := plugin.NewFileAccessor(ctx)
+	slog.Debug("creating file accessor", "plugin", "isle")
+	if commandSDK == nil {
+		return "", fmt.Errorf("plugin sdk is not initialized")
+	}
+	files, err := commandSDK.GetFileAccessor()
 	if err != nil {
 		return "", err
 	}
 	defer files.Close()
 
+	slog.Debug("resolving drupal root", "plugin", "isle", "rootfs", debugExtensionDrupalRootfs)
 	drupalRoot := resolveDrupalRoot(files, ctx.ProjectDir, debugExtensionDrupalRootfs)
-	mediaStorageRows, mediaStorageErr := renderMediaStorageRows(files, drupalRoot)
-	actionStorageRows, triggerRows, derivativeErr := renderDerivativeActionRows(files, drupalRoot, debugExtensionVerbose)
+	slog.Debug("resolved drupal root", "plugin", "isle", "drupal_root", drupalRoot)
+	slog.Debug("rendering media storage", "plugin", "isle")
+	mediaStorageRows, mediaStorageErr := renderMediaStorageRows(runCtx, files, drupalRoot)
+	slog.Debug("rendering derivative actions", "plugin", "isle", "verbose", debugExtensionVerbose)
+	actionStorageRows, triggerRows, derivativeErr := renderDerivativeActionRows(runCtx, files, drupalRoot, debugExtensionVerbose)
 
 	body := []string{
 		debugDivider(),
@@ -187,7 +199,11 @@ func renderISLEDebug() (string, error) {
 	}
 
 	for _, include := range commandSDK.Metadata.Includes {
-		output, err := commandSDK.InvokeIncludedPluginCommand(include, []string{"__debug"}, plugin.CommandExecOptions{Capture: true})
+		slog.Debug("running included plugin debug", "plugin", "isle", "include", include, "command", "__debug")
+		output, err := commandSDK.InvokeIncludedPluginCommand(include, []string{"__debug"}, plugin.CommandExecOptions{
+			Context: runCtx,
+			Capture: true,
+		})
 		if err != nil {
 			rendered += "\n\n" + renderDebugPanel(include, formatDebugRows([]debugRow{
 				{Label: "Status", Value: renderStatus("warning")},
@@ -196,11 +212,14 @@ func renderISLEDebug() (string, error) {
 			continue
 		}
 		if strings.TrimSpace(output) == "" {
+			slog.Debug("included plugin returned empty debug output", "plugin", "isle", "include", include)
 			continue
 		}
+		slog.Debug("included plugin debug completed", "plugin", "isle", "include", include)
 		rendered += "\n\n" + strings.TrimSpace(output)
 	}
 
+	slog.Debug("finished plugin debug", "plugin", "isle")
 	return rendered, nil
 }
 
@@ -428,26 +447,35 @@ type derivativeActionTrigger struct {
 	Conditions  string
 }
 
-func renderMediaStorageRows(files *plugin.FileAccessor, drupalRoot string) ([]debugRow, error) {
+type derivativeActionInfo struct {
+	ID     string
+	Scheme string
+}
+
+func renderMediaStorageRows(runCtx context.Context, files *plugin.FileAccessor, drupalRoot string) ([]debugRow, error) {
 	configDir := filepath.Join(drupalRoot, "config", "sync")
 	if strings.TrimSpace(drupalRoot) == "" {
 		return []debugRow{{Label: "Status", Value: renderStatus("warning")}, {Label: "Detail", Value: "Drupal root could not be resolved"}}, nil
 	}
-	entries, err := files.MatchFiles(configDir, "field.field.media.*.field_media_of.yml")
+	entries, err := files.MatchFilesInDir(configDir, "field.field.media.*.field_media_of.yml")
 	if err != nil {
 		return nil, err
 	}
 	if len(entries) == 0 {
 		return []debugRow{{Label: "Status", Value: renderStatus("warning")}, {Label: "Detail", Value: "No media bundles with field_media_of were found"}}, nil
 	}
+	entryData, err := files.ReadFilesContext(runCtx, entries)
+	if err != nil {
+		return nil, err
+	}
 
 	rows := []debugRow{{Label: "Status", Value: renderStatus("ok")}}
 	for _, path := range entries {
 		var mediaOf mediaFieldConfig
-		if err := readYAML(files, path, &mediaOf); err != nil {
+		if err := yaml.Unmarshal(entryData[path], &mediaOf); err != nil {
 			return nil, fmt.Errorf("read %s: %w", filepath.Base(path), err)
 		}
-		fieldName, uriScheme, err := resolveBundleStorage(files, configDir, mediaOf.Bundle)
+		fieldName, uriScheme, err := resolveBundleStorage(runCtx, files, configDir, mediaOf.Bundle)
 		if err != nil {
 			return nil, fmt.Errorf("bundle %s: %w", mediaOf.Bundle, err)
 		}
@@ -459,8 +487,12 @@ func renderMediaStorageRows(files *plugin.FileAccessor, drupalRoot string) ([]de
 	return rows, nil
 }
 
-func resolveBundleStorage(files *plugin.FileAccessor, configDir, bundle string) (string, string, error) {
-	fieldPaths, err := files.MatchFiles(configDir, fmt.Sprintf("field.field.media.%s.*.yml", bundle))
+func resolveBundleStorage(runCtx context.Context, files *plugin.FileAccessor, configDir, bundle string) (string, string, error) {
+	fieldPaths, err := files.MatchFilesInDir(configDir, fmt.Sprintf("field.field.media.%s.*.yml", bundle))
+	if err != nil {
+		return "", "", err
+	}
+	fieldData, err := files.ReadFilesContext(runCtx, fieldPaths)
 	if err != nil {
 		return "", "", err
 	}
@@ -469,7 +501,7 @@ func resolveBundleStorage(files *plugin.FileAccessor, configDir, bundle string) 
 			continue
 		}
 		var field mediaFieldConfig
-		if err := readYAML(files, path, &field); err != nil {
+		if err := yaml.Unmarshal(fieldData[path], &field); err != nil {
 			return "", "", err
 		}
 		if field.FieldType != "file" && field.FieldType != "image" {
@@ -477,7 +509,11 @@ func resolveBundleStorage(files *plugin.FileAccessor, configDir, bundle string) 
 		}
 		storagePath := filepath.Join(configDir, fmt.Sprintf("field.storage.media.%s.yml", field.FieldName))
 		var storage mediaFieldStorageConfig
-		if err := readYAML(files, storagePath, &storage); err != nil {
+		storageData, err := files.ReadFilesContext(runCtx, []string{storagePath})
+		if err != nil {
+			return "", "", err
+		}
+		if err := yaml.Unmarshal(storageData[storagePath], &storage); err != nil {
 			return "", "", err
 		}
 		scheme := strings.TrimSpace(storage.Settings.URIScheme)
@@ -489,45 +525,38 @@ func resolveBundleStorage(files *plugin.FileAccessor, configDir, bundle string) 
 	return "", "", fmt.Errorf("no file/image field found")
 }
 
-func renderDerivativeActionRows(files *plugin.FileAccessor, drupalRoot string, verbose bool) ([]debugRow, []debugRow, error) {
+func renderDerivativeActionRows(runCtx context.Context, files *plugin.FileAccessor, drupalRoot string, verbose bool) ([]debugRow, []debugRow, error) {
 	configDir := filepath.Join(drupalRoot, "config", "sync")
 	if strings.TrimSpace(drupalRoot) == "" {
 		rows := []debugRow{{Label: "Status", Value: renderStatus("warning")}, {Label: "Detail", Value: "Drupal root could not be resolved"}}
 		return rows, rows, nil
 	}
-	entries, err := files.MatchFiles(configDir, "system.action.*.yml")
+	entries, err := files.MatchFilesInDir(configDir, "system.action.*.yml")
 	if err != nil {
 		return nil, nil, err
 	}
+	actions, err := loadDerivativeActions(runCtx, files, entries)
+	if err != nil {
+		return nil, nil, err
+	}
+	triggersByAction, err := loadDerivativeTriggers(runCtx, files, configDir)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	storageRows := []debugRow{{Label: "Status", Value: renderStatus("ok")}}
 	triggerRows := []debugRow{{Label: "Status", Value: renderStatus("ok")}}
-	found := 0
-	for _, path := range entries {
-		var action actionConfig
-		if err := readYAML(files, path, &action); err != nil {
-			return nil, nil, fmt.Errorf("read %s: %w", filepath.Base(path), err)
-		}
-		if strings.TrimSpace(action.Configuration.Event) != "Generate Derivative" {
-			continue
-		}
-		scheme := strings.TrimSpace(action.Configuration.Scheme)
-		if scheme == "" {
-			scheme = "unknown"
-		}
-		storageRows = append(storageRows, debugRow{Label: action.ID, Value: scheme})
-		triggers, err := renderDerivativeContextRows(files, configDir, action.ID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("action %s contexts: %w", action.ID, err)
-		}
+	for _, action := range actions {
+		storageRows = append(storageRows, debugRow{Label: action.ID, Value: action.Scheme})
+		triggers := triggersByAction[action.ID]
 		for _, trigger := range triggers {
 			triggerRows = append(triggerRows, debugRow{Label: trigger.ActionID, Value: trigger.ContextName})
 			if verbose && strings.TrimSpace(trigger.Conditions) != "" {
 				triggerRows = append(triggerRows, debugRow{Label: "", Value: fmt.Sprintf("%s conditions:\n%s", trigger.ContextName, trigger.Conditions)})
 			}
 		}
-		found++
 	}
-	if found == 0 {
+	if len(actions) == 0 {
 		rows := []debugRow{{Label: "Status", Value: renderStatus("warning")}, {Label: "Detail", Value: "No derivative-generating actions were found"}}
 		return rows, rows, nil
 	}
@@ -537,38 +566,63 @@ func renderDerivativeActionRows(files *plugin.FileAccessor, drupalRoot string, v
 	return storageRows, triggerRows, nil
 }
 
-func renderDerivativeContextRows(files *plugin.FileAccessor, configDir, actionID string) ([]derivativeActionTrigger, error) {
-	contextPaths, err := files.MatchFiles(configDir, "context.context.*.yml")
+func loadDerivativeActions(runCtx context.Context, files *plugin.FileAccessor, paths []string) ([]derivativeActionInfo, error) {
+	batch, err := files.ReadFilesContext(runCtx, paths)
+	if err != nil {
+		return nil, err
+	}
+	actions := make([]derivativeActionInfo, 0, len(paths))
+	for _, path := range paths {
+		var action actionConfig
+		if err := yaml.Unmarshal(batch[path], &action); err != nil {
+			return nil, fmt.Errorf("read %s: %w", filepath.Base(path), err)
+		}
+		if strings.TrimSpace(action.Configuration.Event) != "Generate Derivative" {
+			continue
+		}
+		scheme := strings.TrimSpace(action.Configuration.Scheme)
+		if scheme == "" {
+			scheme = "unknown"
+		}
+		actions = append(actions, derivativeActionInfo{ID: action.ID, Scheme: scheme})
+	}
+	return actions, nil
+}
+
+func loadDerivativeTriggers(runCtx context.Context, files *plugin.FileAccessor, configDir string) (map[string][]derivativeActionTrigger, error) {
+	contextPaths, err := files.MatchFilesInDir(configDir, "context.context.*.yml")
+	if err != nil {
+		return nil, err
+	}
+	batch, err := files.ReadFilesContext(runCtx, contextPaths)
 	if err != nil {
 		return nil, err
 	}
 
-	rows := []derivativeActionTrigger{}
+	rows := map[string][]derivativeActionTrigger{}
 	for _, path := range contextPaths {
 		var ctx contextConfig
-		if err := readYAML(files, path, &ctx); err != nil {
+		if err := yaml.Unmarshal(batch[path], &ctx); err != nil {
 			return nil, fmt.Errorf("read %s: %w", filepath.Base(path), err)
 		}
-		if _, ok := ctx.Reactions.Derivative.Actions[actionID]; !ok {
+		if len(ctx.Reactions.Derivative.Actions) == 0 {
 			continue
 		}
-		conditions, err := yaml.Marshal(ctx.Conditions)
-		if err != nil {
-			return nil, fmt.Errorf("marshal conditions for %s: %w", ctx.Name, err)
+		conditions := ""
+		if ctx.Conditions != nil {
+			rendered, err := yaml.Marshal(ctx.Conditions)
+			if err != nil {
+				return nil, fmt.Errorf("marshal conditions for %s: %w", ctx.Name, err)
+			}
+			conditions = strings.TrimSpace(string(rendered))
 		}
-		rows = append(rows, derivativeActionTrigger{
-			ActionID:    actionID,
-			ContextName: ctx.Name,
-			Conditions:  strings.TrimSpace(string(conditions)),
-		})
+		for actionID := range ctx.Reactions.Derivative.Actions {
+			rows[actionID] = append(rows[actionID], derivativeActionTrigger{
+				ActionID:    actionID,
+				ContextName: ctx.Name,
+				Conditions:  conditions,
+			})
+		}
 	}
 	return rows, nil
-}
-
-func readYAML(files *plugin.FileAccessor, path string, out any) error {
-	data, err := files.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return yaml.Unmarshal(data, out)
 }
