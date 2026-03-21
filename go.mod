@@ -3,9 +3,11 @@ module github.com/libops/sitectl-isle
 go 1.25.8
 
 require (
+	charm.land/lipgloss/v2 v2.0.1
 	github.com/chromedp/chromedp v0.14.2
-	github.com/libops/sitectl v0.10.0
+	github.com/libops/sitectl v0.12.0
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/term v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -13,7 +15,6 @@ require (
 	charm.land/bubbles/v2 v2.0.0 // indirect
 	charm.land/bubbletea/v2 v2.0.2 // indirect
 	charm.land/fang/v2 v2.0.1 // indirect
-	charm.land/lipgloss/v2 v2.0.1 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
@@ -76,6 +77,5 @@ require (
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/term v0.40.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 )

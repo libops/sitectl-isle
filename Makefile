@@ -1,4 +1,4 @@
-.PHONY: build deps lint test check work docker integration-test docs plugins install-plugins
+.PHONY: build deps lint test check work docker integration-test docs plugins install-plugins install
 
 BINARY_NAME=sitectl-isle
 FCREPO_STATE?=on
@@ -6,13 +6,16 @@ BLAZEGRAPH_STATE?=on
 ISLE_FILE_SYSTEM_URI?=public
 GIT_REMOTE_URL?=
 SITECTL_CONTEXT?=integration-test
+INSTALL_DIR ?= $(or $(dir $(shell which $(BINARY_NAME) 2>/dev/null)),/usr/local/bin/)
 
-deps:
-	go get .
+deps: work
 	go mod tidy
 
-build:
+build: deps
 	go build -o $(BINARY_NAME) .
+
+install: work build
+	sudo cp $(BINARY_NAME) $(INSTALL_DIR)$(BINARY_NAME)
 
 lint:
 	go fmt ./...
