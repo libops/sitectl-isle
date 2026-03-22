@@ -5,7 +5,7 @@ go 1.25.8
 require (
 	charm.land/lipgloss/v2 v2.0.1
 	github.com/chromedp/chromedp v0.14.2
-	github.com/libops/sitectl v0.12.0
+	github.com/libops/sitectl v0.13.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/term v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
