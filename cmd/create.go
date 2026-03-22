@@ -189,19 +189,21 @@ func printIslandoraIntro(cmd *cobra.Command, out io.Writer) {
 
 func ensureLocalContext(sdk *plugin.SDK, req createRequest) (*config.Context, error) {
 	return sdk.PromptAndSaveLocalContext(config.LocalContextCreateOptions{
-		Name:              req.ContextName,
-		DefaultName:       "isle-local",
-		Site:              filepath.Base(firstNonEmpty(req.Path, "isle-site-template")),
-		DefaultSite:       filepath.Base(firstNonEmpty(req.Path, "isle-site-template")),
-		Plugin:            "isle",
-		DefaultPlugin:     "isle",
-		ProjectDir:        req.Path,
-		DefaultProjectDir: req.Path,
-		ProjectName:       filepath.Base(firstNonEmpty(req.Path, "isle-site-template")),
-		Environment:       "local",
-		ConfirmOverwrite:  false,
-		SetDefault:        req.SetDefaultContext,
-		Input:             createInput,
+		Name:                req.ContextName,
+		DefaultName:         "isle-local",
+		Site:                filepath.Base(firstNonEmpty(req.Path, "isle-site-template")),
+		DefaultSite:         filepath.Base(firstNonEmpty(req.Path, "isle-site-template")),
+		Plugin:              "isle",
+		DefaultPlugin:       "isle",
+		ProjectDir:          req.Path,
+		DefaultProjectDir:   req.Path,
+		ProjectName:         filepath.Base(firstNonEmpty(req.Path, "isle-site-template")),
+		Environment:         "local",
+		DrupalRootfs:        req.DrupalRootfs,
+		DrupalContainerRoot: "/var/www/drupal",
+		ConfirmOverwrite:    false,
+		SetDefault:          req.SetDefaultContext,
+		Input:               createInput,
 		ContextNamePrompt: append(
 			strings.Split(corecomponent.RenderSection("sitectl context name", `Enter the sitectl context name to save for this local checkout.
 This is the saved sitectl target for this stack. A good pattern is <site>-<environment>, for example preserve-local or preserve-prod.

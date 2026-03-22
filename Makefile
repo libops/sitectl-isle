@@ -11,7 +11,7 @@ INSTALL_DIR ?= $(or $(dir $(shell which $(BINARY_NAME) 2>/dev/null)),/usr/local/
 deps: work
 	go mod tidy
 
-build: deps
+build:
 	go build -o $(BINARY_NAME) .
 
 install: work build
