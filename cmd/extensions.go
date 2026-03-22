@@ -164,8 +164,12 @@ func renderISLEDebug(runCtx context.Context) (string, error) {
 	}
 	defer files.Close()
 
-	slog.Debug("resolving drupal root", "plugin", "isle", "rootfs", debugExtensionDrupalRootfs)
-	drupalRoot := resolveDrupalRoot(files, ctx.ProjectDir, debugExtensionDrupalRootfs)
+	rootfs := strings.TrimSpace(debugExtensionDrupalRootfs)
+	if rootfs == "" {
+		rootfs = ctx.EffectiveDrupalRootfs()
+	}
+	slog.Debug("resolving drupal root", "plugin", "isle", "rootfs", rootfs)
+	drupalRoot := ctx.ResolveProjectPath(rootfs)
 	slog.Debug("resolved drupal root", "plugin", "isle", "drupal_root", drupalRoot)
 	slog.Debug("rendering media storage", "plugin", "isle")
 	mediaStorageRows, mediaStorageErr := renderMediaStorageRows(runCtx, files, drupalRoot)
@@ -389,26 +393,6 @@ func debugContentWidth() int {
 
 func debugDivider() string {
 	return debugSectionDividerStyle.Width(debugContentWidth()).Render(strings.Repeat("─", debugContentWidth()))
-}
-
-func resolveDrupalRoot(files *plugin.FileAccessor, projectDir, drupalRootPath string) string {
-	candidates := []string{}
-	if trimmed := strings.TrimSpace(drupalRootPath); trimmed != "" {
-		if filepath.IsAbs(trimmed) {
-			candidates = append(candidates, filepath.Clean(trimmed))
-		} else {
-			candidates = append(candidates, filepath.Join(projectDir, trimmed))
-		}
-	}
-	if strings.TrimSpace(projectDir) != "" {
-		candidates = append(candidates, projectDir)
-	}
-	for _, candidate := range candidates {
-		if _, err := files.ReadFile(filepath.Join(candidate, "config", "sync", "core.extension.yml")); err == nil {
-			return candidate
-		}
-	}
-	return ""
 }
 
 type mediaFieldConfig struct {
