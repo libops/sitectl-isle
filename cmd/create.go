@@ -14,6 +14,7 @@ import (
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
+	"github.com/libops/sitectl/pkg/helpers"
 	"github.com/libops/sitectl/pkg/plugin"
 	"github.com/spf13/cobra"
 )
@@ -191,13 +192,13 @@ func ensureLocalContext(sdk *plugin.SDK, req createRequest) (*config.Context, er
 	return sdk.PromptAndSaveLocalContext(config.LocalContextCreateOptions{
 		Name:                req.ContextName,
 		DefaultName:         "isle-local",
-		Site:                filepath.Base(firstNonEmpty(req.Path, "isle-site-template")),
-		DefaultSite:         filepath.Base(firstNonEmpty(req.Path, "isle-site-template")),
+		Site:                filepath.Base(helpers.FirstNonEmpty(req.Path, "isle-site-template")),
+		DefaultSite:         filepath.Base(helpers.FirstNonEmpty(req.Path, "isle-site-template")),
 		Plugin:              "isle",
 		DefaultPlugin:       "isle",
 		ProjectDir:          req.Path,
 		DefaultProjectDir:   req.Path,
-		ProjectName:         filepath.Base(firstNonEmpty(req.Path, "isle-site-template")),
+		ProjectName:         filepath.Base(helpers.FirstNonEmpty(req.Path, "isle-site-template")),
 		Environment:         "local",
 		DrupalRootfs:        req.DrupalRootfs,
 		DrupalContainerRoot: "/var/www/drupal",
@@ -383,7 +384,7 @@ func ensureClonedCheckout(out io.Writer, repoURL, branch, projectDir string) (bo
 
 	parent := corecomponent.RenderSection(
 		"Template checkout",
-		fmt.Sprintf("Cloning %s at %s into %s.", repoURL, firstNonEmpty(branch, "default branch"), projectDir),
+		fmt.Sprintf("Cloning %s at %s into %s.", repoURL, helpers.FirstNonEmpty(branch, "default branch"), projectDir),
 	)
 	fmt.Fprintln(out, parent)
 	fmt.Fprintln(out)
@@ -426,15 +427,6 @@ func bootstrapCheckout(out io.Writer, projectDir string) error {
 		}
 		return nil
 	})
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func defaultRunProjectCommand(projectDir string, stdout, stderr io.Writer, name string, args ...string) error {

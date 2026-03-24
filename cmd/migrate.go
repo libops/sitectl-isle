@@ -3,9 +3,11 @@ package cmd
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -33,7 +35,7 @@ The tool will detect the format automatically and apply the appropriate transfor
 		outputPath, _ := cmd.Flags().GetString("output")
 		force, _ := cmd.Flags().GetBool("force")
 
-		return migrateLegacy(inputPath, outputPath, force)
+		return migrateLegacy(cmd.OutOrStdout(), inputPath, outputPath, force)
 	},
 }
 
@@ -44,7 +46,7 @@ func init() {
 	mergeProfilesCmd.Flags().BoolP("force", "f", false, "Overwrite output file if it exists")
 }
 
-func migrateLegacy(inputPath, outputPath string, force bool) error {
+func migrateLegacy(out io.Writer, inputPath, outputPath string, force bool) error {
 	// Check if input exists
 	if _, err := os.Stat(inputPath); err != nil {
 		// Try alternative name
@@ -104,23 +106,23 @@ func migrateLegacy(inputPath, outputPath string, force bool) error {
 	}
 
 	slog.Info("Transformation complete", "output", outputPath)
-	fmt.Printf("\n✓ Successfully migrated from %s format\n", format)
-	fmt.Printf("  Input:  %s\n", inputPath)
-	fmt.Printf("  Output: %s\n\n", outputPath)
+	fmt.Fprintf(out, "\n✓ Successfully migrated from %s format\n", format)
+	fmt.Fprintf(out, "  Input:  %s\n", inputPath)
+	fmt.Fprintf(out, "  Output: %s\n\n", outputPath)
 
 	if len(warnings) > 0 {
-		fmt.Println("Warnings:")
+		fmt.Fprintln(out, "Warnings:")
 		for _, w := range warnings {
-			fmt.Printf("  - %s\n", w)
+			fmt.Fprintf(out, "  - %s\n", w)
 		}
-		fmt.Println()
+		fmt.Fprintln(out)
 	}
 
-	fmt.Println("Next steps:")
-	fmt.Println("  1. Review the generated file")
-	fmt.Println("  2. Create/update your .env file with required variables")
-	fmt.Println("  3. Run: docker compose -f", outputPath, "config")
-	fmt.Println("  4. When ready: docker compose -f", outputPath, "up -d")
+	fmt.Fprintln(out, "Next steps:")
+	fmt.Fprintln(out, "  1. Review the generated file")
+	fmt.Fprintln(out, "  2. Create/update your .env file with required variables")
+	fmt.Fprintf(out, "  3. Run: docker compose -f %s config\n", outputPath)
+	fmt.Fprintf(out, "  4. When ready: docker compose -f %s up -d\n", outputPath)
 
 	return nil
 }
@@ -512,7 +514,7 @@ func buildYAMLOutput(compose map[string]interface{}) (string, error) {
 		buf.WriteString("  # Production secrets:\n")
 		var otherSecrets []string
 		for name := range secrets {
-			if !contains(certSecrets, name) {
+			if !slices.Contains(certSecrets, name) {
 				otherSecrets = append(otherSecrets, name)
 			}
 		}
@@ -700,13 +702,4 @@ func writeServiceField(buf *bytes.Buffer, key string, val interface{}) {
 	for line := range lines {
 		buf.WriteString("    " + line + "\n")
 	}
-}
-
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
 }

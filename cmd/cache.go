@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -34,11 +33,7 @@ func init() {
 
 	cacheMirador.Flags().StringVar(&endpoint, "endpoint", "", "Remote JSON endpoint returning array of {url: ...} (required)")
 	cacheMirador.Flags().IntVar(&workers, "workers", 2, "Number of concurrent workers")
-	err := cacheMirador.MarkFlagRequired("endpoint")
-	if err != nil {
-		slog.Error("Unable to mark endpoint flag as required for cache-mirador command")
-		os.Exit(1)
-	}
+	must(cacheMirador.MarkFlagRequired("endpoint"))
 }
 
 // cacheMirador represents the mirador command

@@ -7,14 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
-	"charm.land/lipgloss/v2"
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	"github.com/libops/sitectl/pkg/plugin"
+	"github.com/libops/sitectl/pkg/plugin/debugui"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,30 +20,6 @@ var (
 	componentExtensionName     string
 	debugExtensionDrupalRootfs string
 	debugExtensionVerbose      bool
-)
-
-var (
-	debugPanelStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("#112235")).
-			Padding(1, 2)
-	debugTitleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#98C1D9"))
-	debugSectionDividerStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("#29425E"))
-	debugStatusOKStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("#7BD389"))
-	debugStatusWarningStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("#F4C95D"))
-	debugStatusFailedStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("#F28482"))
-	debugMutedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#9FB3C8"))
-	debugRowStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("#112235"))
 )
 
 var componentExtensionCmd = &cobra.Command{
@@ -135,7 +109,7 @@ func renderISLEDebug(runCtx context.Context) (string, error) {
 	}
 	slog.Debug("resolved plugin context", "plugin", "isle", "context", ctx.Name, "project_dir", ctx.ProjectDir)
 
-	rows := []debugRow{
+	rows := []debugui.Row{
 		{Label: "Context", Value: ctx.Name},
 		{Label: "Project dir", Value: ctx.ProjectDir},
 		{Label: "Environment", Value: ctx.Environment},
@@ -144,7 +118,7 @@ func renderISLEDebug(runCtx context.Context) (string, error) {
 
 	envPath := filepath.Join(ctx.ProjectDir, ".env")
 	if envSummary := renderInterestingEnv(envPath); envSummary != "" {
-		rows = append(rows, debugRow{Label: "Environment", Value: envSummary})
+		rows = append(rows, debugui.Row{Label: "Environment", Value: envSummary})
 	}
 
 	overrideSummary, err := renderOverrideEnvSummary(resolveEnvironmentOverridePath(ctx))
@@ -152,7 +126,7 @@ func renderISLEDebug(runCtx context.Context) (string, error) {
 		return "", err
 	}
 	if overrideSummary != "" {
-		rows = append(rows, debugRow{Label: "Service overrides", Value: overrideSummary})
+		rows = append(rows, debugui.Row{Label: "Service overrides", Value: overrideSummary})
 	}
 	slog.Debug("creating file accessor", "plugin", "isle")
 	if commandSDK == nil {
@@ -177,27 +151,27 @@ func renderISLEDebug(runCtx context.Context) (string, error) {
 	actionStorageRows, triggerRows, derivativeErr := renderDerivativeActionRows(runCtx, files, drupalRoot, debugExtensionVerbose)
 
 	body := []string{
-		debugDivider(),
+		debugui.Divider(),
 		"",
-		debugTitleStyle.Render("General"),
+		debugui.Title("General"),
 		"",
-		formatDebugRows(rows),
+		debugui.FormatRows(rows),
 	}
-	body = append(body, "", debugDivider(), "", debugTitleStyle.Render("Media Storage"), "")
+	body = append(body, "", debugui.Divider(), "", debugui.Title("Media Storage"), "")
 	if mediaStorageErr != nil {
-		body = append(body, formatDebugRows([]debugRow{{Label: "Status", Value: renderStatus("warning")}, {Label: "Detail", Value: mediaStorageErr.Error()}}))
+		body = append(body, debugui.FormatRows([]debugui.Row{{Label: "Status", Value: debugui.Status("warning")}, {Label: "Detail", Value: mediaStorageErr.Error()}}))
 	} else {
-		body = append(body, formatDebugRows(mediaStorageRows))
+		body = append(body, debugui.FormatRows(mediaStorageRows))
 	}
-	body = append(body, "", debugDivider(), "", debugTitleStyle.Render("Action Storage"), "")
+	body = append(body, "", debugui.Divider(), "", debugui.Title("Action Storage"), "")
 	if derivativeErr != nil {
-		body = append(body, formatDebugRows([]debugRow{{Label: "Status", Value: renderStatus("warning")}, {Label: "Detail", Value: derivativeErr.Error()}}))
+		body = append(body, debugui.FormatRows([]debugui.Row{{Label: "Status", Value: debugui.Status("warning")}, {Label: "Detail", Value: derivativeErr.Error()}}))
 	} else {
-		body = append(body, formatDebugRows(actionStorageRows))
-		body = append(body, "", debugDivider(), "", debugTitleStyle.Render("Automatic Triggers"), "", formatDebugRows(triggerRows))
+		body = append(body, debugui.FormatRows(actionStorageRows))
+		body = append(body, "", debugui.Divider(), "", debugui.Title("Automatic Triggers"), "", debugui.FormatRows(triggerRows))
 	}
 
-	rendered := renderDebugPanel("isle", strings.Join(body, "\n"))
+	rendered := debugui.RenderPanel("isle", strings.Join(body, "\n"))
 	if commandSDK == nil {
 		return rendered, nil
 	}
@@ -209,8 +183,8 @@ func renderISLEDebug(runCtx context.Context) (string, error) {
 			Capture: true,
 		})
 		if err != nil {
-			rendered += "\n\n" + renderDebugPanel(include, formatDebugRows([]debugRow{
-				{Label: "Status", Value: renderStatus("warning")},
+			rendered += "\n\n" + debugui.RenderPanel(include, debugui.FormatRows([]debugui.Row{
+				{Label: "Status", Value: debugui.Status("warning")},
 				{Label: "Detail", Value: err.Error()},
 			}))
 			continue
@@ -309,92 +283,6 @@ func extractEnvKeys(value any) []string {
 	return keys
 }
 
-type debugRow struct {
-	Label string
-	Value string
-}
-
-func renderDebugPanel(title, body string) string {
-	header := debugTitleStyle.Render(strings.TrimSpace(title))
-	content := header
-	if strings.TrimSpace(body) != "" {
-		content += "\n\n" + body
-	}
-	return debugPanelStyle.Width(debugPanelWidth()).Render(content)
-}
-
-func formatDebugRows(rows []debugRow) string {
-	labelWidth := 0
-	for _, row := range rows {
-		if width := len(strings.TrimSpace(row.Label)); width > labelWidth {
-			labelWidth = width
-		}
-	}
-	lines := make([]string, 0, len(rows))
-	rowWidth := debugContentWidth()
-	for _, row := range rows {
-		label := strings.TrimSpace(row.Label)
-		value := strings.TrimSpace(row.Value)
-		if label == "" {
-			lines = append(lines, renderDebugRow(rowWidth, "", value))
-			continue
-		}
-		lines = append(lines, renderDebugRow(rowWidth, fmt.Sprintf("%-*s", labelWidth, label), value))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func renderDebugRow(width int, label, value string) string {
-	valueWidth := max(0, width-lipgloss.Width(label)-2)
-	row := label
-	if strings.TrimSpace(label) != "" {
-		row += "  "
-	}
-	row += lipgloss.NewStyle().
-		Width(valueWidth).
-		Background(lipgloss.Color("#112235")).
-		Render(value)
-	return debugRowStyle.Width(width).Render(row)
-}
-
-func renderStatus(state string) string {
-	switch strings.ToLower(strings.TrimSpace(state)) {
-	case "ok":
-		return debugStatusOKStyle.Render("OK")
-	case "warning":
-		return debugStatusWarningStyle.Render("WARNING")
-	case "failed":
-		return debugStatusFailedStyle.Render("FAILED")
-	default:
-		return debugMutedStyle.Render(strings.ToUpper(strings.TrimSpace(state)))
-	}
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func debugPanelWidth() int {
-	if columns, err := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS"))); err == nil && columns > 0 {
-		return max(40, columns)
-	}
-	if width, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && width > 0 {
-		return max(40, width)
-	}
-	return 100
-}
-
-func debugContentWidth() int {
-	return max(20, debugPanelWidth()-4)
-}
-
-func debugDivider() string {
-	return debugSectionDividerStyle.Width(debugContentWidth()).Render(strings.Repeat("─", debugContentWidth()))
-}
-
 type mediaFieldConfig struct {
 	FieldName string `yaml:"field_name"`
 	Bundle    string `yaml:"bundle"`
@@ -436,24 +324,24 @@ type derivativeActionInfo struct {
 	Scheme string
 }
 
-func renderMediaStorageRows(runCtx context.Context, files *plugin.FileAccessor, drupalRoot string) ([]debugRow, error) {
+func renderMediaStorageRows(runCtx context.Context, files *plugin.FileAccessor, drupalRoot string) ([]debugui.Row, error) {
 	configDir := filepath.Join(drupalRoot, "config", "sync")
 	if strings.TrimSpace(drupalRoot) == "" {
-		return []debugRow{{Label: "Status", Value: renderStatus("warning")}, {Label: "Detail", Value: "Drupal root could not be resolved"}}, nil
+		return []debugui.Row{{Label: "Status", Value: debugui.Status("warning")}, {Label: "Detail", Value: "Drupal root could not be resolved"}}, nil
 	}
 	entries, err := files.MatchFilesInDir(configDir, "field.field.media.*.field_media_of.yml")
 	if err != nil {
 		return nil, err
 	}
 	if len(entries) == 0 {
-		return []debugRow{{Label: "Status", Value: renderStatus("warning")}, {Label: "Detail", Value: "No media bundles with field_media_of were found"}}, nil
+		return []debugui.Row{{Label: "Status", Value: debugui.Status("warning")}, {Label: "Detail", Value: "No media bundles with field_media_of were found"}}, nil
 	}
 	entryData, err := files.ReadFilesContext(runCtx, entries)
 	if err != nil {
 		return nil, err
 	}
 
-	rows := []debugRow{{Label: "Status", Value: renderStatus("ok")}}
+	rows := []debugui.Row{{Label: "Status", Value: debugui.Status("ok")}}
 	for _, path := range entries {
 		var mediaOf mediaFieldConfig
 		if err := yaml.Unmarshal(entryData[path], &mediaOf); err != nil {
@@ -463,7 +351,7 @@ func renderMediaStorageRows(runCtx context.Context, files *plugin.FileAccessor, 
 		if err != nil {
 			return nil, fmt.Errorf("bundle %s: %w", mediaOf.Bundle, err)
 		}
-		rows = append(rows, debugRow{
+		rows = append(rows, debugui.Row{
 			Label: mediaOf.Bundle,
 			Value: fmt.Sprintf("%s -> %s://", fieldName, uriScheme),
 		})
@@ -509,10 +397,10 @@ func resolveBundleStorage(runCtx context.Context, files *plugin.FileAccessor, co
 	return "", "", fmt.Errorf("no file/image field found")
 }
 
-func renderDerivativeActionRows(runCtx context.Context, files *plugin.FileAccessor, drupalRoot string, verbose bool) ([]debugRow, []debugRow, error) {
+func renderDerivativeActionRows(runCtx context.Context, files *plugin.FileAccessor, drupalRoot string, verbose bool) ([]debugui.Row, []debugui.Row, error) {
 	configDir := filepath.Join(drupalRoot, "config", "sync")
 	if strings.TrimSpace(drupalRoot) == "" {
-		rows := []debugRow{{Label: "Status", Value: renderStatus("warning")}, {Label: "Detail", Value: "Drupal root could not be resolved"}}
+		rows := []debugui.Row{{Label: "Status", Value: debugui.Status("warning")}, {Label: "Detail", Value: "Drupal root could not be resolved"}}
 		return rows, rows, nil
 	}
 	entries, err := files.MatchFilesInDir(configDir, "system.action.*.yml")
@@ -528,24 +416,24 @@ func renderDerivativeActionRows(runCtx context.Context, files *plugin.FileAccess
 		return nil, nil, err
 	}
 
-	storageRows := []debugRow{{Label: "Status", Value: renderStatus("ok")}}
-	triggerRows := []debugRow{{Label: "Status", Value: renderStatus("ok")}}
+	storageRows := []debugui.Row{{Label: "Status", Value: debugui.Status("ok")}}
+	triggerRows := []debugui.Row{{Label: "Status", Value: debugui.Status("ok")}}
 	for _, action := range actions {
-		storageRows = append(storageRows, debugRow{Label: action.ID, Value: action.Scheme})
+		storageRows = append(storageRows, debugui.Row{Label: action.ID, Value: action.Scheme})
 		triggers := triggersByAction[action.ID]
 		for _, trigger := range triggers {
-			triggerRows = append(triggerRows, debugRow{Label: trigger.ActionID, Value: trigger.ContextName})
+			triggerRows = append(triggerRows, debugui.Row{Label: trigger.ActionID, Value: trigger.ContextName})
 			if verbose && strings.TrimSpace(trigger.Conditions) != "" {
-				triggerRows = append(triggerRows, debugRow{Label: "", Value: fmt.Sprintf("%s conditions:\n%s", trigger.ContextName, trigger.Conditions)})
+				triggerRows = append(triggerRows, debugui.Row{Label: "", Value: fmt.Sprintf("%s conditions:\n%s", trigger.ContextName, trigger.Conditions)})
 			}
 		}
 	}
 	if len(actions) == 0 {
-		rows := []debugRow{{Label: "Status", Value: renderStatus("warning")}, {Label: "Detail", Value: "No derivative-generating actions were found"}}
+		rows := []debugui.Row{{Label: "Status", Value: debugui.Status("warning")}, {Label: "Detail", Value: "No derivative-generating actions were found"}}
 		return rows, rows, nil
 	}
 	if len(triggerRows) == 1 {
-		triggerRows = append(triggerRows, debugRow{Label: "Detail", Value: "No automatic trigger contexts were found"})
+		triggerRows = append(triggerRows, debugui.Row{Label: "Detail", Value: "No automatic trigger contexts were found"})
 	}
 	return storageRows, triggerRows, nil
 }
