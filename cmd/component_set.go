@@ -12,6 +12,7 @@ import (
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
+	"github.com/libops/sitectl/pkg/plugin"
 	"github.com/spf13/cobra"
 )
 
@@ -441,6 +442,32 @@ func promptTLSComponentMode(name, defaultValue string, input corecomponent.Input
 	section := corecomponent.RenderSection("Frontend mode", question)
 	return promptChoice(name+"-tls-mode", choices, defaultValue, input, strings.Split(section, "\n")...)
 }
+
+// isleSetRunner implements plugin.SetRunner for the isle plugin.
+type isleSetRunner struct {
+	drupalRootfs string
+}
+
+func (r *isleSetRunner) BindFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&statusPath, "path", "", "Project path override")
+	corecomponent.AddDrupalRootfsFlag(cmd, &r.drupalRootfs, createpkg.DefaultDrupalRootfs)
+	cmd.Flags().StringVar(&componentSetState, "state", "", "Component state to apply (on, off)")
+	cmd.Flags().StringVar(&componentSetDisposition, "disposition", "", "Component disposition to apply")
+	cmd.Flags().BoolVar(&componentSetYolo, "yolo", false, "Apply without confirmation")
+	cmd.Flags().StringVar(&componentSetTLSMode, "tls-mode", "", "TLS mode for the selected component")
+	addComponentSetFollowUpFlags(cmd, managedComponentDefinitions())
+}
+
+func (r *isleSetRunner) Run(cmd *cobra.Command, args []string, ctx *config.Context) error {
+	statusDrupalRootfs = r.drupalRootfs
+	stateValue, err := resolveComponentSetStateValue(cmd, args)
+	if err != nil {
+		return err
+	}
+	return runComponentSet(cmd, args[0], stateValue)
+}
+
+var _ plugin.SetRunner = (*isleSetRunner)(nil)
 
 func resolveCurrentFileSystemURI(projectDir, drupalRootfs string) (string, error) {
 	layout := corecomponent.ResolveDrupalLayout(projectDir, drupalRootfs)

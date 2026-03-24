@@ -8,6 +8,7 @@ import (
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
+	"github.com/libops/sitectl/pkg/plugin"
 	sitevalidate "github.com/libops/sitectl/pkg/validate"
 	"github.com/spf13/cobra"
 )
@@ -63,13 +64,32 @@ func init() {
 	corecomponent.AddReportFlags(validateCmd, nil, &validateFormat)
 }
 
+// isleValidateRunner implements plugin.ValidateRunner for the isle plugin.
+type isleValidateRunner struct {
+	drupalRootfs string
+}
+
+func (r *isleValidateRunner) BindFlags(cmd *cobra.Command) {
+	corecomponent.AddDrupalRootfsFlag(cmd, &r.drupalRootfs, createpkg.DefaultDrupalRootfs)
+}
+
+func (r *isleValidateRunner) Run(cmd *cobra.Command, ctx *config.Context) ([]sitevalidate.Result, error) {
+	return runIsleValidation(ctx, r.drupalRootfs)
+}
+
+var _ plugin.ValidateRunner = (*isleValidateRunner)(nil)
+
 func isleContextValidator(ctx *config.Context) ([]sitevalidate.Result, error) {
+	return runIsleValidation(ctx, statusDrupalRootfs)
+}
+
+func runIsleValidation(ctx *config.Context, drupalRootfs string) ([]sitevalidate.Result, error) {
 	if ctx == nil {
 		return nil, nil
 	}
 	results := []sitevalidate.Result{}
 
-	drupalRoot := ctx.ResolveProjectPath(statusDrupalRootfs)
+	drupalRoot := ctx.ResolveProjectPath(drupalRootfs)
 	if strings.TrimSpace(drupalRoot) == "" {
 		results = append(results, sitevalidate.Result{
 			Name:   "drupal-rootfs",
@@ -106,7 +126,7 @@ func isleContextValidator(ctx *config.Context) ([]sitevalidate.Result, error) {
 		return results, nil
 	}
 
-	statuses, err := detectComponentViewsForContext(ctx, statusDrupalRootfs)
+	statuses, err := detectComponentViewsForContext(ctx, drupalRootfs)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +146,7 @@ func isleContextValidator(ctx *config.Context) ([]sitevalidate.Result, error) {
 			if result.Detail == "" {
 				result.Detail = "component is drifted"
 			}
-			result.FixHint = "run `sitectl isle component review --report` or reconcile the component configuration"
+			result.FixHint = "run `sitectl converge --report` to preview or `sitectl converge` to apply"
 		}
 		results = append(results, result)
 	}

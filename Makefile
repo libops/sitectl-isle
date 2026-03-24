@@ -1,4 +1,4 @@
-.PHONY: build deps lint test check work docker integration-test docs plugins install-plugins install docs-snippets
+.PHONY: build deps lint test check work docker integration-test docs plugins install-plugins install
 
 BINARY_NAME=sitectl-isle
 FCREPO_STATE?=on
@@ -40,5 +40,3 @@ work:
 integration-test:
 	SITECTL_CONTEXT="$(SITECTL_CONTEXT)" GIT_REMOTE_URL="$(GIT_REMOTE_URL)" ./scripts/test-create.sh $(FCREPO_STATE) $(ISLE_FILE_SYSTEM_URI) $(BLAZEGRAPH_STATE)
 
-docs-snippets: work
-	go run ./scripts/gen-docs-snippets/
