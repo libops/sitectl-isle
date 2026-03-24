@@ -31,20 +31,21 @@ var cacheCmd = &cobra.Command{
 func init() {
 	cacheCmd.AddCommand(cacheMirador)
 
-	cacheMirador.Flags().StringVar(&endpoint, "endpoint", "", "Remote JSON endpoint returning array of {url: ...} (required)")
-	cacheMirador.Flags().IntVar(&workers, "workers", 2, "Number of concurrent workers")
+	cacheMirador.Flags().StringVar(&endpoint, "endpoint", "", "JSON endpoint returning an array of objects with a url field. Required.")
+	cacheMirador.Flags().IntVar(&workers, "workers", 2, "Number of concurrent browser workers.")
 	must(cacheMirador.MarkFlagRequired("endpoint"))
 }
 
 // cacheMirador represents the mirador command
 var cacheMirador = &cobra.Command{
 	Use:   "mirador",
-	Short: "Make sure mirador IIIF viewer has cached images",
-	Long: `For paged content items with children items displayed through a mirador IIIF viewer
-	If the IIIF server doesn't have the children images cached, the first site visitor will have slow page load times
-	So this command can be used to fetch a list of paged content items at their canonical node URL
-	and ensure mirador is rendering the children items. This will make the next site visitor's page load times much quicker.
-`,
+	Short: "Pre-warm the Mirador IIIF viewer image cache",
+	Long: `Pre-warm the Mirador IIIF viewer cache for paged content items.
+
+When the IIIF server has not yet cached a paged item's child images, the first visitor to that
+page experiences slow load times while the server processes the images. This command fetches a
+list of paged content URLs from a JSON endpoint and renders each one in a headless browser so
+the IIIF server caches the images before real visitors arrive.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		urls, err := fetchURLs(endpoint)
 		if err != nil {

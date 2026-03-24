@@ -17,19 +17,18 @@ import (
 
 var migrateCmd = &cobra.Command{
 	Use:   "migrate",
-	Short: "Migration helpers",
+	Short: "Helpers for migrating legacy ISLE site template layouts",
+	Long:  `Helpers for upgrading sites from legacy isle-site-template formats.`,
 }
 
 var mergeProfilesCmd = &cobra.Command{
 	Use:   "merge-compose-profiles",
-	Short: "Merge compose profiles into single service definitions",
-	Long: `Merge compose profiles into single service definitions.
-Move traefik labels into their own conf files
+	Short: "Merge Compose profile variants into single service definitions",
+	Long: `Merge Compose profile variants into single service definitions and extract Traefik labels
+into separate configuration files.
 
-Supports migration from:
-- legacy isle-site-template format (-dev/-prod service pairs)
-
-The tool will detect the format automatically and apply the appropriate transformations.`,
+Supports migration from the legacy isle-site-template format that used -dev/-prod service pairs.
+The format is detected automatically.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		inputPath, _ := cmd.Flags().GetString("input")
 		outputPath, _ := cmd.Flags().GetString("output")
@@ -41,9 +40,9 @@ The tool will detect the format automatically and apply the appropriate transfor
 
 func init() {
 	migrateCmd.AddCommand(mergeProfilesCmd)
-	mergeProfilesCmd.Flags().StringP("input", "i", "docker-compose.yml", "Input docker-compose file path")
-	mergeProfilesCmd.Flags().StringP("output", "o", "docker-compose.yml", "Output docker-compose file path")
-	mergeProfilesCmd.Flags().BoolP("force", "f", false, "Overwrite output file if it exists")
+	mergeProfilesCmd.Flags().StringP("input", "i", "docker-compose.yml", "Input Compose file.")
+	mergeProfilesCmd.Flags().StringP("output", "o", "docker-compose.yml", "Output Compose file.")
+	mergeProfilesCmd.Flags().BoolP("force", "f", false, "Overwrite the output file if it already exists.")
 }
 
 func migrateLegacy(out io.Writer, inputPath, outputPath string, force bool) error {

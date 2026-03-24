@@ -22,12 +22,22 @@ var (
 var syncCmd = &cobra.Command{
 	Use:   "sync",
 	Short: "Sync ISLE artifacts between contexts",
+	Long: `Copy ISLE artifacts from one sitectl context to another.
+
+Available artifacts: fcrepo (Fedora Commons database)`,
 }
 
 var syncFcrepoCmd = &cobra.Command{
 	Use:     "fcrepo",
 	Aliases: []string{"database", "db"},
 	Short:   "Sync the Fcrepo database from one context to another",
+	Long: `Copy the Fcrepo database from a source context to a target context.
+
+This backs up the Fcrepo database on the source, transfers the artifact, and imports it into
+the target. The command asks for confirmation before importing. Pass --yolo to skip the prompt
+in automation.
+
+Use --fresh to always take a new backup rather than reusing one from today.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		progress := plugin.NewProgressLine(cmd.ErrOrStderr(), "Syncing Fcrepo Database", "Resolving contexts")
 		defer progress.Close()
@@ -78,11 +88,11 @@ var syncFcrepoCmd = &cobra.Command{
 }
 
 func init() {
-	syncFcrepoCmd.Flags().StringVar(&syncSourceContext, "source", "", "Source sitectl context")
-	syncFcrepoCmd.Flags().StringVar(&syncTargetContext, "target", "", "Target sitectl context")
-	syncFcrepoCmd.Flags().BoolVar(&syncFresh, "fresh", false, "Always run a fresh source Fcrepo database backup instead of reusing today/yesterday if available")
-	syncFcrepoCmd.Flags().StringVar(&syncBackupDir, "backup-dir", "/tmp/sitectl-isle-jobs/fcrepo-db-backup", "Source host directory used to cache Fcrepo database backup artifacts for sync")
-	syncFcrepoCmd.Flags().BoolVar(&syncYolo, "yolo", false, "Apply destructive database changes without confirmation")
+	syncFcrepoCmd.Flags().StringVar(&syncSourceContext, "source", "", "Source sitectl context.")
+	syncFcrepoCmd.Flags().StringVar(&syncTargetContext, "target", "", "Target sitectl context.")
+	syncFcrepoCmd.Flags().BoolVar(&syncFresh, "fresh", false, "Always take a fresh backup instead of reusing one from today.")
+	syncFcrepoCmd.Flags().StringVar(&syncBackupDir, "backup-dir", "/tmp/sitectl-isle-jobs/fcrepo-db-backup", "Directory on the source host used to cache backup artifacts.")
+	syncFcrepoCmd.Flags().BoolVar(&syncYolo, "yolo", false, "Skip the confirmation prompt before importing.")
 	must(syncFcrepoCmd.MarkFlagRequired("source"))
 	must(syncFcrepoCmd.MarkFlagRequired("target"))
 
