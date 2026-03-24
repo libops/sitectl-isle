@@ -14,6 +14,7 @@ import (
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
+	"github.com/libops/sitectl/pkg/helpers"
 	"github.com/libops/sitectl/pkg/plugin"
 	"github.com/spf13/cobra"
 )
@@ -58,13 +59,11 @@ type createRequest struct {
 
 var createCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create a a new ISLE install",
-	Long: `Use Islandora's ISLE Site Template to install Islandora.
+	Short: "Create a new ISLE site from the upstream template",
+	Long: `Clone the Islandora ISLE site template and walk through the initial setup interactively.
 
-This command will walk you through setting up Islandora. After you answer a few questions, an Islandora site will be running on your machine.
-
-Be sure docker is installed and running.
-`,
+After answering a few questions about which components to include, the site will be checked out,
+configured, and started. Docker must be installed and running.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		printIslandoraIntro(cmd, cmd.OutOrStdout())
 		if err := createCheckPrereqs(cmd.OutOrStdout()); err != nil {
@@ -79,11 +78,11 @@ Be sure docker is installed and running.
 }
 
 func init() {
-	createCmd.Flags().StringVar(&createPath, "path", ".", "Path to the checked out isle-site-template project")
-	createCmd.Flags().StringVar(&createTemplateRepo, "template-repo", defaultTemplateRepo, "Source git repository to clone for the site template")
-	createCmd.Flags().StringVar(&createTemplateBranch, "template-branch", defaultTemplateBranch, "Git branch or ref to clone from the template repository")
-	createCmd.Flags().BoolVar(&createSetDefaultContext, "default-context", false, "Set the created sitectl context as the default context")
-	createCmd.Flags().BoolVar(&createSetupOnly, "setup-only", false, "Create and customize the checkout, but do not run make up")
+	createCmd.Flags().StringVar(&createPath, "path", ".", "Directory where the site will be checked out.")
+	createCmd.Flags().StringVar(&createTemplateRepo, "template-repo", defaultTemplateRepo, "Git repository to clone as the site template.")
+	createCmd.Flags().StringVar(&createTemplateBranch, "template-branch", defaultTemplateBranch, "Branch or ref to clone from the template repository.")
+	createCmd.Flags().BoolVar(&createSetDefaultContext, "default-context", false, "Set the new context as the default sitectl context.")
+	createCmd.Flags().BoolVar(&createSetupOnly, "setup-only", false, "Configure the checkout but do not start the site.")
 	corecomponent.AddCreateFlags(createCmd, createComponentOptions()...)
 	corecomponent.AddDrupalRootfsFlag(createCmd, &createDrupalRootfs, createpkg.DefaultDrupalRootfs)
 }
@@ -191,13 +190,13 @@ func ensureLocalContext(sdk *plugin.SDK, req createRequest) (*config.Context, er
 	return sdk.PromptAndSaveLocalContext(config.LocalContextCreateOptions{
 		Name:                req.ContextName,
 		DefaultName:         "isle-local",
-		Site:                filepath.Base(firstNonEmpty(req.Path, "isle-site-template")),
-		DefaultSite:         filepath.Base(firstNonEmpty(req.Path, "isle-site-template")),
+		Site:                filepath.Base(helpers.FirstNonEmpty(req.Path, "isle-site-template")),
+		DefaultSite:         filepath.Base(helpers.FirstNonEmpty(req.Path, "isle-site-template")),
 		Plugin:              "isle",
 		DefaultPlugin:       "isle",
 		ProjectDir:          req.Path,
 		DefaultProjectDir:   req.Path,
-		ProjectName:         filepath.Base(firstNonEmpty(req.Path, "isle-site-template")),
+		ProjectName:         filepath.Base(helpers.FirstNonEmpty(req.Path, "isle-site-template")),
 		Environment:         "local",
 		DrupalRootfs:        req.DrupalRootfs,
 		DrupalContainerRoot: "/var/www/drupal",
@@ -383,7 +382,7 @@ func ensureClonedCheckout(out io.Writer, repoURL, branch, projectDir string) (bo
 
 	parent := corecomponent.RenderSection(
 		"Template checkout",
-		fmt.Sprintf("Cloning %s at %s into %s.", repoURL, firstNonEmpty(branch, "default branch"), projectDir),
+		fmt.Sprintf("Cloning %s at %s into %s.", repoURL, helpers.FirstNonEmpty(branch, "default branch"), projectDir),
 	)
 	fmt.Fprintln(out, parent)
 	fmt.Fprintln(out)
@@ -426,15 +425,6 @@ func bootstrapCheckout(out io.Writer, projectDir string) error {
 		}
 		return nil
 	})
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func defaultRunProjectCommand(projectDir string, stdout, stderr io.Writer, name string, args ...string) error {

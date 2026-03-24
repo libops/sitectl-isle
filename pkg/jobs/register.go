@@ -121,14 +121,12 @@ func RunFcrepoDBBackup(cmd *cobra.Command, ctx *config.Context, outputPath strin
 }
 
 func RunFcrepoDBImport(cmd *cobra.Command, ctx *config.Context, inputPath string, yolo bool) error {
-	if !yolo {
-		ok, err := confirmDatabaseReplacement(ctx.Name, "Fcrepo", inputPath)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fmt.Errorf("database import cancelled")
-		}
+	ok, err := job.ConfirmDatabaseReplacement(ctx.Name, "Fcrepo", inputPath, yolo)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("database import cancelled")
 	}
 
 	cli, err := docker.GetDockerCli(ctx)
@@ -191,24 +189,4 @@ func RunFcrepoDBImport(cmd *cobra.Command, ctx *config.Context, inputPath string
 		return fmt.Errorf("fcrepo mysql import failed with exit code %d", exitCode)
 	}
 	return nil
-}
-
-func confirmDatabaseReplacement(targetContext, databaseName, inputPath string) (bool, error) {
-	prompt := []string{
-		fmt.Sprintf("About to import %s database artifact %q into context %q.", databaseName, inputPath, targetContext),
-		"This will wipe out the target database.",
-		"Continue? [y/N]: ",
-	}
-
-	input, err := config.GetInput(prompt...)
-	if err != nil {
-		return false, err
-	}
-
-	switch strings.ToLower(strings.TrimSpace(input)) {
-	case "y", "yes":
-		return true, nil
-	default:
-		return false, nil
-	}
 }

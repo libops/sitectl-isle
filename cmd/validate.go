@@ -18,7 +18,13 @@ var (
 
 var validateCmd = &cobra.Command{
 	Use:   "validate",
-	Short: "Validate the current ISLE project and context wiring",
+	Short: "Validate the ISLE project and context configuration",
+	Long: `Validate the active context's configuration and project layout.
+
+Checks include: context wiring, required Traefik configuration, Drupal rootfs path, and
+component state consistency.
+
+Exits non-zero if any check fails.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, err := resolveStatusContext()
 		if err != nil {
@@ -52,7 +58,7 @@ var validateCmd = &cobra.Command{
 }
 
 func init() {
-	validateCmd.Flags().StringVar(&statusPath, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
+	validateCmd.Flags().StringVar(&statusPath, "path", "", "Path to the project directory. Defaults to the active context project directory.")
 	corecomponent.AddDrupalRootfsFlag(validateCmd, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	corecomponent.AddReportFlags(validateCmd, nil, &validateFormat)
 }
