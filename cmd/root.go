@@ -12,10 +12,11 @@ func RegisterCommands(sdk *plugin.SDK) {
 	commandSDK = sdk
 	sdk.RegisterContextValidator(isleContextValidator)
 	pluginjobs.Register(sdk)
-	sdk.AddCommand(sdk.GetMetadataCommand())
+	sdk.RegisterComponentDefinitions(orderedComponentDefinitions()...)
+	sdk.AddCommand(sdk.GetDiscoveryMetadataCommand())
 	sdk.AddCommand(componentExtensionCmd)
 	sdk.AddCommand(cacheCmd)
-	sdk.AddCommand(createCmd)
+	sdk.RegisterCreateRunner(createDefinition(), createRunner{})
 	sdk.AddCommand(debugExtensionCmd)
 	sdk.AddCommand(migrateCmd)
 	sdk.AddCommand(syncCmd)

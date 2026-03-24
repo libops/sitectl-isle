@@ -30,7 +30,7 @@ var (
 	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
 		return commandSDK.CloneTemplateRepo(opts)
 	}
-	createEnsureLocalContext = ensureLocalContext
+	createEnsureLocalContext = ensureCreateContext
 	createApply              = createpkg.Apply
 	createRunProjectCommand  = defaultRunProjectCommand
 	createBootstrapCheckout  = bootstrapCheckout
@@ -47,99 +47,72 @@ const (
 )
 
 type createRequest struct {
-	ContextName       string
-	Path              string
-	DrupalRootfs      string
-	TemplateRepo      string
-	TemplateBranch    string
-	SetDefaultContext bool
-	SetupOnly         bool
-	Apply             createpkg.Options
+	plugin.ComposeCreateRequest
+	Apply createpkg.Options
 }
 
-var createCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create a new ISLE site from the upstream template",
-	Long: `Clone the Islandora ISLE site template and walk through the initial setup interactively.
+type createRunner struct{}
 
-After answering a few questions about which components to include, the site will be checked out,
-configured, and started. Docker must be installed and running.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		printIslandoraIntro(cmd, cmd.OutOrStdout())
-		if err := createCheckPrereqs(cmd.OutOrStdout()); err != nil {
-			return err
-		}
-		req, err := resolveCreateRequest(cmd)
-		if err != nil {
-			return err
-		}
-		return runCreateCommand(cmd, req)
-	},
+func (createRunner) BindFlags(cmd *cobra.Command) {
+	bindCreateFlags(cmd)
 }
 
-func init() {
-	createCmd.Flags().StringVar(&createPath, "path", ".", "Directory where the site will be checked out.")
-	createCmd.Flags().StringVar(&createTemplateRepo, "template-repo", defaultTemplateRepo, "Git repository to clone as the site template.")
-	createCmd.Flags().StringVar(&createTemplateBranch, "template-branch", defaultTemplateBranch, "Branch or ref to clone from the template repository.")
-	createCmd.Flags().BoolVar(&createSetDefaultContext, "default-context", false, "Set the new context as the default sitectl context.")
-	createCmd.Flags().BoolVar(&createSetupOnly, "setup-only", false, "Configure the checkout but do not start the site.")
-	corecomponent.AddCreateFlags(createCmd, createComponentOptions()...)
-	corecomponent.AddDrupalRootfsFlag(createCmd, &createDrupalRootfs, createpkg.DefaultDrupalRootfs)
+func (createRunner) Run(cmd *cobra.Command) error {
+	printIslandoraIntro(cmd, cmd.OutOrStdout())
+	if err := createCheckPrereqs(cmd.OutOrStdout()); err != nil {
+		return err
+	}
+	req, err := resolveCreateRequest(cmd)
+	if err != nil {
+		return err
+	}
+	return runCreateCommand(cmd, req)
+}
+
+func createDefinition() plugin.CreateSpec {
+	return plugin.CreateSpec{
+		Name:                "default",
+		Description:         "Create a new ISLE site from the upstream template",
+		Default:             true,
+		MinCPUCores:         4,
+		MinMemory:           "8 GiB",
+		MinDiskSpace:        "30 GiB",
+		DockerComposeRepo:   defaultTemplateRepo,
+		DockerComposeBranch: defaultTemplateBranch,
+		DockerComposeUp:     []string{"make up"},
+		DockerComposeDown:   []string{"make clean"},
+	}
+}
+
+func bindCreateFlags(cmd *cobra.Command) {
+	if err := commandSDK.BindComposeCreateFlags(cmd, createDefinition(), &createDrupalRootfs, createpkg.DefaultDrupalRootfs); err != nil {
+		panic(err)
+	}
 }
 
 func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
-	contextName, err := cmd.Flags().GetString("context")
-	if err != nil {
-		return createRequest{}, fmt.Errorf("get context flag: %w", err)
-	}
-	if !cmd.Flags().Changed("context") {
-		contextName = ""
-	}
-
-	requestPath := createPath
-	if !cmd.Flags().Changed("path") {
-		requestPath = ""
-	}
-	setupOnly, err := cmd.Flags().GetBool("setup-only")
-	if err != nil {
-		return createRequest{}, fmt.Errorf("get setup-only flag: %w", err)
-	}
-
-	opts := createpkg.Options{
-		Path:         createPath,
-		DrupalRootfs: createDrupalRootfs,
-	}
-
-	decisions, err := corecomponent.ResolveCreateDecisions(cmd, createInput, createComponentOptions()...)
+	resolved, err := commandSDK.ResolveComposeCreateRequest(cmd, createInput, createDrupalRootfs, "", defaultTemplateRepo, defaultTemplateBranch)
 	if err != nil {
 		return createRequest{}, err
 	}
-	opts.Fcrepo = string(decisions["fcrepo"].State)
-	opts.Blazegraph = string(decisions["blazegraph"].State)
-	opts.ISLEFileSystemURI = strings.TrimSpace(decisions["fcrepo"].Options["isle-file-system-uri"])
+	opts := createpkg.Options{
+		Path:         resolved.Path,
+		DrupalRootfs: helpers.FirstNonEmpty(resolved.DrupalRootfs, createpkg.DefaultDrupalRootfs),
+	}
+	if decision, ok := resolved.Decisions["fcrepo"]; ok {
+		opts.Fcrepo = string(decision.State)
+		opts.ISLEFileSystemURI = strings.TrimSpace(decision.Options["isle-file-system-uri"])
+	}
+	if decision, ok := resolved.Decisions["blazegraph"]; ok {
+		opts.Blazegraph = string(decision.State)
+	}
 	if opts.ISLEFileSystemURI == "" {
 		opts.ISLEFileSystemURI = createpkg.DefaultISLEFileSystemURI
 	}
-
 	return createRequest{
-		ContextName:       contextName,
-		Path:              requestPath,
-		DrupalRootfs:      createDrupalRootfs,
-		TemplateRepo:      createTemplateRepo,
-		TemplateBranch:    createTemplateBranch,
-		SetDefaultContext: createSetDefaultContext,
-		SetupOnly:         setupOnly,
-		Apply:             opts,
+		ComposeCreateRequest: resolved,
+		Apply:                opts,
 	}, nil
-}
-
-func createComponentOptions() []corecomponent.CreateOption {
-	defs := orderedComponentDefinitions()
-	options := make([]corecomponent.CreateOption, 0, len(defs))
-	for _, def := range defs {
-		options = append(options, def.CreateOption())
-	}
-	return options
 }
 
 func runCreateCommand(cmd *cobra.Command, req createRequest) error {
@@ -186,37 +159,20 @@ func printIslandoraIntro(cmd *cobra.Command, out io.Writer) {
 	fmt.Fprintln(out)
 }
 
-func ensureLocalContext(sdk *plugin.SDK, req createRequest) (*config.Context, error) {
-	return sdk.PromptAndSaveLocalContext(config.LocalContextCreateOptions{
-		Name:                req.ContextName,
+func ensureCreateContext(sdk *plugin.SDK, req createRequest) (*config.Context, error) {
+	if sdk == nil {
+		return nil, fmt.Errorf("plugin sdk is not initialized")
+	}
+	return sdk.EnsureComposeCreateContext(req.ComposeCreateRequest, plugin.ComposeCreateContextOptions{
 		DefaultName:         "isle-local",
-		Site:                filepath.Base(helpers.FirstNonEmpty(req.Path, "isle-site-template")),
 		DefaultSite:         filepath.Base(helpers.FirstNonEmpty(req.Path, "isle-site-template")),
-		Plugin:              "isle",
 		DefaultPlugin:       "isle",
-		ProjectDir:          req.Path,
 		DefaultProjectDir:   req.Path,
-		ProjectName:         filepath.Base(helpers.FirstNonEmpty(req.Path, "isle-site-template")),
-		Environment:         "local",
-		DrupalRootfs:        req.DrupalRootfs,
+		DefaultProjectName:  filepath.Base(helpers.FirstNonEmpty(req.Path, "isle-site-template")),
+		DefaultEnvironment:  "local",
+		DefaultDrupalRootfs: req.DrupalRootfs,
 		DrupalContainerRoot: "/var/www/drupal",
-		ConfirmOverwrite:    false,
-		SetDefault:          req.SetDefaultContext,
 		Input:               createInput,
-		ContextNamePrompt: append(
-			strings.Split(corecomponent.RenderSection("sitectl context name", `Enter the sitectl context name to save for this local checkout.
-This is the saved sitectl target for this stack. A good pattern is <site>-<environment>, for example preserve-local or preserve-prod.
-This is only important if you'll be running multiple ISLE installs on this machine. This is just a short label so you can easily identify multiple ISLE installs.`), "\n"),
-			"",
-			corecomponent.RenderPromptLine("Context name [%s]: "),
-		),
-		ProjectDirPrompt: append(
-			strings.Split(corecomponent.RenderSection("Project directory", `Enter the full directory path where ISLE Site Template will be cloned.
-If the directory doesn't exist it will be created.
-If it does exist, ensure the directory is empty.`), "\n"),
-			"",
-			corecomponent.RenderPromptLine("Project directory [%s]: "),
-		),
 	})
 }
 
@@ -591,7 +547,7 @@ func buildRecreateCommand(req createRequest) string {
 	if req.SetupOnly {
 		args = append(args, "--setup-only")
 	}
-	lines := []string{"sitectl isle create \\"}
+	lines := []string{"sitectl create isle \\"}
 	for i, arg := range args {
 		line := "  " + arg
 		if i < len(args)-1 {

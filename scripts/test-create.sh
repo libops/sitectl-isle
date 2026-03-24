@@ -12,6 +12,12 @@ GIT_REMOTE_URL="${GIT_REMOTE_URL:-}"
 SITECTL_CONTEXT="${SITECTL_CONTEXT:-integration-test}"
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)"
+SITECTL_REPO="${SITECTL_REPO:-${REPO_ROOT}/../sitectl}"
+if [ ! -f "${SITECTL_REPO}/go.mod" ]; then
+	echo "expected sitectl checkout at ${SITECTL_REPO}" >&2
+	exit 1
+fi
+
 if [ -n "${SITECTL_TMP_PARENT:-}" ]; then
 	TMP_PARENT="${SITECTL_TMP_PARENT}"
 elif [ -n "${GITHUB_WORKSPACE:-}" ]; then
@@ -21,8 +27,12 @@ else
 fi
 mkdir -p "${TMP_PARENT}"
 TMP_DIR="$(mktemp -d "${TMP_PARENT%/}/sitectl-isle-test.XXXXXX")"
+BIN_DIR="${TMP_DIR}/bin"
 SITE_DIR="${TMP_DIR}/isle-site-template"
-PLUGIN_BIN="${TMP_DIR}/sitectl-isle"
+SITECTL_BIN="${BIN_DIR}/sitectl"
+PLUGIN_BIN="${BIN_DIR}/sitectl-isle"
+PATH="${BIN_DIR}:${PATH}"
+export PATH
 
 cleanup() {
 	if [ -d "${SITE_DIR}" ]; then
@@ -87,17 +97,25 @@ run_compose_diagnostics() {
 	)
 }
 
-build_plugin() {
+build_binaries() {
+	mkdir -p "${BIN_DIR}"
 	(
 		cd "${REPO_ROOT}" &&
+			./scripts/use-go-work.sh "${SITECTL_REPO}" &&
 			go build -o "${PLUGIN_BIN}" .
+	)
+	(
+		cd "${SITECTL_REPO}" &&
+			go build -o "${SITECTL_BIN}" .
 	)
 }
 
 create_site() {
-	"${PLUGIN_BIN}" create \
+	sitectl create isle \
 		--path "${SITE_DIR}" \
 		--context "${SITECTL_CONTEXT}" \
+		--type local \
+		--checkout-source template \
 		--fcrepo "${FCREPO_STATE}" \
 		--blazegraph "${BLAZEGRAPH_STATE}" \
 		--isle-file-system-uri "${ISLE_FILE_SYSTEM_URI}" \
@@ -179,7 +197,7 @@ verify_blazegraph_disabled() {
 }
 
 main() {
-	build_plugin
+	build_binaries
 	create_site
 	set_assert_target
 	run_make_target init

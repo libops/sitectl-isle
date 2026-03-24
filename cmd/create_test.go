@@ -12,7 +12,6 @@ import (
 	"time"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
-	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
 	"github.com/spf13/cobra"
@@ -465,10 +464,12 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	cmd.SetOut(&out)
 
 	err := runCreateCommand(cmd, createRequest{
-		Path:           projectDir,
-		DrupalRootfs:   createpkg.DefaultDrupalRootfs,
-		TemplateRepo:   defaultTemplateRepo,
-		TemplateBranch: defaultTemplateBranch,
+		ComposeCreateRequest: plugin.ComposeCreateRequest{
+			Path:           projectDir,
+			DrupalRootfs:   createpkg.DefaultDrupalRootfs,
+			TemplateRepo:   defaultTemplateRepo,
+			TemplateBranch: defaultTemplateBranch,
+		},
 		Apply: createpkg.Options{
 			DrupalRootfs:      createpkg.DefaultDrupalRootfs,
 			Fcrepo:            createpkg.FcrepoStateOn,
@@ -493,7 +494,7 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	if !strings.Contains(rendered, "git add .") || !strings.Contains(rendered, "git commit -m") {
 		t.Fatalf("expected commit suggestion, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "sitectl isle create") {
+	if !strings.Contains(rendered, "sitectl create isle") {
 		t.Fatalf("expected recreate command body, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "--fcrepo=on") || !strings.Contains(rendered, "--blazegraph=off") {
@@ -547,11 +548,13 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	cmd.SetOut(&out)
 
 	err := runCreateCommand(cmd, createRequest{
-		Path:           projectDir,
-		DrupalRootfs:   createpkg.DefaultDrupalRootfs,
-		TemplateRepo:   defaultTemplateRepo,
-		TemplateBranch: defaultTemplateBranch,
-		SetupOnly:      true,
+		ComposeCreateRequest: plugin.ComposeCreateRequest{
+			Path:           projectDir,
+			DrupalRootfs:   createpkg.DefaultDrupalRootfs,
+			TemplateRepo:   defaultTemplateRepo,
+			TemplateBranch: defaultTemplateBranch,
+			SetupOnly:      true,
+		},
 		Apply: createpkg.Options{
 			DrupalRootfs:      createpkg.DefaultDrupalRootfs,
 			Fcrepo:            createpkg.FcrepoStateOff,
@@ -618,15 +621,15 @@ func TestBootstrapCheckoutRunsGitAddAndInitialCommit(t *testing.T) {
 }
 
 func newCreateCommandForTest() *cobra.Command {
+	commandSDK = plugin.NewSDK(plugin.Metadata{Name: "isle"})
+	commandSDK.RegisterComponentDefinitions(orderedComponentDefinitions()...)
 	cmd := &cobra.Command{Use: "create"}
-	cmd.Flags().String("context", "local", "")
-	cmd.Flags().String("path", ".", "")
-	cmd.Flags().String("template-repo", defaultTemplateRepo, "")
-	cmd.Flags().String("template-branch", defaultTemplateBranch, "")
-	cmd.Flags().Bool("default-context", false, "")
-	cmd.Flags().Bool("setup-only", false, "")
-	corecomponent.AddCreateFlags(cmd, createComponentOptions()...)
-	corecomponent.AddDrupalRootfsFlag(cmd, &createDrupalRootfs, createpkg.DefaultDrupalRootfs)
+	cmd.Flags().String("context", "", "")
+	if err := commandSDK.BindComposeCreateFlags(cmd, createDefinition(), &createDrupalRootfs, createpkg.DefaultDrupalRootfs); err != nil {
+		panic(err)
+	}
+	_ = cmd.Flags().Set("type", "local")
+	_ = cmd.Flags().Set("checkout-source", "template")
 	return cmd
 }
 

@@ -20,19 +20,30 @@ jobs:
         fcrepo_state: [on, off]
         blazegraph_state: [on]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          path: sitectl-isle
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: libops/sitectl
+          ref: main
+          path: sitectl
 
       - name: Set up Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version: ">=1.25.3"
 
       - name: setup git identity
+        working-directory: sitectl-isle
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
 
       - name: Run create integration test
+        working-directory: sitectl-isle
         run: make integration-test FCREPO_STATE=${{ matrix.fcrepo_state }} BLAZEGRAPH_STATE=${{ matrix.blazegraph_state }}
         env:
           TERM: xterm-256color
+          SITECTL_REPO: ../sitectl
