@@ -4,7 +4,7 @@ go 1.25.8
 
 require (
 	github.com/chromedp/chromedp v0.14.2
-	github.com/libops/sitectl v0.13.4
+	github.com/libops/sitectl v0.15.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	gopkg.in/yaml.v3 v3.0.1
