@@ -10,17 +10,14 @@ import (
 	"strings"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
+	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
 	"github.com/libops/sitectl/pkg/plugin/debugui"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
-var (
-	componentExtensionName     string
-	debugExtensionDrupalRootfs string
-	debugExtensionVerbose      bool
-)
+var componentExtensionName string
 
 var componentExtensionCmd = &cobra.Command{
 	Use:    "__component",
@@ -57,18 +54,19 @@ var componentExtensionSetCmd = &cobra.Command{
 	},
 }
 
-var debugExtensionCmd = &cobra.Command{
-	Use:    "__debug",
-	Short:  "Internal debug extension command",
-	Hidden: true,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		rendered, err := renderISLEDebug(cmd.Context())
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), rendered)
-		return err
-	},
+// isleDebugRunner implements plugin.DebugRunner for the isle plugin.
+type isleDebugRunner struct {
+	drupalRootfs string
+	verbose      bool
+}
+
+func (r *isleDebugRunner) BindFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&r.drupalRootfs, "drupal-rootfs", createpkg.DefaultDrupalRootfs, "Drupal rootfs path override")
+	cmd.Flags().BoolVar(&r.verbose, "verbose", false, "Include verbose debug details")
+}
+
+func (r *isleDebugRunner) Render(cmd *cobra.Command, ctx *config.Context) (string, error) {
+	return renderISLEDebugBody(cmd.Context(), ctx, r.drupalRootfs, r.verbose)
 }
 
 func init() {
@@ -95,18 +93,10 @@ func init() {
 	componentExtensionCmd.AddCommand(componentExtensionDescribeCmd)
 	componentExtensionCmd.AddCommand(componentExtensionReconcileCmd)
 	componentExtensionCmd.AddCommand(componentExtensionSetCmd)
-
-	debugExtensionCmd.Flags().StringVar(&statusPath, "path", "", "Project path override")
-	debugExtensionCmd.Flags().StringVar(&debugExtensionDrupalRootfs, "drupal-rootfs", createpkg.DefaultDrupalRootfs, "Drupal rootfs path override")
-	debugExtensionCmd.Flags().BoolVar(&debugExtensionVerbose, "verbose", false, "Include verbose debug details")
 }
 
-func renderISLEDebug(runCtx context.Context) (string, error) {
+func renderISLEDebugBody(runCtx context.Context, ctx *config.Context, drupalRootfsOverride string, verbose bool) (string, error) {
 	slog.Debug("starting plugin debug", "plugin", "isle")
-	ctx, err := resolveStatusContext()
-	if err != nil {
-		return "", err
-	}
 	slog.Debug("resolved plugin context", "plugin", "isle", "context", ctx.Name, "project_dir", ctx.ProjectDir)
 
 	rows := []debugui.Row{
@@ -138,7 +128,7 @@ func renderISLEDebug(runCtx context.Context) (string, error) {
 	}
 	defer files.Close()
 
-	rootfs := strings.TrimSpace(debugExtensionDrupalRootfs)
+	rootfs := strings.TrimSpace(drupalRootfsOverride)
 	if rootfs == "" {
 		rootfs = ctx.EffectiveDrupalRootfs()
 	}
@@ -147,8 +137,11 @@ func renderISLEDebug(runCtx context.Context) (string, error) {
 	slog.Debug("resolved drupal root", "plugin", "isle", "drupal_root", drupalRoot)
 	slog.Debug("rendering media storage", "plugin", "isle")
 	mediaStorageRows, mediaStorageErr := renderMediaStorageRows(runCtx, files, drupalRoot)
-	slog.Debug("rendering derivative actions", "plugin", "isle", "verbose", debugExtensionVerbose)
-	actionStorageRows, triggerRows, derivativeErr := renderDerivativeActionRows(runCtx, files, drupalRoot, debugExtensionVerbose)
+	slog.Debug("rendering derivative actions", "plugin", "isle", "verbose", verbose)
+	actionStorageRows, triggerRows, derivativeErr := renderDerivativeActionRows(runCtx, files, drupalRoot, verbose)
+
+	slog.Debug("rendering component status", "plugin", "isle")
+	componentRows := renderISLEComponentRows(ctx, rootfs)
 
 	body := []string{
 		debugui.Divider(),
@@ -157,6 +150,7 @@ func renderISLEDebug(runCtx context.Context) (string, error) {
 		"",
 		debugui.FormatRows(rows),
 	}
+	body = append(body, "", debugui.Divider(), "", debugui.Title("Components"), "", debugui.FormatRows(componentRows))
 	body = append(body, "", debugui.Divider(), "", debugui.Title("Media Storage"), "")
 	if mediaStorageErr != nil {
 		body = append(body, debugui.FormatRows([]debugui.Row{{Label: "Status", Value: debugui.Status("warning")}, {Label: "Detail", Value: mediaStorageErr.Error()}}))
@@ -171,34 +165,34 @@ func renderISLEDebug(runCtx context.Context) (string, error) {
 		body = append(body, "", debugui.Divider(), "", debugui.Title("Automatic Triggers"), "", debugui.FormatRows(triggerRows))
 	}
 
-	rendered := debugui.RenderPanel("isle", strings.Join(body, "\n"))
-	if commandSDK == nil {
-		return rendered, nil
-	}
+	slog.Debug("finished plugin debug body", "plugin", "isle")
+	return strings.Join(body, "\n"), nil
+}
 
-	for _, include := range commandSDK.Metadata.Includes {
-		slog.Debug("running included plugin debug", "plugin", "isle", "include", include, "command", "__debug")
-		output, err := commandSDK.InvokeIncludedPluginCommand(include, []string{"__debug"}, plugin.CommandExecOptions{
-			Context: runCtx,
-			Capture: true,
-		})
-		if err != nil {
-			rendered += "\n\n" + debugui.RenderPanel(include, debugui.FormatRows([]debugui.Row{
-				{Label: "Status", Value: debugui.Status("warning")},
-				{Label: "Detail", Value: err.Error()},
-			}))
-			continue
+func renderISLEComponentRows(ctx *config.Context, drupalRootfs string) []debugui.Row {
+	statuses, err := detectComponentViewsForContext(ctx, drupalRootfs)
+	if err != nil {
+		return []debugui.Row{
+			{Label: "Status", Value: debugui.Status("warning")},
+			{Label: "Detail", Value: err.Error()},
 		}
-		if strings.TrimSpace(output) == "" {
-			slog.Debug("included plugin returned empty debug output", "plugin", "isle", "include", include)
-			continue
-		}
-		slog.Debug("included plugin debug completed", "plugin", "isle", "include", include)
-		rendered += "\n\n" + strings.TrimSpace(output)
 	}
-
-	slog.Debug("finished plugin debug", "plugin", "isle")
-	return rendered, nil
+	rows := []debugui.Row{{Label: "Status", Value: debugui.Status("ok")}}
+	anyDrifted := false
+	for _, s := range statuses {
+		value := string(s.State)
+		if strings.TrimSpace(s.Detail) != "" {
+			value = fmt.Sprintf("%s (%s)", value, s.Detail)
+		}
+		if s.State == "drifted" {
+			anyDrifted = true
+		}
+		rows = append(rows, debugui.Row{Label: s.Name, Value: value})
+	}
+	if anyDrifted {
+		rows[0].Value = debugui.Status("warning")
+	}
+	return rows
 }
 
 func renderInterestingEnv(path string) string {
