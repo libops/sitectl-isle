@@ -12,7 +12,7 @@ if [[ ! -f "${SITECTL_GOMOD}" ]]; then
 fi
 
 cat > go.work <<EOF
-go 1.25.8
+$(grep -E "^go (\d|\.)+$" go.mod)
 
 use (
     .
