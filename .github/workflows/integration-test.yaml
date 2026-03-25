@@ -24,25 +24,19 @@ jobs:
         with:
           path: sitectl-isle
 
-      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
-        with:
-          repository: libops/sitectl
-          ref: main
-          path: sitectl
-
-      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
-        with:
-          repository: libops/sitectl-drupal
-          ref: main
-          path: sitectl-drupal
-
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
         with:
-          go-version: ">=1.25.3"
+          go-version: ">=1.26.1"
+
+      - name: Install sitectl and sitectl-drupal
+        run: |
+          curl -fsSL https://packages.libops.io/sitectl/sitectl-archive-keyring.asc | sudo gpg --dearmor -o /usr/share/keyrings/sitectl-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/sitectl-archive-keyring.gpg] https://packages.libops.io/sitectl ./" | sudo tee /etc/apt/sources.list.d/sitectl.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y sitectl sitectl-drupal
 
       - name: setup git identity
-        working-directory: sitectl-isle
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
@@ -52,5 +46,3 @@ jobs:
         run: make integration-test FCREPO_STATE=${{ matrix.fcrepo_state }} BLAZEGRAPH_STATE=${{ matrix.blazegraph_state }}
         env:
           TERM: xterm-256color
-          SITECTL_REPO: ../sitectl
-          SITECTL_DRUPAL_REPO: ../sitectl-drupal

@@ -31,9 +31,6 @@ lint:
 test: build
 	go test -v -race ./...
 
-check:
-	./scripts/check.sh
-
 work:
 	./scripts/use-go-work.sh
 

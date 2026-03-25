@@ -12,16 +12,6 @@ GIT_REMOTE_URL="${GIT_REMOTE_URL:-}"
 SITECTL_CONTEXT="${SITECTL_CONTEXT:-integration-test}"
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)"
-SITECTL_REPO="${SITECTL_REPO:-${REPO_ROOT}/../sitectl}"
-SITECTL_DRUPAL_REPO="${SITECTL_DRUPAL_REPO:-${REPO_ROOT}/../sitectl-drupal}"
-if [ ! -f "${SITECTL_REPO}/go.mod" ]; then
-	echo "expected sitectl checkout at ${SITECTL_REPO}" >&2
-	exit 1
-fi
-if [ ! -f "${SITECTL_DRUPAL_REPO}/go.mod" ]; then
-	echo "expected sitectl-drupal checkout at ${SITECTL_DRUPAL_REPO}" >&2
-	exit 1
-fi
 
 if [ -n "${SITECTL_TMP_PARENT:-}" ]; then
 	TMP_PARENT="${SITECTL_TMP_PARENT}"
@@ -34,9 +24,7 @@ mkdir -p "${TMP_PARENT}"
 TMP_DIR="$(mktemp -d "${TMP_PARENT%/}/sitectl-isle-test.XXXXXX")"
 BIN_DIR="${TMP_DIR}/bin"
 SITE_DIR="${TMP_DIR}/isle-site-template"
-SITECTL_BIN="${BIN_DIR}/sitectl"
 PLUGIN_BIN="${BIN_DIR}/sitectl-isle"
-DRUPAL_PLUGIN_BIN="${BIN_DIR}/sitectl-drupal"
 PATH="${BIN_DIR}:${PATH}"
 export PATH
 
@@ -107,17 +95,7 @@ build_binaries() {
 	mkdir -p "${BIN_DIR}"
 	(
 		cd "${REPO_ROOT}" &&
-			./scripts/use-go-work.sh "${SITECTL_REPO}" &&
 			go build -o "${PLUGIN_BIN}" .
-	)
-	(
-		cd "${SITECTL_DRUPAL_REPO}" &&
-			./scripts/use-go-work.sh "${SITECTL_REPO}" &&
-			go build -o "${DRUPAL_PLUGIN_BIN}" .
-	)
-	(
-		cd "${SITECTL_REPO}" &&
-			go build -o "${SITECTL_BIN}" .
 	)
 }
 
