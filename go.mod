@@ -4,13 +4,13 @@ go 1.26.1
 
 require (
 	github.com/chromedp/chromedp v0.15.1
-	github.com/libops/sitectl v0.16.3
+	github.com/libops/sitectl v0.16.4
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
-	charm.land/bubbles/v2 v2.0.0 // indirect
+	charm.land/bubbles/v2 v2.1.0 // indirect
 	charm.land/bubbletea/v2 v2.0.2 // indirect
 	charm.land/fang/v2 v2.0.1 // indirect
 	charm.land/lipgloss/v2 v2.0.2 // indirect
