@@ -472,7 +472,7 @@ var _ plugin.SetRunner = (*isleSetRunner)(nil)
 func resolveCurrentFileSystemURI(projectDir, drupalRootfs string) (string, error) {
 	layout := corecomponent.ResolveDrupalLayout(projectDir, drupalRootfs)
 	fieldPath := filepath.Join(layout.ConfigSyncDir(), "field.storage.media.field_media_file.yml")
-	data, err := os.ReadFile(fieldPath)
+	data, err := os.ReadFile(fieldPath) // #nosec G304 -- config sync path is resolved inside the selected ISLE project.
 	if err != nil {
 		return createpkg.DefaultISLEFileSystemURI, nil
 	}

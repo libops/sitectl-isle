@@ -153,14 +153,16 @@ func RunFcrepoDBImport(cmd *cobra.Command, ctx *config.Context, inputPath string
 		return err
 	}
 	tempPath := tempFile.Name()
-	tempFile.Close()
+	if err := tempFile.Close(); err != nil {
+		return err
+	}
 	defer os.Remove(tempPath)
 
 	if err := job.DownloadContextFile(ctx, inputPath, tempPath); err != nil {
 		return err
 	}
 
-	inputFile, err := os.Open(tempPath)
+	inputFile, err := os.Open(tempPath) // #nosec G304 -- tempPath is created by this process and populated before import.
 	if err != nil {
 		return err
 	}

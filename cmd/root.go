@@ -17,6 +17,14 @@ func RegisterCommands(sdk *plugin.SDK) {
 	sdk.AddCommand(componentExtensionCmd)
 	sdk.AddCommand(cacheCmd)
 	sdk.RegisterCreateRunner(createDefinition(), createRunner{})
+	sdk.AddStandardComposeCommands(plugin.StandardComposeCommandOptions{
+		DisplayName:     "ISLE",
+		BuildCommands:   createDefinition().DockerComposeBuild,
+		InitCommands:    createDefinition().DockerComposeInit,
+		UpCommands:      createDefinition().DockerComposeUp,
+		DownCommands:    createDefinition().DockerComposeDown,
+		RolloutCommands: createDefinition().DockerComposeRollout,
+	})
 	sdk.RegisterDebugHandler(&isleDebugRunner{})
 	sdk.RegisterConvergeRunner(&isleConvergeRunner{})
 	sdk.RegisterSetRunner(&isleSetRunner{})

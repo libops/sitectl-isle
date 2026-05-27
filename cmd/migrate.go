@@ -67,7 +67,7 @@ func migrateLegacy(out io.Writer, inputPath, outputPath string, force bool) erro
 	slog.Info("Reading input file", "path", inputPath)
 
 	// Read input
-	data, err := os.ReadFile(inputPath)
+	data, err := os.ReadFile(inputPath) // #nosec G304 -- migration input path is explicitly selected by the operator.
 	if err != nil {
 		return fmt.Errorf("error reading input file: %w", err)
 	}
@@ -100,7 +100,7 @@ func migrateLegacy(out io.Writer, inputPath, outputPath string, force bool) erro
 	}
 
 	// Write output
-	if err := os.WriteFile(outputPath, []byte(finalOutput), 0644); err != nil {
+	if err := os.WriteFile(outputPath, []byte(finalOutput), 0o600); err != nil {
 		return fmt.Errorf("error writing output file: %w", err)
 	}
 
@@ -695,7 +695,9 @@ func writeServiceField(buf *bytes.Buffer, key string, val interface{}) {
 	if err := encoder.Encode(fieldMap); err != nil {
 		return
 	}
-	encoder.Close()
+	if err := encoder.Close(); err != nil {
+		return
+	}
 
 	lines := strings.SplitSeq(strings.TrimSpace(svcBuf.String()), "\n")
 	for line := range lines {

@@ -79,8 +79,14 @@ func createDefinition() plugin.CreateSpec {
 		MinDiskSpace:        "30 GiB",
 		DockerComposeRepo:   defaultTemplateRepo,
 		DockerComposeBranch: defaultTemplateBranch,
-		DockerComposeUp:     []string{"make up"},
-		DockerComposeDown:   []string{"make clean"},
+		DockerComposeBuild:  []string{"if [ -f Makefile ]; then make build; else docker compose build; fi"},
+		DockerComposeInit:   []string{"if [ -f Makefile ]; then make init; fi"},
+		DockerComposeUp:     []string{"if [ -f Makefile ]; then make up; else docker compose up --remove-orphans -d; fi"},
+		DockerComposeDown:   []string{"if [ -f Makefile ]; then make down; else docker compose down; fi"},
+		DockerComposeRollout: []string{
+			"docker compose pull --ignore-buildable --quiet || true",
+			"docker compose up --remove-orphans --wait --pull missing --quiet-pull -d",
+		},
 	}
 }
 
@@ -183,11 +189,11 @@ func runStartup(out io.Writer, ctx *config.Context) error {
 	if err != nil {
 		return fmt.Errorf("resolve startup log path: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o750); err != nil {
 		return fmt.Errorf("create startup log directory: %w", err)
 	}
 
-	logFile, err := os.Create(logPath)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 -- startup log path is generated under sitectl config state.
 	if err != nil {
 		return fmt.Errorf("create startup log %q: %w", logPath, err)
 	}
@@ -332,7 +338,7 @@ func ensureClonedCheckout(out io.Writer, repoURL, branch, projectDir string) (bo
 		return false, fmt.Errorf("read project directory %q: %w", projectDir, err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(projectDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(projectDir), 0o750); err != nil {
 		return false, fmt.Errorf("create parent directory for %q: %w", projectDir, err)
 	}
 
@@ -384,7 +390,7 @@ func bootstrapCheckout(out io.Writer, projectDir string) error {
 }
 
 func defaultRunProjectCommand(projectDir string, stdout, stderr io.Writer, name string, args ...string) error {
-	command := exec.Command(name, args...)
+	command := exec.Command(name, args...) // #nosec G204 -- command helper is used for fixed git/template commands assembled by sitectl-isle.
 	command.Dir = projectDir
 	command.Stdout = stdout
 	command.Stderr = stderr
@@ -396,7 +402,7 @@ func defaultRunProjectCommand(projectDir string, stdout, stderr io.Writer, name 
 }
 
 func runCheckCommand(name string, args ...string) error {
-	command := exec.Command(name, args...)
+	command := exec.Command(name, args...) // #nosec G204 -- command helper checks fixed local prerequisites without a shell.
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard
 	command.Env = os.Environ()
@@ -458,7 +464,7 @@ func runWithSpinner(out io.Writer, label string, fn func() error) error {
 }
 
 func tailLines(path string, limit int) (string, error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- path is a sitectl-generated startup log path.
 	if err != nil {
 		return "", err
 	}

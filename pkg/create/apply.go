@@ -2,6 +2,7 @@ package create
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -201,13 +202,19 @@ func setComposeEnv(composePath, serviceName, key, value string) error {
 }
 
 func cleanupDrupalConfig(configDir, targetScheme string) error {
+	root, err := os.OpenRoot(filepath.Clean(configDir))
+	if err != nil {
+		return fmt.Errorf("open config dir: %w", err)
+	}
+	defer root.Close()
+
 	for _, name := range fedoraCleanupFiles {
-		if err := os.Remove(filepath.Join(configDir, name)); err != nil && !os.IsNotExist(err) {
+		if err := root.Remove(name); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove %s: %w", name, err)
 		}
 	}
 
-	files, err := os.ReadDir(configDir)
+	files, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return fmt.Errorf("read config dir: %w", err)
 	}
@@ -216,8 +223,7 @@ func cleanupDrupalConfig(configDir, targetScheme string) error {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yml" {
 			continue
 		}
-		path := filepath.Join(configDir, entry.Name())
-		data, err := os.ReadFile(path)
+		data, err := root.ReadFile(entry.Name())
 		if err != nil {
 			return fmt.Errorf("read %s: %w", entry.Name(), err)
 		}
@@ -234,7 +240,7 @@ func cleanupDrupalConfig(configDir, targetScheme string) error {
 			}
 		}
 
-		if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+		if err := root.WriteFile(entry.Name(), []byte(updated), 0o644); err != nil { // #nosec G306 -- generated Drupal config is non-secret project configuration.
 			return fmt.Errorf("write %s: %w", entry.Name(), err)
 		}
 	}
@@ -243,8 +249,14 @@ func cleanupDrupalConfig(configDir, targetScheme string) error {
 }
 
 func cleanupBlazegraphConfig(configDir string) error {
+	root, err := os.OpenRoot(filepath.Clean(configDir))
+	if err != nil {
+		return fmt.Errorf("open config dir: %w", err)
+	}
+	defer root.Close()
+
 	for _, name := range blazegraphCleanupFiles {
-		if err := os.Remove(filepath.Join(configDir, name)); err != nil && !os.IsNotExist(err) {
+		if err := root.Remove(name); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove %s: %w", name, err)
 		}
 	}
@@ -265,8 +277,7 @@ func cleanupBlazegraphConfig(configDir string) error {
 	}
 
 	for name, removals := range contextReplacements {
-		path := filepath.Join(configDir, name)
-		data, err := os.ReadFile(path)
+		data, err := root.ReadFile(name)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -279,7 +290,7 @@ func cleanupBlazegraphConfig(configDir string) error {
 			updated = strings.ReplaceAll(updated, removal+"\n", "")
 		}
 
-		if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+		if err := root.WriteFile(name, []byte(updated), 0o644); err != nil { // #nosec G306 -- generated Drupal config is non-secret project configuration.
 			return fmt.Errorf("write %s: %w", name, err)
 		}
 	}
