@@ -196,7 +196,7 @@ func renderISLEComponentRows(ctx *config.Context, drupalRootfs string) []debugui
 }
 
 func renderInterestingEnv(path string) string {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- env path is resolved inside the selected ISLE project.
 	if err != nil {
 		return ""
 	}
@@ -224,7 +224,7 @@ func renderInterestingEnv(path string) string {
 }
 
 func renderOverrideEnvSummary(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- override path is resolved inside the selected ISLE project.
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "none", nil

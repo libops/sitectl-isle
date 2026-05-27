@@ -157,7 +157,8 @@ func fetchURLPage(ctx context.Context, endpoint string, page int) ([]URLItem, er
 		return nil, fmt.Errorf("build request failed: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GET failed: %w", err)
 	}
@@ -176,9 +177,12 @@ func fetchURLPage(ctx context.Context, endpoint string, page int) ([]URLItem, er
 }
 
 func endpointPageURL(endpoint string, page int) (string, error) {
-	parsed, err := url.Parse(endpoint)
+	parsed, err := url.ParseRequestURI(endpoint)
 	if err != nil {
 		return "", fmt.Errorf("parse endpoint failed: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("endpoint must use http or https")
 	}
 
 	query := parsed.Query()

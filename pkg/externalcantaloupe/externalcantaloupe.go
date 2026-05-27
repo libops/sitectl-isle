@@ -293,7 +293,7 @@ func currentUpstreamURL(baseCompose, overrideCompose *corecomponent.ComposeFile,
 	if value := composeServiceEnvValue(baseCompose, traefikServiceName, traefikUpstreamEnvKey); strings.TrimSpace(value) != "" {
 		return strings.TrimSpace(value), nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- Cantaloupe config path is resolved inside the selected ISLE project.
 	if err != nil {
 		return "", err
 	}
@@ -311,7 +311,7 @@ func currentUpstreamURL(baseCompose, overrideCompose *corecomponent.ComposeFile,
 }
 
 func ensureUpstreamURLTemplate(path string) error {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- Cantaloupe config path is resolved inside the selected ISLE project.
 	if err != nil {
 		return err
 	}
@@ -321,7 +321,7 @@ func ensureUpstreamURLTemplate(path string) error {
 		if strings.HasPrefix(trimmed, "- url: ") {
 			prefix := line[:len(line)-len(strings.TrimLeft(line, " "))]
 			lines[i] = prefix + "- url: " + traefikUpstreamTemplate
-			return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+			return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600) // #nosec G703 -- Cantaloupe config path is resolved inside the selected ISLE project.
 		}
 	}
 	return fmt.Errorf("no Traefik cantaloupe upstream url found in %s", path)

@@ -57,7 +57,7 @@ func DetectProd(projectDir string) (Status, error) {
 		return Status{}, err
 	}
 	composePath := filepath.Join(projectDir, "docker-compose.yml")
-	composeText, err := os.ReadFile(composePath)
+	composeText, err := os.ReadFile(composePath) // #nosec G304 -- compose path is resolved inside the selected ISLE project.
 	if err != nil {
 		return Status{}, err
 	}
@@ -249,13 +249,13 @@ func ApplyProd(projectDir, mode string) error {
 	}
 
 	composePath := filepath.Join(projectDir, "docker-compose.yml")
-	composeText, err := os.ReadFile(composePath)
+	composeText, err := os.ReadFile(composePath) // #nosec G304 -- compose path is resolved inside the selected ISLE project.
 	if err != nil {
 		return err
 	}
 	updated := setDrupalEnableHTTPSLine(string(composeText), enableHTTPS)
 	updated = setLetsEncryptCommand(updated, mode == ModeLetsEncrypt)
-	return os.WriteFile(composePath, []byte(updated), 0o644)
+	return os.WriteFile(composePath, []byte(updated), 0o600)
 }
 
 func ApplyDev(projectDir string, enabled bool, mode string) error {
@@ -273,7 +273,7 @@ func ApplyOverride(projectDir, overridePath string, enabled bool, mode string) e
 
 	devPath := firstNonEmpty(overridePath, filepath.Join(projectDir, "docker-compose.override.yml"))
 	doc := map[string]any{}
-	if data, err := os.ReadFile(devPath); err == nil {
+	if data, err := os.ReadFile(devPath); err == nil { // #nosec G304 -- override path is resolved inside the selected ISLE project.
 		if err := yaml.Unmarshal(data, &doc); err != nil {
 			return fmt.Errorf("parse %s: %w", filepath.Base(devPath), err)
 		}
@@ -333,7 +333,7 @@ func ApplyOverride(projectDir, overridePath string, enabled bool, mode string) e
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(devPath, out, 0o644)
+	return os.WriteFile(devPath, out, 0o600)
 }
 
 func validateMode(mode string, allowHTTP bool) error {
@@ -450,7 +450,7 @@ func fileExists(path string) bool {
 
 func readDotEnv(path string) (map[string]string, error) {
 	values := map[string]string{}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- dotenv path is resolved inside the selected ISLE project.
 	if err != nil {
 		if os.IsNotExist(err) {
 			return values, nil
@@ -472,7 +472,7 @@ func readDotEnv(path string) (map[string]string, error) {
 }
 
 func updateEnvFile(path string, values map[string]string) error {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- dotenv path is resolved inside the selected ISLE project.
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -495,7 +495,7 @@ func updateEnvFile(path string, values map[string]string) error {
 		}
 	}
 
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600) // #nosec G703 -- dotenv path is resolved inside the selected ISLE project.
 }
 
 func marshalCompose(doc map[string]any) ([]byte, error) {
