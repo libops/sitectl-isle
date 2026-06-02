@@ -217,6 +217,51 @@ func TestStatusCommandUsesActiveContextProjectDir(t *testing.T) {
 	}
 }
 
+func TestResolveStatusContextUsesDotContextAsCWD(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldSDK := commandSDK
+	oldStatusPath := statusPath
+	t.Cleanup(func() {
+		commandSDK = oldSDK
+		statusPath = oldStatusPath
+	})
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatalf("Chdir(projectDir) error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+
+	commandSDK = plugin.NewSDK(plugin.Metadata{
+		Name:        "isle",
+		Version:     "test",
+		Description: "test",
+	})
+	commandSDK.SetProjectDiscovery(func(projectDir string) (*config.ProjectClaim, error) {
+		return &config.ProjectClaim{Plugin: "isle", ProjectDir: projectDir, Reason: "test claim"}, nil
+	})
+	commandSDK.Config.Context = "."
+	statusPath = ""
+
+	ctx, err := resolveStatusContext()
+	if err != nil {
+		t.Fatalf("resolveStatusContext() error = %v", err)
+	}
+	if ctx.ProjectDir != projectDir {
+		t.Fatalf("expected project dir %q, got %q", projectDir, ctx.ProjectDir)
+	}
+	if ctx.Plugin != "isle" || ctx.DockerHostType != config.ContextLocal {
+		t.Fatalf("unexpected context: %+v", ctx)
+	}
+}
+
 func TestStatusCommandReportsProdAndDevTLSModes(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)

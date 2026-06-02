@@ -149,6 +149,60 @@ volumes:
 	if !strings.Contains(err.Error(), `component "blazegraph" is drifted`) {
 		t.Fatalf("expected blazegraph drift error, got %v", err)
 	}
+	if !strings.Contains(err.Error(), "docker-compose.yml") || !strings.Contains(err.Error(), "DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE") {
+		t.Fatalf("expected drift error to include failed file/check detail, got %v", err)
+	}
+}
+
+func TestRunComponentSetIIIFIgnoresOtherComponentDrift(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	configDir := filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "config", "sync")
+	if err := os.Remove(filepath.Join(configDir, "system.action.index_media_in_triplestore.yml")); err != nil {
+		t.Fatalf("Remove(triplestore action) error = %v", err)
+	}
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	var out bytes.Buffer
+	cmd := componentSetCmd
+	cmd.SetOut(&out)
+
+	if err := runComponentSet(cmd, "iiif", "triplet"); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "iiif: triplet") {
+		t.Fatalf("expected command output, got:\n%s", out.String())
+	}
+
+	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
+	}
+	compose := string(composeText)
+	if !strings.Contains(compose, "\n  triplet:\n") || strings.Contains(compose, "\n  cantaloupe:\n") {
+		t.Fatalf("expected triplet to replace cantaloupe, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, "\n  blazegraph:\n") || !strings.Contains(compose, "DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora") {
+		t.Fatalf("expected blazegraph compose defaults preserved, got:\n%s", compose)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "system.action.index_media_in_triplestore.yml")); !os.IsNotExist(err) {
+		t.Fatalf("expected unrelated blazegraph drift to remain untouched, stat err=%v", err)
+	}
 }
 
 func TestRunComponentSetAppliesISLETLSOverrideHTTPOverride(t *testing.T) {

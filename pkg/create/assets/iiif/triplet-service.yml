@@ -5,7 +5,7 @@
     volumes:
       - drupal-public-files:/public:ro
       - drupal-private-files:/private:ro
+{{FCREPO_VOLUME}}
       - ./certs/rootCA.pem:/etc/ssl/certs/lehigh.pem:ro
       - ./conf/triplet/config.yaml:/etc/triplet/config.yaml:ro
       - triplet-cache:/var/lib/triplet/cache:rw
-{{FCREPO_VOLUME}}

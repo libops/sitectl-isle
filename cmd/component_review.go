@@ -70,8 +70,8 @@ func runComponentReconcile(cmd *cobra.Command, componentName string) error {
 			if status.Name == componentName {
 				continue
 			}
-			if status.State == corecomponent.StateDrifted && blocksComponentSetOnDrift(status.Name) {
-				return fmt.Errorf("component %q is drifted; resolve it first or target it explicitly", status.Name)
+			if status.State == corecomponent.StateDrifted && blocksComponentSetOnDrift(componentName, status.Name) {
+				return fmt.Errorf("component %q is drifted (%s); resolve it first or target it explicitly", status.Name, componentDriftSummary(status, 6))
 			}
 		}
 	}

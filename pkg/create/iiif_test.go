@@ -29,6 +29,14 @@ func TestApplyTripletLocalReplacesCantaloupe(t *testing.T) {
 	assertContainsIIIF(t, compose, "drupal-private-files:/private:ro")
 	assertContainsIIIF(t, compose, "source: fcrepo-data")
 	assertContainsIIIF(t, compose, "subpath: home/data/ocfl-root")
+	assertOrderIIIF(t, compose,
+		"drupal-private-files:/private:ro",
+		"source: fcrepo-data",
+		"./certs/rootCA.pem:/etc/ssl/certs/lehigh.pem:ro",
+		"./conf/triplet/config.yaml:/etc/triplet/config.yaml:ro",
+		"triplet-cache:/var/lib/triplet/cache:rw",
+	)
+	assertContainsIIIF(t, compose, "  solr-data: {}\n  triplet-cache: {}\n\nservices:")
 	assertContainsIIIF(t, compose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "${URI_SCHEME}://${DOMAIN}/iiif/3"`)
 	if strings.Contains(compose, "\n  cantaloupe:\n") || strings.Contains(compose, "\n  cantaloupe-data:") || strings.Contains(compose, "IIIF_UPSTREAM_URL") {
 		t.Fatalf("expected local triplet without cantaloupe or external upstream, got:\n%s", compose)
@@ -178,6 +186,9 @@ volumes:
   drupal-private-files: {}
   drupal-public-files: {}
   fcrepo-data: {}
+  mariadb-data: {}
+  solr-data: {}
+
 services:
   alpaca:
     <<: *common
@@ -244,6 +255,22 @@ func assertContainsIIIF(t *testing.T, text, expected string) {
 
 	if !strings.Contains(text, expected) {
 		t.Fatalf("expected %q in:\n%s", expected, text)
+	}
+}
+
+func assertOrderIIIF(t *testing.T, text string, values ...string) {
+	t.Helper()
+
+	last := -1
+	for _, value := range values {
+		index := strings.Index(text, value)
+		if index == -1 {
+			t.Fatalf("expected %q in:\n%s", value, text)
+		}
+		if index <= last {
+			t.Fatalf("expected %q after previous value in:\n%s", value, text)
+		}
+		last = index
 	}
 }
 

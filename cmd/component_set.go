@@ -100,11 +100,11 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 		if componentName == name {
 			continue
 		}
-		if !blocksComponentSetOnDrift(componentName) {
+		if !blocksComponentSetOnDrift(name, componentName) {
 			continue
 		}
 		if current == corecomponent.StateDrifted {
-			return fmt.Errorf("component %q is drifted; resolve it first or set it explicitly before changing %q", componentName, name)
+			return fmt.Errorf("component %q is drifted (%s); resolve it first or set it explicitly before changing %q", componentName, componentDriftSummary(statusByName[componentName], 6), name)
 		}
 	}
 
@@ -151,6 +151,9 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 
 	if name == "isle-tls" || name == "isle-tls-override" {
 		return runTLSComponentSet(cmd, ctx, name, disposition, state)
+	}
+	if name == "iiif" || name == "iiif-topology" {
+		return runIIIFComponentSet(cmd, ctx, name, disposition, statusByName, followUps, currentStates)
 	}
 	opts := createpkg.Options{
 		Path:            ctx.ProjectDir,
@@ -225,13 +228,47 @@ func managedComponentDefinitions() []corecomponent.Definition {
 	return defs
 }
 
-func blocksComponentSetOnDrift(name string) bool {
-	switch name {
+func blocksComponentSetOnDrift(targetName, driftedName string) bool {
+	switch targetName {
+	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override":
+		return false
+	}
+	switch driftedName {
 	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override":
 		return false
 	default:
 		return true
 	}
+}
+
+func runIIIFComponentSet(cmd *cobra.Command, ctx *config.Context, name string, disposition corecomponent.Disposition, statusByName map[string]componentView, followUps map[string]string, currentStates map[string]corecomponent.DetectedState) error {
+	opts := createpkg.Options{
+		Path:            ctx.ProjectDir,
+		DrupalRootfs:    statusDrupalRootfs,
+		IIIF:            resolveIIIFCreateValue(name, disposition, currentStates),
+		IIIFTopology:    resolveIIIFTopologyCreateValue(name, disposition, currentStates),
+		IIIFUpstreamURL: resolveIIIFTopologyUpstream(name, followUps, statusByName),
+		ComposeOverride: resolveEnvironmentOverridePath(ctx),
+	}
+	if opts.IIIF == "" {
+		opts.IIIF = createpkg.IIIFCantaloupe
+	}
+	if opts.IIIFTopology == "" {
+		opts.IIIFTopology = createpkg.IIIFTopologyLocal
+	}
+	if err := createpkg.ApplyIIIF(opts); err != nil {
+		return err
+	}
+	if err := ctx.EnsureTrackedComposeOverrideSymlink(); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", name, disposition)
+	if value := strings.TrimSpace(followUps["upstream-url"]); value != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), " (%s)", value)
+	}
+	fmt.Fprintln(cmd.OutOrStdout())
+	return nil
 }
 
 func resolveIIIFCreateValue(targetName string, targetDisposition corecomponent.Disposition, current map[string]corecomponent.DetectedState) string {

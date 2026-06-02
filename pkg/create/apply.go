@@ -139,7 +139,7 @@ func Apply(opts Options) error {
 		}
 	}
 
-	if err := applyIIIF(opts); err != nil {
+	if err := ApplyIIIF(opts); err != nil {
 		return fmt.Errorf("apply iiif=%s topology=%s: %w", opts.IIIF, opts.IIIFTopology, err)
 	}
 

@@ -24,6 +24,7 @@ const (
 var iiifAssets embed.FS
 
 func applyIIIF(opts Options) error {
+	opts = normalizeIIIFOptions(opts)
 	if opts.IIIFTopology == IIIFTopologyExternal {
 		if err := validateIIIFUpstreamURL(opts.IIIFUpstreamURL); err != nil {
 			return err
@@ -68,6 +69,33 @@ func applyIIIF(opts Options) error {
 	}
 
 	return nil
+}
+
+func ApplyIIIF(opts Options) error {
+	opts = normalizeIIIFOptions(opts)
+	if opts.IIIF != IIIFCantaloupe && opts.IIIF != IIIFTriplet {
+		return fmt.Errorf("invalid --iiif value %q: expected cantaloupe or triplet", opts.IIIF)
+	}
+	if opts.IIIFTopology != IIIFTopologyLocal && opts.IIIFTopology != IIIFTopologyExternal {
+		return fmt.Errorf("invalid --iiif-topology value %q: expected local or external", opts.IIIFTopology)
+	}
+	return applyIIIF(opts)
+}
+
+func normalizeIIIFOptions(opts Options) Options {
+	if opts.Path == "" {
+		opts.Path = "."
+	}
+	if opts.DrupalRootfs == "" {
+		opts.DrupalRootfs = DefaultDrupalRootfs
+	}
+	if opts.IIIF == "" {
+		opts.IIIF = IIIFCantaloupe
+	}
+	if opts.IIIFTopology == "" {
+		opts.IIIFTopology = IIIFTopologyLocal
+	}
+	return opts
 }
 
 func validateIIIFUpstreamURL(value string) error {
@@ -455,6 +483,9 @@ func renderIIIFAsset(name string, replacements map[string]string) (string, error
 	}
 	contents := string(data)
 	for key, value := range replacements {
+		if value == "" {
+			contents = strings.ReplaceAll(contents, "{{"+key+"}}\n", "")
+		}
 		contents = strings.ReplaceAll(contents, "{{"+key+"}}", value)
 	}
 	return strings.TrimRight(contents, "\n"), nil

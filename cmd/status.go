@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -274,18 +275,7 @@ func renderTLSDetail(status traefikconfig.Status) string {
 
 func resolveStatusContext() (*config.Context, error) {
 	if strings.TrimSpace(statusPath) != "" {
-		projectDir := filepath.Clean(statusPath)
-		projectName := filepath.Base(projectDir)
-		return &config.Context{
-			DockerHostType: config.ContextLocal,
-			Name:           projectName,
-			Site:           projectName,
-			Plugin:         "isle",
-			Environment:    "local",
-			DockerSocket:   config.GetDefaultLocalDockerSocket("/var/run/docker.sock"),
-			ProjectName:    projectName,
-			ProjectDir:     projectDir,
-		}, nil
+		return localStatusContext(statusPath)
 	}
 	if commandSDK == nil {
 		return nil, fmt.Errorf("plugin sdk is not initialized")
@@ -298,6 +288,28 @@ func resolveStatusContext() (*config.Context, error) {
 		return nil, fmt.Errorf("context %q does not define a project directory; pass --path or update the sitectl context", ctx.Name)
 	}
 	return ctx, nil
+}
+
+func localStatusContext(projectDir string) (*config.Context, error) {
+	projectDir = filepath.Clean(projectDir)
+	absProjectDir, err := filepath.Abs(projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve project directory %q: %w", projectDir, err)
+	}
+	if _, err := os.Stat(absProjectDir); err != nil {
+		return nil, fmt.Errorf("stat project directory %q: %w", absProjectDir, err)
+	}
+	projectName := filepath.Base(absProjectDir)
+	return &config.Context{
+		DockerHostType: config.ContextLocal,
+		Name:           projectName,
+		Site:           projectName,
+		Plugin:         "isle",
+		Environment:    "local",
+		DockerSocket:   config.GetDefaultLocalDockerSocket("/var/run/docker.sock"),
+		ProjectName:    projectName,
+		ProjectDir:     absProjectDir,
+	}, nil
 }
 
 func filterComponentViews(statuses []componentView, componentName string) ([]componentView, error) {
@@ -316,4 +328,39 @@ func filterComponentViews(statuses []componentView, componentName string) ([]com
 		return nil, fmt.Errorf("unknown component %q", componentName)
 	}
 	return filtered, nil
+}
+
+func componentDriftSummary(status componentView, limit int) string {
+	if status.SDKStatus != nil {
+		if summary := summarizeDriftLines(corecomponent.DriftCheckLines(status), limit); summary != "" {
+			return summary
+		}
+	}
+	for _, detail := range []string{status.DriftDetail, status.Detail} {
+		if detail = strings.TrimSpace(detail); detail != "" {
+			return detail
+		}
+	}
+	return "component is drifted"
+}
+
+func summarizeDriftLines(lines []string, limit int) string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || seen[line] {
+			continue
+		}
+		seen[line] = true
+		out = append(out, line)
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	if limit <= 0 || len(out) <= limit {
+		return strings.Join(out, "; ")
+	}
+	remaining := len(out) - limit
+	return strings.Join(out[:limit], "; ") + fmt.Sprintf("; and %d more", remaining)
 }
