@@ -29,7 +29,10 @@ func TestApplyTripletLocalReplacesCantaloupe(t *testing.T) {
 	assertContainsIIIF(t, compose, "drupal-private-files:/private:ro")
 	assertContainsIIIF(t, compose, "source: fcrepo-data")
 	assertContainsIIIF(t, compose, "subpath: home/data/ocfl-root")
+	assertContainsIIIF(t, compose, "depends_on:\n      fcrepo:\n        condition: service_healthy")
 	assertOrderIIIF(t, compose,
+		"condition: service_healthy",
+		"TRIPLET_PUBLIC_BASE_URL",
 		"drupal-private-files:/private:ro",
 		"source: fcrepo-data",
 		"./certs/rootCA.pem:/etc/ssl/certs/lehigh.pem:ro",
@@ -92,6 +95,29 @@ func TestApplyTripletDistributedUsesExternalUpstreamAndLocalOverride(t *testing.
 
 	tripletTraefik := readFileForIIIFTest(t, filepath.Join(projectDir, "conf", "traefik", "triplet.yml"))
 	assertContainsIIIF(t, tripletTraefik, `{{ env "IIIF_UPSTREAM_URL" }}`)
+}
+
+func TestApplyTripletLocalWithoutFcrepoOmitsFedoraDependencyAndMount(t *testing.T) {
+	t.Parallel()
+
+	projectDir := writeIIIFProjectFixture(t)
+
+	if err := Apply(Options{
+		Path:              projectDir,
+		Fcrepo:            FcrepoStateOff,
+		Blazegraph:        FcrepoStateOn,
+		IIIF:              IIIFTriplet,
+		IIIFTopology:      IIIFTopologyLocal,
+		ISLEFileSystemURI: PrivateISLEFileSystemURI,
+	}); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	assertContainsIIIF(t, compose, "\n  triplet:\n")
+	if strings.Contains(compose, "source: fcrepo-data") || strings.Contains(compose, "subpath: home/data/ocfl-root") || strings.Contains(compose, "condition: service_healthy") {
+		t.Fatalf("expected triplet without Fedora dependency or mount after fcrepo off, got:\n%s", compose)
+	}
 }
 
 func TestApplyCantaloupeLocalRestoresFromTriplet(t *testing.T) {
@@ -200,6 +226,11 @@ services:
     environment:
       DRUPAL_DEFAULT_CANTALOUPE_URL: http://${DOMAIN}/cantaloupe/iiif/2
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: ""
+  fcrepo:
+    <<: *common
+    image: islandora/fcrepo6:${ISLANDORA_TAG}
+    volumes:
+      - fcrepo-data:/data:rw
   cantaloupe:
     <<: *common
     image: islandora/cantaloupe:${ISLANDORA_TAG}
@@ -226,6 +257,9 @@ services:
 	writeIIIFTestFile(t, filepath.Join(projectDir, DefaultDrupalRootfs, "web", "robots.txt"), `User-agent: *
 Disallow: /cantaloupe/*
 `)
+	if err := os.MkdirAll(filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(config sync) error = %v", err)
+	}
 	return projectDir
 }
 

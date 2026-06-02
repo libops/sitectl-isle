@@ -121,8 +121,8 @@ func applyTripletIIIF(composePath, overridePath, topology, upstreamURL string) e
 	if err != nil {
 		return err
 	}
-	hasFcrepoVolume := compose.HasVolume("fcrepo-data")
-	tripletBlock, err := tripletServiceBlock(composePath, hasFcrepoVolume)
+	hasFcrepo := compose.HasService("fcrepo") && compose.HasVolume("fcrepo-data")
+	tripletBlock, err := tripletServiceBlock(composePath, hasFcrepo)
 	if err != nil {
 		return err
 	}
@@ -357,9 +357,14 @@ func ensureServiceEnv(compose *corecomponent.ComposeFile, service, key, value st
 }
 
 func tripletServiceBlock(composePath string, includeFcrepo bool) (string, error) {
+	fcrepoDependsOn := ""
 	fcrepoVolume := ""
 	if includeFcrepo {
 		var err error
+		fcrepoDependsOn, err = renderIIIFAsset("triplet-fcrepo-depends-on.yml", nil)
+		if err != nil {
+			return "", err
+		}
 		fcrepoVolume, err = renderIIIFAsset("triplet-fcrepo-volume.yml", nil)
 		if err != nil {
 			return "", err
@@ -367,8 +372,9 @@ func tripletServiceBlock(composePath string, includeFcrepo bool) (string, error)
 	}
 
 	return renderIIIFAsset("triplet-service.yml", map[string]string{
-		"COMMON_MERGE":  commonMergeLine(composePath),
-		"FCREPO_VOLUME": fcrepoVolume,
+		"COMMON_MERGE":      commonMergeLine(composePath),
+		"FCREPO_DEPENDS_ON": fcrepoDependsOn,
+		"FCREPO_VOLUME":     fcrepoVolume,
 	})
 }
 
