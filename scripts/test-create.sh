@@ -204,7 +204,7 @@ verify_iiif_implementation() {
 			echo "cantaloupe service still present after create --iiif triplet" >&2
 			exit 1
 		fi
-		if ! grep -q 'DRUPAL_DEFAULT_CANTALOUPE_URL: "\${URI_SCHEME}://\${DOMAIN}/iiif/3"' "${SITE_DIR}/docker-compose.yml"; then
+		if ! grep -Fq "DRUPAL_DEFAULT_CANTALOUPE_URL: \"\${URI_SCHEME}://\${DOMAIN}/iiif/3\"" "${SITE_DIR}/docker-compose.yml"; then
 			echo "Drupal IIIF URL was not updated to /iiif/3 for triplet" >&2
 			exit 1
 		fi
