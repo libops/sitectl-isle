@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
-	"github.com/libops/sitectl-isle/pkg/externalcantaloupe"
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/spf13/cobra"
@@ -150,6 +149,60 @@ volumes:
 	if !strings.Contains(err.Error(), `component "blazegraph" is drifted`) {
 		t.Fatalf("expected blazegraph drift error, got %v", err)
 	}
+	if !strings.Contains(err.Error(), "docker-compose.yml") || !strings.Contains(err.Error(), "DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE") {
+		t.Fatalf("expected drift error to include failed file/check detail, got %v", err)
+	}
+}
+
+func TestRunComponentSetIIIFIgnoresOtherComponentDrift(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	configDir := filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "config", "sync")
+	if err := os.Remove(filepath.Join(configDir, "system.action.index_media_in_triplestore.yml")); err != nil {
+		t.Fatalf("Remove(triplestore action) error = %v", err)
+	}
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	var out bytes.Buffer
+	cmd := componentSetCmd
+	cmd.SetOut(&out)
+
+	if err := runComponentSet(cmd, "iiif", "triplet"); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "iiif: triplet") {
+		t.Fatalf("expected command output, got:\n%s", out.String())
+	}
+
+	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
+	}
+	compose := string(composeText)
+	if !strings.Contains(compose, "\n  triplet:\n") || strings.Contains(compose, "\n  cantaloupe:\n") {
+		t.Fatalf("expected triplet to replace cantaloupe, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, "\n  blazegraph:\n") || !strings.Contains(compose, "DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora") {
+		t.Fatalf("expected blazegraph compose defaults preserved, got:\n%s", compose)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "system.action.index_media_in_triplestore.yml")); !os.IsNotExist(err) {
+		t.Fatalf("expected unrelated blazegraph drift to remain untouched, stat err=%v", err)
+	}
 }
 
 func TestRunComponentSetAppliesISLETLSOverrideHTTPOverride(t *testing.T) {
@@ -196,7 +249,7 @@ func TestRunComponentSetAppliesISLETLSOverrideHTTPOverride(t *testing.T) {
 	}
 }
 
-func TestRunComponentSetEnablesExternalCantaloupe(t *testing.T) {
+func TestRunComponentSetDistributesCantaloupeIIIF(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
 
@@ -211,7 +264,7 @@ func TestRunComponentSetEnablesExternalCantaloupe(t *testing.T) {
 		componentSetYolo = oldYolo
 		componentSetInput = oldInput
 		componentPromptChoice = oldPromptChoice
-		if flag := componentSetCmd.Flags().Lookup("external-cantaloupe-upstream-url"); flag != nil {
+		if flag := componentSetCmd.Flags().Lookup("iiif-upstream-url"); flag != nil {
 			flag.Changed = false
 		}
 	})
@@ -219,13 +272,13 @@ func TestRunComponentSetEnablesExternalCantaloupe(t *testing.T) {
 	statusPath = projectDir
 	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
 	componentSetYolo = true
-	_ = componentSetCmd.Flags().Set("external-cantaloupe-upstream-url", "http://cantaloupe.example:8182")
+	_ = componentSetCmd.Flags().Set("iiif-upstream-url", "http://cantaloupe.example:8182")
 
 	var out bytes.Buffer
 	cmd := componentSetCmd
 	cmd.SetOut(&out)
 
-	if err := runComponentSet(cmd, "external-cantaloupe", "on"); err != nil {
+	if err := runComponentSet(cmd, "iiif-topology", "distributed"); err != nil {
 		t.Fatalf("runComponentSet() error = %v", err)
 	}
 
@@ -247,29 +300,29 @@ func TestRunComponentSetEnablesExternalCantaloupe(t *testing.T) {
 	if !strings.Contains(string(overrideText), "cantaloupe:") || !strings.Contains(string(overrideText), "8182:8182") || !strings.Contains(string(overrideText), "cantaloupe-data:") {
 		t.Fatalf("expected cantaloupe local override, got:\n%s", string(overrideText))
 	}
-	if !strings.Contains(string(overrideText), "CANTALOUPE_UPSTREAM_URL: \"http://cantaloupe:8182\"") {
-		t.Fatalf("expected local traefik upstream override, got:\n%s", string(overrideText))
+	if !strings.Contains(string(overrideText), "IIIF_UPSTREAM_URL: \"http://cantaloupe:8182\"") {
+		t.Fatalf("expected local IIIF upstream override, got:\n%s", string(overrideText))
 	}
 
-	traefikText, err := os.ReadFile(filepath.Join(projectDir, externalcantaloupe.DefaultTraefikConfigPath))
+	traefikText, err := os.ReadFile(filepath.Join(projectDir, "conf", "traefik", "cantaloupe.yml"))
 	if err != nil {
 		t.Fatalf("ReadFile(cantaloupe.yml) error = %v", err)
 	}
-	if !strings.Contains(string(traefikText), `{{ env "CANTALOUPE_UPSTREAM_URL" }}`) {
+	if !strings.Contains(string(traefikText), `{{ env "IIIF_UPSTREAM_URL" }}`) {
 		t.Fatalf("expected templated upstream in traefik config, got:\n%s", string(traefikText))
 	}
 	if strings.Contains(string(traefikText), "http://cantaloupe.example:8182") {
 		t.Fatalf("expected traefik config to avoid hard-coded upstream, got:\n%s", string(traefikText))
 	}
-	if !strings.Contains(string(composeText), "CANTALOUPE_UPSTREAM_URL: \"http://cantaloupe.example:8182\"") {
+	if !strings.Contains(string(composeText), "IIIF_UPSTREAM_URL: \"http://cantaloupe.example:8182\"") {
 		t.Fatalf("expected base traefik upstream env, got:\n%s", string(composeText))
 	}
-	if !strings.Contains(out.String(), "external-cantaloupe: distributed (http://cantaloupe.example:8182)") {
+	if !strings.Contains(out.String(), "iiif-topology: distributed (http://cantaloupe.example:8182)") {
 		t.Fatalf("expected command output, got:\n%s", out.String())
 	}
 }
 
-func TestRunComponentSetRejectsInvalidExternalCantaloupeURL(t *testing.T) {
+func TestRunComponentSetRejectsInvalidDistributedIIIFURL(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
 
@@ -280,7 +333,7 @@ func TestRunComponentSetRejectsInvalidExternalCantaloupeURL(t *testing.T) {
 		statusPath = oldStatusPath
 		statusDrupalRootfs = oldDrupalRootfs
 		componentSetYolo = oldYolo
-		if flag := componentSetCmd.Flags().Lookup("external-cantaloupe-upstream-url"); flag != nil {
+		if flag := componentSetCmd.Flags().Lookup("iiif-upstream-url"); flag != nil {
 			flag.Changed = false
 		}
 	})
@@ -288,13 +341,13 @@ func TestRunComponentSetRejectsInvalidExternalCantaloupeURL(t *testing.T) {
 	statusPath = projectDir
 	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
 	componentSetYolo = true
-	_ = componentSetCmd.Flags().Set("external-cantaloupe-upstream-url", "ok")
+	_ = componentSetCmd.Flags().Set("iiif-upstream-url", "ok")
 
-	err := runComponentSet(componentSetCmd, "external-cantaloupe", "on")
+	err := runComponentSet(componentSetCmd, "iiif-topology", "distributed")
 	if err == nil {
 		t.Fatal("expected invalid upstream url error")
 	}
-	if !strings.Contains(err.Error(), "invalid external cantaloupe upstream URL") {
+	if !strings.Contains(err.Error(), "invalid external IIIF upstream URL") {
 		t.Fatalf("expected invalid upstream url error, got %v", err)
 	}
 }

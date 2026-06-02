@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
-	"github.com/libops/sitectl-isle/pkg/externalcantaloupe"
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
@@ -89,7 +89,11 @@ func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string
 	for i := range sdkStatuses {
 		followUps := map[string]string{}
 		disposition := dispositionFromDetectedState(sdkStatuses[i].State)
-		if sdkStatuses[i].Name == "fcrepo" && sdkStatuses[i].State == corecomponent.DetectedState(corecomponent.StateOff) {
+		switch sdkStatuses[i].Name {
+		case "fcrepo":
+			if sdkStatuses[i].State != corecomponent.DetectedState(corecomponent.StateOff) {
+				break
+			}
 			disposition = corecomponent.DispositionSuperseded
 			scheme, err := resolveCurrentFileSystemURI(siteCtx.ProjectDir, drupalRootfs)
 			if err != nil {
@@ -97,6 +101,13 @@ func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string
 			}
 			if strings.TrimSpace(scheme) != "" {
 				followUps["isle-file-system-uri"] = scheme
+			}
+		case "iiif":
+			disposition = iiifDisposition(sdkStatuses[i].State)
+		case "iiif-topology":
+			disposition = iiifTopologyDisposition(sdkStatuses[i].State)
+			if upstream := currentIIIFUpstreamURL(siteCtx.ProjectDir); strings.TrimSpace(upstream) != "" {
+				followUps["upstream-url"] = strings.TrimSpace(upstream)
 			}
 		}
 		views = append(views, componentView{
@@ -108,29 +119,6 @@ func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string
 			FollowUpValues: followUps,
 		})
 	}
-
-	externalStatus, err := externalcantaloupe.Detect(siteCtx.ProjectDir, resolveEnvironmentOverridePath(siteCtx))
-	if err != nil {
-		return nil, err
-	}
-	externalState := corecomponent.DetectedState(corecomponent.StateOff)
-	if externalStatus.Drifted {
-		externalState = corecomponent.StateDrifted
-	} else if externalStatus.Enabled {
-		externalState = corecomponent.DetectedState(corecomponent.StateOn)
-	}
-	views = append(views, componentView{
-		Definition:  definitions["external-cantaloupe"],
-		Name:        "external-cantaloupe",
-		State:       externalState,
-		Disposition: externalCantaloupeDisposition(externalStatus),
-		Detail:      strings.TrimSpace(externalStatus.Detail),
-		DriftDetail: strings.TrimSpace(externalStatus.Detail),
-		FollowUpValues: map[string]string{
-			"upstream-url": strings.TrimSpace(externalStatus.UpstreamURL),
-		},
-		Extra: &externalStatus,
-	})
 
 	prodTLS, err := traefikconfig.DetectProd(siteCtx.ProjectDir)
 	if err != nil {
@@ -181,15 +169,73 @@ func dispositionFromDetectedState(state corecomponent.DetectedState) corecompone
 	}
 }
 
-func externalCantaloupeDisposition(status externalcantaloupe.Status) corecomponent.Disposition {
-	switch {
-	case status.Drifted:
-		return ""
-	case status.Enabled:
-		return corecomponent.DispositionDistributed
+func iiifDisposition(state corecomponent.DetectedState) corecomponent.Disposition {
+	switch state {
+	case corecomponent.DetectedState(corecomponent.StateOn):
+		return corecomponent.DispositionTriplet
+	case corecomponent.DetectedState(corecomponent.StateOff):
+		return corecomponent.DispositionCantaloupe
 	default:
-		return corecomponent.DispositionDisabled
+		return ""
 	}
+}
+
+func iiifTopologyDisposition(state corecomponent.DetectedState) corecomponent.Disposition {
+	switch state {
+	case corecomponent.DetectedState(corecomponent.StateOn):
+		return corecomponent.DispositionDistributed
+	case corecomponent.DetectedState(corecomponent.StateOff):
+		return corecomponent.DispositionDisabled
+	default:
+		return ""
+	}
+}
+
+func currentIIIFUpstreamURL(projectDir string) string {
+	compose, err := corecomponent.LoadComposeFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		return ""
+	}
+	return composeServiceEnvValue(compose, "traefik", "IIIF_UPSTREAM_URL")
+}
+
+func composeServiceEnvValue(compose *corecomponent.ComposeFile, service, key string) string {
+	if compose == nil {
+		return ""
+	}
+	block, ok := compose.ServiceBlock(service)
+	if !ok {
+		return ""
+	}
+	lines := strings.Split(block, "\n")
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "environment:" {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			line := lines[j]
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if leadingSpaces(line) <= 4 {
+				break
+			}
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, key+":") {
+				continue
+			}
+			parts := strings.SplitN(trimmed, ":", 2)
+			if len(parts) != 2 {
+				return ""
+			}
+			return strings.Trim(strings.TrimSpace(parts[1]), `"`)
+		}
+	}
+	return ""
+}
+
+func leadingSpaces(value string) int {
+	return len(value) - len(strings.TrimLeft(value, " "))
 }
 
 func resolveEnvironmentOverridePath(siteCtx *config.Context) string {
@@ -229,18 +275,7 @@ func renderTLSDetail(status traefikconfig.Status) string {
 
 func resolveStatusContext() (*config.Context, error) {
 	if strings.TrimSpace(statusPath) != "" {
-		projectDir := filepath.Clean(statusPath)
-		projectName := filepath.Base(projectDir)
-		return &config.Context{
-			DockerHostType: config.ContextLocal,
-			Name:           projectName,
-			Site:           projectName,
-			Plugin:         "isle",
-			Environment:    "local",
-			DockerSocket:   config.GetDefaultLocalDockerSocket("/var/run/docker.sock"),
-			ProjectName:    projectName,
-			ProjectDir:     projectDir,
-		}, nil
+		return localStatusContext(statusPath)
 	}
 	if commandSDK == nil {
 		return nil, fmt.Errorf("plugin sdk is not initialized")
@@ -253,6 +288,28 @@ func resolveStatusContext() (*config.Context, error) {
 		return nil, fmt.Errorf("context %q does not define a project directory; pass --path or update the sitectl context", ctx.Name)
 	}
 	return ctx, nil
+}
+
+func localStatusContext(projectDir string) (*config.Context, error) {
+	projectDir = filepath.Clean(projectDir)
+	absProjectDir, err := filepath.Abs(projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve project directory %q: %w", projectDir, err)
+	}
+	if _, err := os.Stat(absProjectDir); err != nil {
+		return nil, fmt.Errorf("stat project directory %q: %w", absProjectDir, err)
+	}
+	projectName := filepath.Base(absProjectDir)
+	return &config.Context{
+		DockerHostType: config.ContextLocal,
+		Name:           projectName,
+		Site:           projectName,
+		Plugin:         "isle",
+		Environment:    "local",
+		DockerSocket:   config.GetDefaultLocalDockerSocket("/var/run/docker.sock"),
+		ProjectName:    projectName,
+		ProjectDir:     absProjectDir,
+	}, nil
 }
 
 func filterComponentViews(statuses []componentView, componentName string) ([]componentView, error) {
@@ -271,4 +328,39 @@ func filterComponentViews(statuses []componentView, componentName string) ([]com
 		return nil, fmt.Errorf("unknown component %q", componentName)
 	}
 	return filtered, nil
+}
+
+func componentDriftSummary(status componentView, limit int) string {
+	if status.SDKStatus != nil {
+		if summary := summarizeDriftLines(corecomponent.DriftCheckLines(status), limit); summary != "" {
+			return summary
+		}
+	}
+	for _, detail := range []string{status.DriftDetail, status.Detail} {
+		if detail = strings.TrimSpace(detail); detail != "" {
+			return detail
+		}
+	}
+	return "component is drifted"
+}
+
+func summarizeDriftLines(lines []string, limit int) string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || seen[line] {
+			continue
+		}
+		seen[line] = true
+		out = append(out, line)
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	if limit <= 0 || len(out) <= limit {
+		return strings.Join(out, "; ")
+	}
+	remaining := len(out) - limit
+	return strings.Join(out[:limit], "; ") + fmt.Sprintf("; and %d more", remaining)
 }

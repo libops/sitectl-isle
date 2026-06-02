@@ -43,8 +43,11 @@ func TestStatusCommandReportsOn(t *testing.T) {
 	if !strings.Contains(rendered, "FCREPO") {
 		t.Fatalf("expected fcrepo on, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "EXTERNAL-CANTALOUPE") || !strings.Contains(rendered, "Current disposition: `disabled`") {
-		t.Fatalf("expected external-cantaloupe off, got:\n%s", rendered)
+	if !strings.Contains(rendered, "IIIF") || !strings.Contains(rendered, "Current disposition: `cantaloupe`") {
+		t.Fatalf("expected iiif cantaloupe, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "IIIF-TOPOLOGY") || !strings.Contains(rendered, "Current disposition: `disabled`") {
+		t.Fatalf("expected iiif topology local, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "ISLE-TLS") || !strings.Contains(rendered, "Detected mode: mode=http") {
 		t.Fatalf("expected isle-tls off, got:\n%s", rendered)
@@ -96,8 +99,11 @@ func TestStatusCommandReportsOff(t *testing.T) {
 	if !strings.Contains(rendered, "Drupal filesystem URI: public") {
 		t.Fatalf("expected fcrepo filesystem follow-up, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "EXTERNAL-CANTALOUPE") || !strings.Contains(rendered, "Current disposition: `disabled`") {
-		t.Fatalf("expected external-cantaloupe off, got:\n%s", rendered)
+	if !strings.Contains(rendered, "IIIF") || !strings.Contains(rendered, "Current disposition: `cantaloupe`") {
+		t.Fatalf("expected iiif cantaloupe, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "IIIF-TOPOLOGY") || !strings.Contains(rendered, "Current disposition: `disabled`") {
+		t.Fatalf("expected iiif topology local, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "ISLE-TLS-OVERRIDE") || !strings.Contains(rendered, "docker-compose.local.yml has no service overrides") {
 		t.Fatalf("expected isle-tls-override off, got:\n%s", rendered)
@@ -208,6 +214,51 @@ func TestStatusCommandUsesActiveContextProjectDir(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "FCREPO") {
 		t.Fatalf("expected fcrepo on from active context project dir, got:\n%s", rendered)
+	}
+}
+
+func TestResolveStatusContextUsesDotContextAsCWD(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldSDK := commandSDK
+	oldStatusPath := statusPath
+	t.Cleanup(func() {
+		commandSDK = oldSDK
+		statusPath = oldStatusPath
+	})
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatalf("Chdir(projectDir) error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+
+	commandSDK = plugin.NewSDK(plugin.Metadata{
+		Name:        "isle",
+		Version:     "test",
+		Description: "test",
+	})
+	commandSDK.SetProjectDiscovery(func(projectDir string) (*config.ProjectClaim, error) {
+		return &config.ProjectClaim{Plugin: "isle", ProjectDir: projectDir, Reason: "test claim"}, nil
+	})
+	commandSDK.Config.Context = "."
+	statusPath = ""
+
+	ctx, err := resolveStatusContext()
+	if err != nil {
+		t.Fatalf("resolveStatusContext() error = %v", err)
+	}
+	if ctx.ProjectDir != projectDir {
+		t.Fatalf("expected project dir %q, got %q", projectDir, ctx.ProjectDir)
+	}
+	if ctx.Plugin != "isle" || ctx.DockerHostType != config.ContextLocal {
+		t.Fatalf("unexpected context: %+v", ctx)
 	}
 }
 

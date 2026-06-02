@@ -5,9 +5,10 @@ set -x
 
 export TERM="${TERM:-dumb}"
 
-FCREPO_STATE="${1:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] }"
-ISLE_FILE_SYSTEM_URI="${2:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] }"
+FCREPO_STATE="${1:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] }"
+ISLE_FILE_SYSTEM_URI="${2:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] }"
 BLAZEGRAPH_STATE="${3:-on}"
+IIIF_IMPLEMENTATION="${4:-triplet}"
 GIT_REMOTE_URL="${GIT_REMOTE_URL:-}"
 SITECTL_CONTEXT="${SITECTL_CONTEXT:-integration-test}"
 
@@ -107,6 +108,7 @@ create_site() {
 		--checkout-source template \
 		--fcrepo "${FCREPO_STATE}" \
 		--blazegraph "${BLAZEGRAPH_STATE}" \
+		--iiif "${IIIF_IMPLEMENTATION}" \
 		--isle-file-system-uri "${ISLE_FILE_SYSTEM_URI}" \
 		--setup-only
 }
@@ -185,9 +187,59 @@ verify_blazegraph_disabled() {
 	fi
 }
 
+verify_iiif_implementation() {
+	case "${IIIF_IMPLEMENTATION}" in
+	triplet)
+		if ! (
+			cd "${SITE_DIR}" &&
+				docker compose config --services | grep -qx "triplet"
+		); then
+			echo "triplet service missing after create --iiif triplet" >&2
+			exit 1
+		fi
+		if (
+			cd "${SITE_DIR}" &&
+				docker compose config --services | grep -qx "cantaloupe"
+		); then
+			echo "cantaloupe service still present after create --iiif triplet" >&2
+			exit 1
+		fi
+		if ! grep -Fq "DRUPAL_DEFAULT_CANTALOUPE_URL: \"\${URI_SCHEME}://\${DOMAIN}/iiif/3\"" "${SITE_DIR}/docker-compose.yml"; then
+			echo "Drupal IIIF URL was not updated to /iiif/3 for triplet" >&2
+			exit 1
+		fi
+		if [ ! -f "${SITE_DIR}/conf/triplet/config.yaml" ]; then
+			echo "Triplet config was not written" >&2
+			exit 1
+		fi
+		;;
+	cantaloupe)
+		if ! (
+			cd "${SITE_DIR}" &&
+				docker compose config --services | grep -qx "cantaloupe"
+		); then
+			echo "cantaloupe service missing after create --iiif cantaloupe" >&2
+			exit 1
+		fi
+		if (
+			cd "${SITE_DIR}" &&
+				docker compose config --services | grep -qx "triplet"
+		); then
+			echo "triplet service present after create --iiif cantaloupe" >&2
+			exit 1
+		fi
+		;;
+	*)
+		echo "unexpected iiif implementation: ${IIIF_IMPLEMENTATION}" >&2
+		exit 1
+		;;
+	esac
+}
+
 main() {
 	build_binaries
 	create_site
+	verify_iiif_implementation
 	set_assert_target
 	run_make_target init
 	run_make_target up

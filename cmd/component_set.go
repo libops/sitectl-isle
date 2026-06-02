@@ -8,7 +8,6 @@ import (
 
 	"github.com/libops/sitectl-isle/pkg/components"
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
-	"github.com/libops/sitectl-isle/pkg/externalcantaloupe"
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
@@ -101,11 +100,11 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 		if componentName == name {
 			continue
 		}
-		if !blocksComponentSetOnDrift(componentName) {
+		if !blocksComponentSetOnDrift(name, componentName) {
 			continue
 		}
 		if current == corecomponent.StateDrifted {
-			return fmt.Errorf("component %q is drifted; resolve it first or set it explicitly before changing %q", componentName, name)
+			return fmt.Errorf("component %q is drifted (%s); resolve it first or set it explicitly before changing %q", componentName, componentDriftSummary(statusByName[componentName], 6), name)
 		}
 	}
 
@@ -153,32 +152,30 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 	if name == "isle-tls" || name == "isle-tls-override" {
 		return runTLSComponentSet(cmd, ctx, name, disposition, state)
 	}
-	if name == "external-cantaloupe" {
-		if err := externalcantaloupe.Apply(ctx.ProjectDir, resolveEnvironmentOverridePath(ctx), strings.TrimSpace(followUps["upstream-url"]), disposition == corecomponent.DispositionDistributed); err != nil {
-			return err
-		}
-		if err := ctx.EnsureTrackedComposeOverrideSymlink(); err != nil {
-			return err
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", name, disposition)
-		if value := strings.TrimSpace(followUps["upstream-url"]); value != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), " (%s)", value)
-		}
-		fmt.Fprintln(cmd.OutOrStdout())
-		return nil
+	if name == "iiif" || name == "iiif-topology" {
+		return runIIIFComponentSet(cmd, ctx, name, disposition, statusByName, followUps, currentStates)
 	}
-
 	opts := createpkg.Options{
-		Path:         ctx.ProjectDir,
-		DrupalRootfs: statusDrupalRootfs,
-		Fcrepo:       string(resolveComponentCreateState("fcrepo", name, state, currentStates)),
-		Blazegraph:   string(resolveComponentCreateState("blazegraph", name, state, currentStates)),
+		Path:            ctx.ProjectDir,
+		DrupalRootfs:    statusDrupalRootfs,
+		Fcrepo:          string(resolveComponentCreateState("fcrepo", name, state, currentStates)),
+		Blazegraph:      string(resolveComponentCreateState("blazegraph", name, state, currentStates)),
+		IIIF:            resolveIIIFCreateValue(name, disposition, currentStates),
+		IIIFTopology:    resolveIIIFTopologyCreateValue(name, disposition, currentStates),
+		IIIFUpstreamURL: resolveIIIFTopologyUpstream(name, followUps, statusByName),
+		ComposeOverride: resolveEnvironmentOverridePath(ctx),
 	}
 	if opts.Fcrepo == "" {
 		opts.Fcrepo = createpkg.FcrepoStateOn
 	}
 	if opts.Blazegraph == "" {
 		opts.Blazegraph = createpkg.FcrepoStateOn
+	}
+	if opts.IIIF == "" {
+		opts.IIIF = createpkg.IIIFCantaloupe
+	}
+	if opts.IIIFTopology == "" {
+		opts.IIIFTopology = createpkg.IIIFTopologyLocal
 	}
 
 	if opts.Fcrepo == createpkg.FcrepoStateOff {
@@ -192,8 +189,15 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 	if err := componentApplyOptions(opts); err != nil {
 		return err
 	}
+	if err := ctx.EnsureTrackedComposeOverrideSymlink(); err != nil {
+		return err
+	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", name, disposition)
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", name, disposition)
+	if value := strings.TrimSpace(followUps["upstream-url"]); value != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), " (%s)", value)
+	}
+	fmt.Fprintln(cmd.OutOrStdout())
 	return nil
 }
 
@@ -210,26 +214,94 @@ func orderedComponentDefinitions() []corecomponent.Definition {
 	return []corecomponent.Definition{
 		components.Fcrepo(components.TemplateSource{}),
 		components.Blazegraph(components.TemplateSource{}),
+		components.IIIF(components.TemplateSource{}),
+		components.IIIFTopology(),
 	}
 }
 
 func managedComponentDefinitions() []corecomponent.Definition {
 	defs := append([]corecomponent.Definition{}, orderedComponentDefinitions()...)
 	defs = append(defs,
-		components.ExternalCantaloupe(),
 		components.ISLEEntrypoint(),
 		components.ISLEEntrypointOverride(),
 	)
 	return defs
 }
 
-func blocksComponentSetOnDrift(name string) bool {
-	switch name {
-	case "external-cantaloupe", "isle-tls", "isle-tls-override":
+func blocksComponentSetOnDrift(targetName, driftedName string) bool {
+	switch targetName {
+	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override":
+		return false
+	}
+	switch driftedName {
+	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override":
 		return false
 	default:
 		return true
 	}
+}
+
+func runIIIFComponentSet(cmd *cobra.Command, ctx *config.Context, name string, disposition corecomponent.Disposition, statusByName map[string]componentView, followUps map[string]string, currentStates map[string]corecomponent.DetectedState) error {
+	opts := createpkg.Options{
+		Path:            ctx.ProjectDir,
+		DrupalRootfs:    statusDrupalRootfs,
+		IIIF:            resolveIIIFCreateValue(name, disposition, currentStates),
+		IIIFTopology:    resolveIIIFTopologyCreateValue(name, disposition, currentStates),
+		IIIFUpstreamURL: resolveIIIFTopologyUpstream(name, followUps, statusByName),
+		ComposeOverride: resolveEnvironmentOverridePath(ctx),
+	}
+	if opts.IIIF == "" {
+		opts.IIIF = createpkg.IIIFCantaloupe
+	}
+	if opts.IIIFTopology == "" {
+		opts.IIIFTopology = createpkg.IIIFTopologyLocal
+	}
+	if err := createpkg.ApplyIIIF(opts); err != nil {
+		return err
+	}
+	if err := ctx.EnsureTrackedComposeOverrideSymlink(); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", name, disposition)
+	if value := strings.TrimSpace(followUps["upstream-url"]); value != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), " (%s)", value)
+	}
+	fmt.Fprintln(cmd.OutOrStdout())
+	return nil
+}
+
+func resolveIIIFCreateValue(targetName string, targetDisposition corecomponent.Disposition, current map[string]corecomponent.DetectedState) string {
+	if targetName == "iiif" {
+		if targetDisposition == corecomponent.DispositionTriplet {
+			return createpkg.IIIFTriplet
+		}
+		return createpkg.IIIFCantaloupe
+	}
+	if current["iiif"] == corecomponent.DetectedState(corecomponent.StateOn) {
+		return createpkg.IIIFTriplet
+	}
+	return createpkg.IIIFCantaloupe
+}
+
+func resolveIIIFTopologyCreateValue(targetName string, targetDisposition corecomponent.Disposition, current map[string]corecomponent.DetectedState) string {
+	if targetName == "iiif-topology" {
+		if targetDisposition == corecomponent.DispositionDistributed {
+			return createpkg.IIIFTopologyExternal
+		}
+		return createpkg.IIIFTopologyLocal
+	}
+	if current["iiif-topology"] == corecomponent.DetectedState(corecomponent.StateOn) {
+		return createpkg.IIIFTopologyExternal
+	}
+	return createpkg.IIIFTopologyLocal
+}
+
+func resolveIIIFTopologyUpstream(targetName string, followUps map[string]string, statusByName map[string]componentView) string {
+	if targetName == "iiif-topology" {
+		return strings.TrimSpace(followUps["upstream-url"])
+	}
+	return strings.TrimSpace(statusByName["iiif-topology"].FollowUpValues["upstream-url"])
 }
 
 func resolveComponentCreateState(componentName, targetName string, targetState corecomponent.State, current map[string]corecomponent.DetectedState) corecomponent.State {
@@ -488,7 +560,7 @@ func resolveCurrentFileSystemURI(projectDir, drupalRootfs string) (string, error
 func addComponentSetFollowUpFlags(cmd *cobra.Command, defs []corecomponent.Definition) {
 	for _, def := range defs {
 		for _, followUp := range def.FollowUps {
-			flagName := componentSetFollowUpFlagName(def.Name, followUp.Name)
+			flagName := componentSetFollowUpSpecFlagName(def.Name, followUp)
 			if flagName == "" || cmd.Flags().Lookup(flagName) != nil {
 				continue
 			}
@@ -515,7 +587,7 @@ func componentSetFollowUpFlagName(componentName, followUpName string) string {
 func resolveComponentSetFollowUps(cmd *cobra.Command, def corecomponent.Definition, view componentView, disposition corecomponent.Disposition, state corecomponent.State) (map[string]string, error) {
 	options := map[string]string{}
 	for _, spec := range def.FollowUpsForDisposition(disposition) {
-		flagName := componentSetFollowUpFlagName(def.Name, spec.Name)
+		flagName := componentSetFollowUpSpecFlagName(def.Name, spec)
 		switch {
 		case spec.Name == "tls-mode" && (def.Name == "isle-tls" || def.Name == "isle-tls-override"):
 			defaultValue := strings.TrimSpace(view.FollowUpValues[spec.Name])
@@ -553,6 +625,13 @@ func resolveComponentSetFollowUps(cmd *cobra.Command, def corecomponent.Definiti
 		}
 	}
 	return options, nil
+}
+
+func componentSetFollowUpSpecFlagName(componentName string, followUp corecomponent.FollowUpSpec) string {
+	if strings.TrimSpace(followUp.FlagName) != "" {
+		return strings.TrimSpace(followUp.FlagName)
+	}
+	return componentSetFollowUpFlagName(componentName, followUp.Name)
 }
 
 func resolveComponentSetStateValue(cmd *cobra.Command, args []string) (string, error) {

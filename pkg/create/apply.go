@@ -14,6 +14,11 @@ const (
 	FcrepoStateOn  = "on"
 	FcrepoStateOff = "off"
 
+	IIIFCantaloupe       = "cantaloupe"
+	IIIFTriplet          = "triplet"
+	IIIFTopologyLocal    = "local"
+	IIIFTopologyExternal = "external"
+
 	DefaultDrupalRootfs      = "drupal/rootfs/var/www/drupal"
 	DefaultISLEFileSystemURI = "private"
 	PublicISLEFileSystemURI  = "public"
@@ -61,6 +66,10 @@ type Options struct {
 	DrupalRootfs      string
 	Fcrepo            string
 	Blazegraph        string
+	IIIF              string
+	IIIFTopology      string
+	IIIFUpstreamURL   string
+	ComposeOverride   string
 	ISLEFileSystemURI string
 }
 
@@ -77,6 +86,12 @@ func Apply(opts Options) error {
 	if opts.Blazegraph == "" {
 		opts.Blazegraph = FcrepoStateOn
 	}
+	if opts.IIIF == "" {
+		opts.IIIF = IIIFCantaloupe
+	}
+	if opts.IIIFTopology == "" {
+		opts.IIIFTopology = IIIFTopologyLocal
+	}
 	if opts.ISLEFileSystemURI == "" {
 		opts.ISLEFileSystemURI = DefaultISLEFileSystemURI
 	}
@@ -86,6 +101,15 @@ func Apply(opts Options) error {
 	}
 	if opts.Blazegraph != FcrepoStateOn && opts.Blazegraph != FcrepoStateOff {
 		return fmt.Errorf("invalid --blazegraph value %q: expected on or off", opts.Blazegraph)
+	}
+	if opts.IIIF != IIIFCantaloupe && opts.IIIF != IIIFTriplet {
+		return fmt.Errorf("invalid --iiif value %q: expected cantaloupe or triplet", opts.IIIF)
+	}
+	if opts.IIIFTopology != IIIFTopologyLocal && opts.IIIFTopology != IIIFTopologyExternal {
+		return fmt.Errorf("invalid --iiif-topology value %q: expected local or external", opts.IIIFTopology)
+	}
+	if opts.IIIFTopology == IIIFTopologyExternal && strings.TrimSpace(opts.IIIFUpstreamURL) == "" {
+		return fmt.Errorf("invalid --iiif-upstream-url value %q: expected a non-empty upstream URL when --iiif-topology=external", opts.IIIFUpstreamURL)
 	}
 	if strings.TrimSpace(opts.ISLEFileSystemURI) == "" {
 		return fmt.Errorf("invalid --isle-file-system-uri value %q: expected a non-empty filesystem URI", opts.ISLEFileSystemURI)
@@ -113,6 +137,10 @@ func Apply(opts Options) error {
 		if err := applyBlazegraphOff(opts.Path, opts.DrupalRootfs); err != nil {
 			return fmt.Errorf("apply blazegraph=off: %w", err)
 		}
+	}
+
+	if err := ApplyIIIF(opts); err != nil {
+		return fmt.Errorf("apply iiif=%s topology=%s: %w", opts.IIIF, opts.IIIFTopology, err)
 	}
 
 	return nil

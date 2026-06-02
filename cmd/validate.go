@@ -139,13 +139,7 @@ func runIsleValidation(ctx *config.Context, drupalRootfs string) ([]sitevalidate
 		switch status.State {
 		case corecomponent.StateDrifted:
 			result.Status = sitevalidate.StatusFailed
-			result.Detail = strings.TrimSpace(status.DriftDetail)
-			if result.Detail == "" {
-				result.Detail = strings.TrimSpace(status.Detail)
-			}
-			if result.Detail == "" {
-				result.Detail = "component is drifted"
-			}
+			result.Detail = componentDriftSummary(status, 6)
 			result.FixHint = "run `sitectl converge --report` to preview or `sitectl converge` to apply"
 		}
 		results = append(results, result)

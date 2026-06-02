@@ -1,0 +1,6 @@
+      - type: volume
+        source: fcrepo-data
+        target: /fcrepo
+        read_only: true
+        volume:
+          subpath: home/data/ocfl-root

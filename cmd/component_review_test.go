@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
-	"github.com/libops/sitectl-isle/pkg/externalcantaloupe"
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 )
@@ -37,17 +36,17 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
 
 	states := map[string]corecomponent.State{
-		"fcrepo":              corecomponent.StateOff,
-		"blazegraph":          corecomponent.StateOn,
-		"external-cantaloupe": corecomponent.StateOn,
-		"isle-tls":            corecomponent.StateOn,
-		"isle-tls-override":   corecomponent.StateOn,
+		"fcrepo":            corecomponent.StateOff,
+		"blazegraph":        corecomponent.StateOn,
+		"iiif":              corecomponent.StateOff,
+		"iiif-topology":     corecomponent.StateOn,
+		"isle-tls":          corecomponent.StateOn,
+		"isle-tls-override": corecomponent.StateOn,
 	}
 	modes := map[string]string{
-		"fcrepo-isle-file-system-uri":      createpkg.PrivateISLEFileSystemURI,
-		"external-cantaloupe-upstream-url": "http://cantaloupe.example:8182",
-		"isle-tls-tls-mode":                traefikconfig.ModeLetsEncrypt,
-		"isle-tls-override-tls-mode":       traefikconfig.ModeHTTP,
+		"fcrepo-isle-file-system-uri": createpkg.PrivateISLEFileSystemURI,
+		"isle-tls-tls-mode":           traefikconfig.ModeLetsEncrypt,
+		"isle-tls-override-tls-mode":  traefikconfig.ModeHTTP,
 	}
 
 	var got createpkg.Options
@@ -87,6 +86,15 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 	if got.Blazegraph != createpkg.FcrepoStateOn {
 		t.Fatalf("expected blazegraph on, got %q", got.Blazegraph)
 	}
+	if got.IIIF != createpkg.IIIFCantaloupe {
+		t.Fatalf("expected iiif cantaloupe, got %q", got.IIIF)
+	}
+	if got.IIIFTopology != createpkg.IIIFTopologyExternal {
+		t.Fatalf("expected distributed iiif topology, got %q", got.IIIFTopology)
+	}
+	if got.IIIFUpstreamURL != "http://cantaloupe.example:8182" {
+		t.Fatalf("expected iiif upstream url, got %q", got.IIIFUpstreamURL)
+	}
 
 	envText, err := os.ReadFile(filepath.Join(projectDir, ".env"))
 	if err != nil {
@@ -100,30 +108,13 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(docker-compose.local.yml) error = %v", err)
 	}
-	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") || !strings.Contains(string(devOverride), "\n  cantaloupe:\n") {
+	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") {
 		t.Fatalf("expected dev http override, got:\n%s", string(devOverride))
-	}
-	if !strings.Contains(string(devOverride), "CANTALOUPE_UPSTREAM_URL: http://cantaloupe:8182") {
-		t.Fatalf("expected local traefik upstream override, got:\n%s", string(devOverride))
-	}
-	traefikText, err := os.ReadFile(filepath.Join(projectDir, externalcantaloupe.DefaultTraefikConfigPath))
-	if err != nil {
-		t.Fatalf("ReadFile(cantaloupe.yml) error = %v", err)
-	}
-	if !strings.Contains(string(traefikText), `{{ env "CANTALOUPE_UPSTREAM_URL" }}`) {
-		t.Fatalf("expected templated cantaloupe upstream, got:\n%s", string(traefikText))
-	}
-	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
-	if err != nil {
-		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
-	}
-	if !strings.Contains(string(composeText), "CANTALOUPE_UPSTREAM_URL: \"http://cantaloupe.example:8182\"") {
-		t.Fatalf("expected external cantaloupe upstream env, got:\n%s", string(composeText))
 	}
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "external-cantaloupe: distributed (http://cantaloupe.example:8182)") {
-		t.Fatalf("expected review output to include external cantaloupe decision, got:\n%s", rendered)
+	if !strings.Contains(rendered, "iiif-topology: distributed (http://cantaloupe.example:8182)") {
+		t.Fatalf("expected review output to include distributed iiif decision, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "isle-tls: enabled (letsencrypt)") {
 		t.Fatalf("expected review output to include prod tls decision, got:\n%s", rendered)
@@ -168,7 +159,7 @@ func TestRunComponentReviewUsesDetectedTLSModeAsPromptDefault(t *testing.T) {
 		switch name {
 		case "isle-tls", "isle-tls-override":
 			return corecomponent.StateOn, nil
-		case "external-cantaloupe":
+		case "iiif-topology":
 			return corecomponent.StateOff, nil
 		default:
 			return corecomponent.StateOn, nil

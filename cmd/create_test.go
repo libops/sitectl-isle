@@ -24,7 +24,7 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	})
 
 	var promptCount int
-	inputs := []string{"2", "1", "1"}
+	inputs := []string{"2", "1", "1", "1"}
 	createInput = func(question ...string) (string, error) {
 		promptCount++
 		value := inputs[0]
@@ -59,8 +59,8 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if promptCount != 3 {
-		t.Fatalf("expected 3 prompts, got %d", promptCount)
+	if promptCount != 4 {
+		t.Fatalf("expected 4 prompts, got %d", promptCount)
 	}
 	if req.ContextName != "" {
 		t.Fatalf("expected context name prompt path, got %q", req.ContextName)
@@ -70,6 +70,12 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	}
 	if req.Apply.Blazegraph != "on" {
 		t.Fatalf("expected prompted blazegraph state on, got %q", req.Apply.Blazegraph)
+	}
+	if req.Apply.IIIF != createpkg.IIIFCantaloupe {
+		t.Fatalf("expected prompted iiif cantaloupe, got %q", req.Apply.IIIF)
+	}
+	if req.Apply.IIIFTopology != createpkg.IIIFTopologyLocal {
+		t.Fatalf("expected default local iiif topology, got %q", req.Apply.IIIFTopology)
 	}
 	if req.Apply.ISLEFileSystemURI != "public" {
 		t.Fatalf("expected prompted isle-file-system-uri public, got %q", req.Apply.ISLEFileSystemURI)
@@ -117,6 +123,9 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	_ = cmd.Flags().Set("context", "isle-local")
 	_ = cmd.Flags().Set("fcrepo", "off")
 	_ = cmd.Flags().Set("blazegraph", "on")
+	_ = cmd.Flags().Set("iiif", "triplet")
+	_ = cmd.Flags().Set("iiif-topology", "distributed")
+	_ = cmd.Flags().Set("iiif-upstream-url", "https://iiif.example.org")
 	_ = cmd.Flags().Set("isle-file-system-uri", "public")
 
 	req, err := resolveCreateRequest(cmd)
@@ -124,7 +133,7 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if req.Apply.Fcrepo != "off" || req.Apply.Blazegraph != "on" || req.Apply.ISLEFileSystemURI != "public" {
+	if req.Apply.Fcrepo != "off" || req.Apply.Blazegraph != "on" || req.Apply.IIIF != createpkg.IIIFTriplet || req.Apply.IIIFTopology != createpkg.IIIFTopologyExternal || req.Apply.IIIFUpstreamURL != "https://iiif.example.org" || req.Apply.ISLEFileSystemURI != "public" {
 		t.Fatalf("unexpected options %+v", req.Apply)
 	}
 }
@@ -164,6 +173,7 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 	_ = cmd.Flags().Set("context", "isle-local")
 	_ = cmd.Flags().Set("fcrepo", "off")
 	_ = cmd.Flags().Set("blazegraph", "on")
+	_ = cmd.Flags().Set("iiif", "cantaloupe")
 	_ = cmd.Flags().Set("isle-file-system-uri", "archive")
 
 	req, err := resolveCreateRequest(cmd)
@@ -186,7 +196,7 @@ func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
 	})
 
 	var promptCount int
-	inputs := []string{"2", "3", "archive", "1"}
+	inputs := []string{"2", "3", "archive", "1", "1"}
 	createInput = func(question ...string) (string, error) {
 		promptCount++
 		value := inputs[0]
@@ -221,8 +231,8 @@ func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if promptCount != 4 {
-		t.Fatalf("expected 4 prompts, got %d", promptCount)
+	if promptCount != 5 {
+		t.Fatalf("expected 5 prompts, got %d", promptCount)
 	}
 	if req.Apply.ISLEFileSystemURI != "archive" {
 		t.Fatalf("expected prompted custom isle-file-system-uri archive, got %q", req.Apply.ISLEFileSystemURI)
