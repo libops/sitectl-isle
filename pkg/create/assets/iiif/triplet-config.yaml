@@ -1,0 +1,77 @@
+server:
+  listen: ":8080"
+  read_timeout: 300s
+  write_timeout: 10s
+  public_base_url: "${TRIPLET_PUBLIC_BASE_URL}"
+
+logging:
+  level: info
+  format: json
+
+debug:
+  pprof_enabled: false
+  pprof_prefix: /debug/pprof
+
+vips:
+  concurrency: 0
+  cache_max_mem: 0
+  cache_max_files: 0
+  report_leaks: false
+  block_untrusted: true
+  blocked_operations:
+    - VipsForeignLoadPdf
+
+iiif:
+  image:
+    enabled: true
+    prefix: /iiif/3
+    allowed_origins:
+      - ${DOMAIN}
+    max_output_pixels: 1000000000
+    allow_unsafe_unlimited_output_pixels: false
+    max_source_pixels: 5000000000
+    max_source_bytes: 500GiB
+    max_derivative_bytes: 1GiB
+    max_concurrent_transforms: 3
+    max_width: 0
+    max_height: 0
+    color_management: preserve
+    load_access: auto
+    info_dimension_cache: true
+  presentation:
+    enabled: false
+    prefix: /presentation/v3
+    write_enabled: false
+
+sources:
+  default: file
+  file:
+    root: /public
+    url_mappings:
+      - prefix: /sites/default/files
+        root: /public
+
+      - prefix: /system/files
+        root: /private
+        auth_probe: true
+
+      - prefix: /_flysystem/fedora
+        root: /fcrepo
+        ocfl: true
+        auth_probe: true
+  http:
+    allowed_origins:
+      - ${DOMAIN}
+    allow_private_hosts: true
+    metadata_cache_ttl: 240h
+
+cache:
+  root: /var/lib/triplet/cache
+  max_bytes: 500GiB
+  max_age: 720h
+
+extensions:
+  transform:
+    enabled: false
+  uploads:
+    enabled: false

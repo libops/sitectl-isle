@@ -6,7 +6,6 @@ BLAZEGRAPH_STATE?=on
 ISLE_FILE_SYSTEM_URI?=public
 GIT_REMOTE_URL?=
 SITECTL_CONTEXT?=integration-test
-INSTALL_DIR ?= $(or $(dir $(shell which $(BINARY_NAME) 2>/dev/null)),/usr/local/bin/)
 
 deps: work
 	go mod tidy
@@ -14,8 +13,8 @@ deps: work
 build:
 	go build -o $(BINARY_NAME) .
 
-install: work build
-	sudo cp $(BINARY_NAME) $(INSTALL_DIR)$(BINARY_NAME)
+install: build
+	mv $(BINARY_NAME) /usr/local/bin
 
 lint:
 	go fmt ./...
@@ -36,4 +35,3 @@ work:
 
 integration-test:
 	SITECTL_CONTEXT="$(SITECTL_CONTEXT)" GIT_REMOTE_URL="$(GIT_REMOTE_URL)" ./scripts/test-create.sh $(FCREPO_STATE) $(ISLE_FILE_SYSTEM_URI) $(BLAZEGRAPH_STATE)
-

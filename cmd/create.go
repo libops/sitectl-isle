@@ -112,6 +112,13 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 	if decision, ok := resolved.Decisions["blazegraph"]; ok {
 		opts.Blazegraph = string(decision.State)
 	}
+	if decision, ok := resolved.Decisions["iiif"]; ok {
+		opts.IIIF = createIIIFValue(decision.Disposition)
+	}
+	if decision, ok := resolved.Decisions["iiif-topology"]; ok {
+		opts.IIIFTopology = createIIIFTopologyValue(decision.Disposition)
+		opts.IIIFUpstreamURL = strings.TrimSpace(decision.Options["upstream-url"])
+	}
 	if opts.ISLEFileSystemURI == "" {
 		opts.ISLEFileSystemURI = createpkg.DefaultISLEFileSystemURI
 	}
@@ -119,6 +126,20 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 		ComposeCreateRequest: resolved,
 		Apply:                opts,
 	}, nil
+}
+
+func createIIIFValue(disposition corecomponent.Disposition) string {
+	if disposition == corecomponent.DispositionTriplet {
+		return createpkg.IIIFTriplet
+	}
+	return createpkg.IIIFCantaloupe
+}
+
+func createIIIFTopologyValue(disposition corecomponent.Disposition) string {
+	if disposition == corecomponent.DispositionDistributed {
+		return createpkg.IIIFTopologyExternal
+	}
+	return createpkg.IIIFTopologyLocal
 }
 
 func runCreateCommand(cmd *cobra.Command, req createRequest) error {
@@ -545,7 +566,12 @@ func buildRecreateCommand(req createRequest) string {
 		`--drupal-rootfs=` + shellDoubleQuote(req.DrupalRootfs),
 		`--fcrepo=` + req.Apply.Fcrepo,
 		`--blazegraph=` + req.Apply.Blazegraph,
+		`--iiif=` + iiifDispositionFlagValue(req.Apply.IIIF),
+		`--iiif-topology=` + iiifTopologyDispositionFlagValue(req.Apply.IIIFTopology),
 		`--isle-file-system-uri=` + shellDoubleQuote(req.Apply.ISLEFileSystemURI),
+	}
+	if req.Apply.IIIFTopology == createpkg.IIIFTopologyExternal {
+		args = append(args, `--iiif-upstream-url=`+shellDoubleQuote(req.Apply.IIIFUpstreamURL))
 	}
 	if req.SetDefaultContext {
 		args = append(args, "--default-context")
@@ -562,6 +588,20 @@ func buildRecreateCommand(req createRequest) string {
 		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func iiifDispositionFlagValue(value string) string {
+	if value == createpkg.IIIFTriplet {
+		return string(corecomponent.DispositionTriplet)
+	}
+	return string(corecomponent.DispositionCantaloupe)
+}
+
+func iiifTopologyDispositionFlagValue(value string) string {
+	if value == createpkg.IIIFTopologyExternal {
+		return string(corecomponent.DispositionDistributed)
+	}
+	return string(corecomponent.DispositionDisabled)
 }
 
 func shellDoubleQuote(value string) string {

@@ -10,6 +10,11 @@ var commandSDK *plugin.SDK
 // RegisterCommands registers all isle commands with the plugin SDK
 func RegisterCommands(sdk *plugin.SDK) {
 	commandSDK = sdk
+	sdk.SetComposeProjectDiscovery(plugin.ComposeProjectDiscovery{
+		RequiredServices:         []string{"drupal"},
+		RequiredComposerPackages: []string{"drupal/islandora"},
+		Reason:                   "drupal service with drupal/islandora in composer.json",
+	})
 	sdk.RegisterContextValidator(isleContextValidator)
 	pluginjobs.Register(sdk)
 	sdk.RegisterComponentDefinitions(orderedComponentDefinitions()...)

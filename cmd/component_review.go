@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
-	"github.com/libops/sitectl-isle/pkg/externalcantaloupe"
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
@@ -189,16 +188,26 @@ func convertComponentReviewDecisions(raw map[string]promptReviewDecision) map[st
 
 func applyComponentReview(ctx *config.Context, drupalRootfs string, decisions map[string]componentReviewDecision) error {
 	opts := createpkg.Options{
-		Path:         ctx.ProjectDir,
-		DrupalRootfs: drupalRootfs,
-		Fcrepo:       string(decisions["fcrepo"].State),
-		Blazegraph:   string(decisions["blazegraph"].State),
+		Path:            ctx.ProjectDir,
+		DrupalRootfs:    drupalRootfs,
+		Fcrepo:          string(decisions["fcrepo"].State),
+		Blazegraph:      string(decisions["blazegraph"].State),
+		IIIF:            reviewIIIFCreateValue(decisions["iiif"]),
+		IIIFTopology:    reviewIIIFTopologyCreateValue(decisions["iiif-topology"]),
+		IIIFUpstreamURL: strings.TrimSpace(decisions["iiif-topology"].UpstreamURL),
+		ComposeOverride: resolveEnvironmentOverridePath(ctx),
 	}
 	if opts.Fcrepo == "" {
 		opts.Fcrepo = createpkg.FcrepoStateOn
 	}
 	if opts.Blazegraph == "" {
 		opts.Blazegraph = createpkg.FcrepoStateOn
+	}
+	if opts.IIIF == "" {
+		opts.IIIF = createpkg.IIIFCantaloupe
+	}
+	if opts.IIIFTopology == "" {
+		opts.IIIFTopology = createpkg.IIIFTopologyLocal
 	}
 
 	if opts.Fcrepo == createpkg.FcrepoStateOff {
@@ -215,9 +224,6 @@ func applyComponentReview(ctx *config.Context, drupalRootfs string, decisions ma
 	if err := componentApplyOptions(opts); err != nil {
 		return err
 	}
-	if err := externalcantaloupe.Apply(ctx.ProjectDir, resolveEnvironmentOverridePath(ctx), strings.TrimSpace(decisions["external-cantaloupe"].UpstreamURL), decisions["external-cantaloupe"].Disposition == corecomponent.DispositionDistributed); err != nil {
-		return err
-	}
 	if err := traefikconfig.ApplyProd(ctx.ProjectDir, reviewResolvedTLSMode("isle-tls", decisions["isle-tls"])); err != nil {
 		return err
 	}
@@ -225,6 +231,20 @@ func applyComponentReview(ctx *config.Context, drupalRootfs string, decisions ma
 		return err
 	}
 	return ctx.EnsureTrackedComposeOverrideSymlink()
+}
+
+func reviewIIIFCreateValue(decision componentReviewDecision) string {
+	if decision.Disposition == corecomponent.DispositionTriplet {
+		return createpkg.IIIFTriplet
+	}
+	return createpkg.IIIFCantaloupe
+}
+
+func reviewIIIFTopologyCreateValue(decision componentReviewDecision) string {
+	if decision.Disposition == corecomponent.DispositionDistributed {
+		return createpkg.IIIFTopologyExternal
+	}
+	return createpkg.IIIFTopologyLocal
 }
 
 func reviewDecisionLabel(decision componentReviewDecision) string {

@@ -1,0 +1,7 @@
+  cantaloupe:
+{{COMMON_MERGE}}    image: islandora/cantaloupe:${ISLANDORA_TAG}
+    secrets:
+      - source: CERT_PUBLIC_KEY
+      - source: CERT_AUTHORITY
+    volumes:
+      - cantaloupe-data:/data:rw
