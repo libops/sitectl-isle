@@ -395,6 +395,9 @@ volumes:
 	if err := os.WriteFile(filepath.Join(projectDir, "conf", "traefik", "cantaloupe.yml"), []byte("http:\n  middlewares:\n    cantaloupe-strip-prefix:\n      stripPrefix:\n        prefixes:\n          - /cantaloupe\n    cantaloupe-custom-request-headers:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-Path: /cantaloupe\n    cantaloupe:\n      chain:\n        middlewares:\n          - cantaloupe-strip-prefix\n          - cantaloupe-custom-request-headers\n\n  services:\n    cantaloupe:\n      loadBalancer:\n        servers:\n          - url: {{ env \"CANTALOUPE_UPSTREAM_URL\" }}\n  routers:\n    cantaloupe:\n      rule: Host(`{{ env \"DOMAIN\" }}`) && PathPrefix(`/cantaloupe`)\n      middlewares:\n        - cantaloupe\n      service: cantaloupe\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(conf/traefik/cantaloupe.yml) error = %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(projectDir, "conf", "traefik", "drupal.yml"), []byte("http:\n  services:\n    drupal:\n      loadBalancer:\n        servers:\n          - url: http://drupal:80\n  routers:\n    drupal:\n      rule: Host(`{{ env \"DOMAIN\" }}`)\n      service: drupal\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(conf/traefik/drupal.yml) error = %v", err)
+	}
 
 	files := []string{
 		"context.context.all_media.yml",

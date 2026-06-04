@@ -249,6 +249,131 @@ func TestRunComponentSetAppliesISLETLSOverrideHTTPOverride(t *testing.T) {
 	}
 }
 
+func TestRunComponentSetEnablesBotMitigation(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	var out bytes.Buffer
+	cmd := componentSetCmd
+	cmd.SetOut(&out)
+
+	if err := runComponentSet(cmd, "bot-mitigation", "on"); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "bot-mitigation: enabled") {
+		t.Fatalf("expected component output, got:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "Configure real TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY values from Cloudflare") {
+		t.Fatalf("expected Turnstile key warning, got:\n%s", out.String())
+	}
+
+	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
+	}
+	compose := string(composeText)
+	for _, want := range []string{
+		"--experimental.localPlugins.captcha-protect.modulename=github.com/libops/captcha-protect",
+		"./conf/traefik/plugins/captcha-protect:/plugins-local/src/github.com/libops/captcha-protect:r",
+		"./conf/traefik/challenge.tmpl.html:/challenge.tmpl.html:ro",
+		"TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-1x00000000000000000000AA}",
+		"TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-1x0000000000000000000000000000000AA}",
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		}
+	}
+
+	traefikText, err := os.ReadFile(filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(conf/traefik/drupal.yml) error = %v", err)
+	}
+	traefik := string(traefikText)
+	for _, want := range []string{
+		"      middlewares:\n        - captcha-protect",
+		"    captcha-protect:\n      plugin:\n        captcha-protect:",
+		"          siteKey: {{ env \"TURNSTILE_SITE_KEY\" }}",
+		"          secretKey: {{ env \"TURNSTILE_SECRET_KEY\" }}",
+		"          protectFileExtensions: php,html,jp2,tif,tiff",
+	} {
+		if !strings.Contains(traefik, want) {
+			t.Fatalf("expected drupal traefik config to contain %q, got:\n%s", want, traefik)
+		}
+	}
+	templateText, err := os.ReadFile(filepath.Join(projectDir, "conf", "traefik", "challenge.tmpl.html"))
+	if err != nil {
+		t.Fatalf("ReadFile(conf/traefik/challenge.tmpl.html) error = %v", err)
+	}
+	if !strings.Contains(string(templateText), `{{ .FrontendJS }}`) {
+		t.Fatalf("expected plugin challenge template, got:\n%s", string(templateText))
+	}
+}
+
+func TestRunComponentSetDisablesBotMitigation(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	if err := runComponentSet(componentSetCmd, "bot-mitigation", "on"); err != nil {
+		t.Fatalf("runComponentSet(on) error = %v", err)
+	}
+	if err := runComponentSet(componentSetCmd, "bot-mitigation", "off"); err != nil {
+		t.Fatalf("runComponentSet(off) error = %v", err)
+	}
+
+	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
+	}
+	compose := string(composeText)
+	for _, removed := range []string{
+		"captcha-protect",
+		"TURNSTILE_SITE_KEY",
+		"TURNSTILE_SECRET_KEY",
+	} {
+		if strings.Contains(compose, removed) {
+			t.Fatalf("expected compose to remove %q, got:\n%s", removed, compose)
+		}
+	}
+
+	traefikText, err := os.ReadFile(filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(conf/traefik/drupal.yml) error = %v", err)
+	}
+	if strings.Contains(string(traefikText), "captcha-protect") {
+		t.Fatalf("expected drupal traefik config to remove captcha-protect, got:\n%s", string(traefikText))
+	}
+}
+
 func TestRunComponentSetDistributesCantaloupeIIIF(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)

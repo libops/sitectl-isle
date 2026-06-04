@@ -5,10 +5,11 @@ set -x
 
 export TERM="${TERM:-dumb}"
 
-FCREPO_STATE="${1:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] }"
-ISLE_FILE_SYSTEM_URI="${2:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] }"
+FCREPO_STATE="${1:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] [bot-mitigation-on|off] }"
+ISLE_FILE_SYSTEM_URI="${2:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] [bot-mitigation-on|off] }"
 BLAZEGRAPH_STATE="${3:-on}"
 IIIF_IMPLEMENTATION="${4:-triplet}"
+BOT_MITIGATION_STATE="${5:-off}"
 GIT_REMOTE_URL="${GIT_REMOTE_URL:-}"
 SITECTL_CONTEXT="${SITECTL_CONTEXT:-integration-test}"
 
@@ -109,6 +110,7 @@ create_site() {
 		--fcrepo "${FCREPO_STATE}" \
 		--blazegraph "${BLAZEGRAPH_STATE}" \
 		--iiif "${IIIF_IMPLEMENTATION}" \
+		--bot-mitigation "${BOT_MITIGATION_STATE}" \
 		--isle-file-system-uri "${ISLE_FILE_SYSTEM_URI}" \
 		--setup-only
 }

@@ -166,6 +166,38 @@ func TestExternalCantaloupeDefinition(t *testing.T) {
 	}
 }
 
+func TestBotMitigationDefinition(t *testing.T) {
+	t.Parallel()
+
+	definition := BotMitigation()
+
+	if definition.Name != "bot-mitigation" {
+		t.Fatalf("expected name bot-mitigation, got %q", definition.Name)
+	}
+	if definition.DefaultState != corecomponent.StateOff {
+		t.Fatalf("expected default state off, got %q", definition.DefaultState)
+	}
+	if definition.DefaultDisposition != corecomponent.DispositionDisabled {
+		t.Fatalf("expected default disposition disabled, got %q", definition.DefaultDisposition)
+	}
+	if !definition.PromptOnCreate {
+		t.Fatal("expected bot-mitigation to prompt on create")
+	}
+	if definition.Guidance.Question == "" || definition.Guidance.EnabledHelp == "" || definition.Guidance.DisabledHelp == "" {
+		t.Fatal("expected bot-mitigation guidance")
+	}
+	if !definition.Gates.LocalOnly {
+		t.Fatal("expected bot-mitigation to be local-only")
+	}
+	if !definition.Behavior.Idempotent {
+		t.Fatal("expected bot-mitigation to be marked idempotent")
+	}
+	assertHasRule(t, definition.On.Compose.Rules, OpSet, ".services.traefik.environment.TURNSTILE_SITE_KEY")
+	assertHasRule(t, definition.On.Compose.Rules, OpSet, ".services.traefik.environment.TURNSTILE_SECRET_KEY")
+	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.traefik.environment.TURNSTILE_SITE_KEY")
+	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.traefik.environment.TURNSTILE_SECRET_KEY")
+}
+
 func assertHasWholeFileRule(t *testing.T, rules []YAMLRule, op RuleOp, file string) {
 	t.Helper()
 

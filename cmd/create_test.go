@@ -24,7 +24,7 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	})
 
 	var promptCount int
-	inputs := []string{"2", "1", "1", "1"}
+	inputs := []string{"2", "1", "1", "1", "1"}
 	createInput = func(question ...string) (string, error) {
 		promptCount++
 		value := inputs[0]
@@ -59,8 +59,8 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if promptCount != 4 {
-		t.Fatalf("expected 4 prompts, got %d", promptCount)
+	if promptCount != 5 {
+		t.Fatalf("expected 5 prompts, got %d", promptCount)
 	}
 	if req.ContextName != "" {
 		t.Fatalf("expected context name prompt path, got %q", req.ContextName)
@@ -76,6 +76,9 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	}
 	if req.Apply.IIIFTopology != createpkg.IIIFTopologyLocal {
 		t.Fatalf("expected default local iiif topology, got %q", req.Apply.IIIFTopology)
+	}
+	if req.Apply.BotMitigation != createpkg.BotMitigationStateOff {
+		t.Fatalf("expected prompted bot mitigation off, got %q", req.Apply.BotMitigation)
 	}
 	if req.Apply.ISLEFileSystemURI != "public" {
 		t.Fatalf("expected prompted isle-file-system-uri public, got %q", req.Apply.ISLEFileSystemURI)
@@ -126,6 +129,7 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	_ = cmd.Flags().Set("iiif", "triplet")
 	_ = cmd.Flags().Set("iiif-topology", "distributed")
 	_ = cmd.Flags().Set("iiif-upstream-url", "https://iiif.example.org")
+	_ = cmd.Flags().Set("bot-mitigation", "on")
 	_ = cmd.Flags().Set("isle-file-system-uri", "public")
 
 	req, err := resolveCreateRequest(cmd)
@@ -133,7 +137,7 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if req.Apply.Fcrepo != "off" || req.Apply.Blazegraph != "on" || req.Apply.IIIF != createpkg.IIIFTriplet || req.Apply.IIIFTopology != createpkg.IIIFTopologyExternal || req.Apply.IIIFUpstreamURL != "https://iiif.example.org" || req.Apply.ISLEFileSystemURI != "public" {
+	if req.Apply.Fcrepo != "off" || req.Apply.Blazegraph != "on" || req.Apply.IIIF != createpkg.IIIFTriplet || req.Apply.IIIFTopology != createpkg.IIIFTopologyExternal || req.Apply.IIIFUpstreamURL != "https://iiif.example.org" || req.Apply.BotMitigation != createpkg.BotMitigationStateOn || req.Apply.ISLEFileSystemURI != "public" {
 		t.Fatalf("unexpected options %+v", req.Apply)
 	}
 }
@@ -174,6 +178,7 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 	_ = cmd.Flags().Set("fcrepo", "off")
 	_ = cmd.Flags().Set("blazegraph", "on")
 	_ = cmd.Flags().Set("iiif", "cantaloupe")
+	_ = cmd.Flags().Set("bot-mitigation", "off")
 	_ = cmd.Flags().Set("isle-file-system-uri", "archive")
 
 	req, err := resolveCreateRequest(cmd)
@@ -196,7 +201,7 @@ func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
 	})
 
 	var promptCount int
-	inputs := []string{"2", "3", "archive", "1", "1"}
+	inputs := []string{"2", "3", "archive", "1", "1", "1"}
 	createInput = func(question ...string) (string, error) {
 		promptCount++
 		value := inputs[0]
@@ -231,8 +236,8 @@ func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if promptCount != 5 {
-		t.Fatalf("expected 5 prompts, got %d", promptCount)
+	if promptCount != 6 {
+		t.Fatalf("expected 6 prompts, got %d", promptCount)
 	}
 	if req.Apply.ISLEFileSystemURI != "archive" {
 		t.Fatalf("expected prompted custom isle-file-system-uri archive, got %q", req.Apply.ISLEFileSystemURI)
@@ -507,11 +512,56 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	if !strings.Contains(rendered, "sitectl create isle") {
 		t.Fatalf("expected recreate command body, got:\n%s", rendered)
 	}
+	if !strings.Contains(rendered, `--type="local"`) || !strings.Contains(rendered, `--checkout-source="template"`) {
+		t.Fatalf("expected recreate command with non-interactive create flags, got:\n%s", rendered)
+	}
 	if !strings.Contains(rendered, "--fcrepo=on") || !strings.Contains(rendered, "--blazegraph=off") {
 		t.Fatalf("expected recreate command with component flags, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "git remote add origin git@github.com:your-org/your-repo.git") {
 		t.Fatalf("expected git remote setup guidance, got:\n%s", rendered)
+	}
+}
+
+func TestPrintCreateFailureSummaryUsesPlainReplayCommand(t *testing.T) {
+	var out bytes.Buffer
+	req := createRequest{
+		ComposeCreateRequest: plugin.ComposeCreateRequest{
+			ContextName:    "foobar",
+			TargetType:     config.ContextLocal,
+			CheckoutSource: plugin.CheckoutSourceTemplate,
+			Path:           "/Users/jjc223/foobar",
+			DrupalRootfs:   createpkg.DefaultDrupalRootfs,
+			TemplateRepo:   defaultTemplateRepo,
+			TemplateBranch: defaultTemplateBranch,
+		},
+		Apply: createpkg.Options{
+			DrupalRootfs:      createpkg.DefaultDrupalRootfs,
+			Fcrepo:            createpkg.FcrepoStateOff,
+			Blazegraph:        createpkg.FcrepoStateOff,
+			IIIF:              createpkg.IIIFTriplet,
+			IIIFTopology:      createpkg.IIIFTopologyLocal,
+			BotMitigation:     createpkg.BotMitigationStateOn,
+			ISLEFileSystemURI: createpkg.PrivateISLEFileSystemURI,
+		},
+	}
+
+	printCreateFailureSummary(&out, req)
+
+	rendered := out.String()
+	for _, want := range []string{
+		"sitectl create isle \\",
+		`--type="local"`,
+		`--checkout-source="template"`,
+		`--context="foobar"`,
+		`--bot-mitigation=on`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected failure summary to contain %q, got:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "│") {
+		t.Fatalf("expected plain replay command without box borders, got:\n%s", rendered)
 	}
 }
 
