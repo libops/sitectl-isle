@@ -5,11 +5,12 @@ set -x
 
 export TERM="${TERM:-dumb}"
 
-FCREPO_STATE="${1:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] [bot-mitigation-on|off] }"
-ISLE_FILE_SYSTEM_URI="${2:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] [bot-mitigation-on|off] }"
+FCREPO_STATE="${1:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] [disabled|distributed] [bot-mitigation-on|off] }"
+ISLE_FILE_SYSTEM_URI="${2:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] [disabled|distributed] [bot-mitigation-on|off] }"
 BLAZEGRAPH_STATE="${3:-on}"
 IIIF_IMPLEMENTATION="${4:-triplet}"
-BOT_MITIGATION_STATE="${5:-off}"
+IIIF_TOPOLOGY="${5:-disabled}"
+BOT_MITIGATION_STATE="${6:-off}"
 GIT_REMOTE_URL="${GIT_REMOTE_URL:-}"
 SITECTL_CONTEXT="${SITECTL_CONTEXT:-integration-test}"
 
@@ -110,6 +111,7 @@ create_site() {
 		--fcrepo "${FCREPO_STATE}" \
 		--blazegraph "${BLAZEGRAPH_STATE}" \
 		--iiif "${IIIF_IMPLEMENTATION}" \
+		--iiif-topology "${IIIF_TOPOLOGY}" \
 		--bot-mitigation "${BOT_MITIGATION_STATE}" \
 		--isle-file-system-uri "${ISLE_FILE_SYSTEM_URI}" \
 		--setup-only
@@ -190,6 +192,11 @@ verify_blazegraph_disabled() {
 }
 
 verify_iiif_implementation() {
+	if [ "${IIIF_TOPOLOGY}" = "distributed" ]; then
+		echo "integration test does not currently assert distributed IIIF topology" >&2
+		exit 1
+	fi
+
 	case "${IIIF_IMPLEMENTATION}" in
 	triplet)
 		if ! (
@@ -238,6 +245,42 @@ verify_iiif_implementation() {
 	esac
 }
 
+verify_bot_mitigation_challenge() {
+	if [ "${BOT_MITIGATION_STATE}" != "on" ]; then
+		return
+	fi
+
+	local status
+	local body_path="${TMP_DIR}/bot-mitigation-challenge.html"
+	for _ in $(seq 1 24); do
+		status="$(
+			curl \
+				--silent \
+				--show-error \
+				--noproxy "*" \
+				--output "${body_path}" \
+				--write-out "%{http_code}" \
+				--header "X-Forwarded-For: 1.2.3.4" \
+				--resolve islandora.io:80:127.0.0.1 \
+				http://islandora.io/ || true
+		)"
+		if [ "${status}" = "429" ]; then
+			if ! grep -Fq "Verifying connection" "${body_path}"; then
+				echo "bot mitigation returned 429 without the challenge page" >&2
+				cat "${body_path}" >&2 || true
+				exit 1
+			fi
+			return
+		fi
+		sleep 5
+	done
+
+	echo "expected bot mitigation to return 429 for X-Forwarded-For: 1.2.3.4, got ${status}" >&2
+	cat "${body_path}" >&2 || true
+	run_compose_diagnostics
+	exit 1
+}
+
 main() {
 	build_binaries
 	create_site
@@ -245,6 +288,7 @@ main() {
 	set_assert_target
 	run_make_target init
 	run_make_target up
+	verify_bot_mitigation_challenge
 	verify_demo_objects_created
 
 	if [ "${FCREPO_STATE}" = "off" ]; then
