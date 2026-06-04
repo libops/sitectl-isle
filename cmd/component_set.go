@@ -234,6 +234,18 @@ func managedComponentDefinitions() []corecomponent.Definition {
 	return defs
 }
 
+func componentCatalogDefinitions() []corecomponent.Definition {
+	defs := managedComponentDefinitions()
+	for i := range defs {
+		for j := range defs[i].FollowUps {
+			if defs[i].FollowUps[j].Name == "tls-mode" && (defs[i].Name == "isle-tls" || defs[i].Name == "isle-tls-override") {
+				defs[i].FollowUps[j].FlagName = "tls-mode"
+			}
+		}
+	}
+	return defs
+}
+
 func blocksComponentSetOnDrift(targetName, driftedName string) bool {
 	switch targetName {
 	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override", components.BotMitigationName:
@@ -584,6 +596,9 @@ func resolveCurrentFileSystemURI(projectDir, drupalRootfs string) (string, error
 func addComponentSetFollowUpFlags(cmd *cobra.Command, defs []corecomponent.Definition) {
 	for _, def := range defs {
 		for _, followUp := range def.FollowUps {
+			if followUp.Name == "tls-mode" && (def.Name == "isle-tls" || def.Name == "isle-tls-override") {
+				continue
+			}
 			flagName := componentSetFollowUpSpecFlagName(def.Name, followUp)
 			if flagName == "" || cmd.Flags().Lookup(flagName) != nil {
 				continue
