@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
+	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
 	"github.com/libops/sitectl/pkg/plugin/debugui"
@@ -18,11 +19,25 @@ import (
 )
 
 var componentExtensionName string
+var componentExtensionListName string
 
 var componentExtensionCmd = &cobra.Command{
 	Use:    "__component",
 	Short:  "Internal component extension command",
 	Hidden: true,
+}
+
+var componentExtensionListCmd = &cobra.Command{
+	Use:   "list [component]",
+	Short: "Internal component list hook",
+	Args:  cobra.RangeArgs(0, 1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := strings.TrimSpace(componentExtensionListName)
+		if len(args) > 0 {
+			name = strings.TrimSpace(args[0])
+		}
+		return corecomponent.WriteComponentCatalog(cmd.OutOrStdout(), "ISLE", componentCatalogDefinitions(), name)
+	},
 }
 
 var componentExtensionDescribeCmd = &cobra.Command{
@@ -70,6 +85,8 @@ func (r *isleDebugRunner) Render(cmd *cobra.Command, ctx *config.Context) (strin
 }
 
 func init() {
+	componentExtensionListCmd.Flags().StringVarP(&componentExtensionListName, "component", "c", "", "Specific component to list")
+
 	componentExtensionDescribeCmd.Flags().StringVarP(&componentExtensionName, "component", "c", "", "Specific component to describe")
 	componentExtensionDescribeCmd.Flags().StringVar(&statusPath, "path", "", "Project path override")
 	componentExtensionDescribeCmd.Flags().StringVar(&statusDrupalRootfs, "drupal-rootfs", createpkg.DefaultDrupalRootfs, "Drupal rootfs path override")
@@ -89,7 +106,9 @@ func init() {
 	componentExtensionSetCmd.Flags().StringVar(&componentSetDisposition, "disposition", "", "Explicit disposition override")
 	componentExtensionSetCmd.Flags().StringVar(&componentSetTLSMode, "tls-mode", "", "TLS mode override")
 	componentExtensionSetCmd.Flags().BoolVar(&componentSetYolo, "yolo", false, "Apply without confirmation")
+	addComponentSetFollowUpFlags(componentExtensionSetCmd, managedComponentDefinitions())
 
+	componentExtensionCmd.AddCommand(componentExtensionListCmd)
 	componentExtensionCmd.AddCommand(componentExtensionDescribeCmd)
 	componentExtensionCmd.AddCommand(componentExtensionReconcileCmd)
 	componentExtensionCmd.AddCommand(componentExtensionSetCmd)

@@ -795,6 +795,19 @@ func TestRunComponentSetPromptsForStateAndTLSModeWhenMissing(t *testing.T) {
 	}
 }
 
+func TestComponentExtensionSetRegistersFollowUpFlags(t *testing.T) {
+	for _, name := range []string{"isle-file-system-uri", "iiif-upstream-url", "tls-mode"} {
+		if componentExtensionSetCmd.Flags().Lookup(name) == nil {
+			t.Fatalf("expected __component set to register --%s", name)
+		}
+	}
+	for _, name := range []string{"isle-tls-tls-mode", "isle-tls-override-tls-mode"} {
+		if componentExtensionSetCmd.Flags().Lookup(name) != nil {
+			t.Fatalf("did not expect unused TLS follow-up flag --%s", name)
+		}
+	}
+}
+
 func writeFileForTest(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
