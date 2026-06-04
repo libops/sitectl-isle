@@ -1,9 +1,13 @@
 .PHONY: build deps lint test check work docker integration-test docs plugins install-plugins install
 
 BINARY_NAME=sitectl-isle
+INSTALL_DIR ?= /usr/local/bin/
+HOMEBREW_BIN_DIRS ?= /opt/homebrew/bin /home/linuxbrew/.linuxbrew/bin
 FCREPO_STATE?=on
 BLAZEGRAPH_STATE?=on
 IIIF_IMPLEMENTATION?=triplet
+IIIF_TOPOLOGY?=disabled
+BOT_MITIGATION_STATE?=off
 ISLE_FILE_SYSTEM_URI?=public
 GIT_REMOTE_URL?=
 SITECTL_CONTEXT?=integration-test
@@ -15,7 +19,15 @@ build:
 	go build -o $(BINARY_NAME) .
 
 install: build
-	mv $(BINARY_NAME) /usr/local/bin
+	sudo cp $(BINARY_NAME) $(INSTALL_DIR)$(BINARY_NAME)
+	@for dir in $(HOMEBREW_BIN_DIRS); do \
+		if [ -d "$$dir" ] && [ "$$(cd "$$dir" && pwd -P)/" != "$$(cd "$(INSTALL_DIR)" && pwd -P)/" ]; then \
+			sudo cp $(BINARY_NAME) "$$dir/$(BINARY_NAME)"; \
+		fi; \
+	done
+	@if [ -d /usr/local/Homebrew ] && [ -d /usr/local/bin ] && [ "$$(cd /usr/local/bin && pwd -P)/" != "$$(cd "$(INSTALL_DIR)" && pwd -P)/" ]; then \
+		sudo cp $(BINARY_NAME) /usr/local/bin/$(BINARY_NAME); \
+	fi
 
 lint:
 	go fmt ./...
@@ -35,4 +47,4 @@ work:
 	./scripts/use-go-work.sh
 
 integration-test:
-	SITECTL_CONTEXT="$(SITECTL_CONTEXT)" GIT_REMOTE_URL="$(GIT_REMOTE_URL)" ./scripts/test-create.sh $(FCREPO_STATE) $(ISLE_FILE_SYSTEM_URI) $(BLAZEGRAPH_STATE) $(IIIF_IMPLEMENTATION)
+	SITECTL_CONTEXT="$(SITECTL_CONTEXT)" GIT_REMOTE_URL="$(GIT_REMOTE_URL)" ./scripts/test-create.sh $(FCREPO_STATE) $(ISLE_FILE_SYSTEM_URI) $(BLAZEGRAPH_STATE) $(IIIF_IMPLEMENTATION) $(IIIF_TOPOLOGY) $(BOT_MITIGATION_STATE)

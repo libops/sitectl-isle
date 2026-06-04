@@ -27,6 +27,8 @@ var (
 	componentPromptDisposition corecomponent.PromptDispositionFunc
 )
 
+const botMitigationTurnstileWarning = "Bot mitigation is using Cloudflare Turnstile test keys by default. Configure real TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY values from Cloudflare; the test keys always allow JavaScript-capable bots to pass."
+
 var componentSetCmd = &cobra.Command{
 	Use:   "set <name> [disposition]",
 	Short: "Set an ISLE component on or off for the current project",
@@ -155,6 +157,9 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 	if name == "iiif" || name == "iiif-topology" {
 		return runIIIFComponentSet(cmd, ctx, name, disposition, statusByName, followUps, currentStates)
 	}
+	if name == components.BotMitigationName {
+		return runBotMitigationComponentSet(cmd, ctx, disposition, state)
+	}
 	opts := createpkg.Options{
 		Path:            ctx.ProjectDir,
 		DrupalRootfs:    statusDrupalRootfs,
@@ -216,6 +221,7 @@ func orderedComponentDefinitions() []corecomponent.Definition {
 		components.Blazegraph(components.TemplateSource{}),
 		components.IIIF(components.TemplateSource{}),
 		components.IIIFTopology(),
+		components.BotMitigation(),
 	}
 }
 
@@ -230,11 +236,11 @@ func managedComponentDefinitions() []corecomponent.Definition {
 
 func blocksComponentSetOnDrift(targetName, driftedName string) bool {
 	switch targetName {
-	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override":
+	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override", components.BotMitigationName:
 		return false
 	}
 	switch driftedName {
-	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override":
+	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override", components.BotMitigationName:
 		return false
 	default:
 		return true
@@ -268,6 +274,24 @@ func runIIIFComponentSet(cmd *cobra.Command, ctx *config.Context, name string, d
 		fmt.Fprintf(cmd.OutOrStdout(), " (%s)", value)
 	}
 	fmt.Fprintln(cmd.OutOrStdout())
+	return nil
+}
+
+func runBotMitigationComponentSet(cmd *cobra.Command, ctx *config.Context, disposition corecomponent.Disposition, state corecomponent.State) error {
+	target := createpkg.BotMitigationStateOff
+	if state == corecomponent.StateOn {
+		target = createpkg.BotMitigationStateOn
+	}
+	if err := createpkg.ApplyBotMitigation(ctx.ProjectDir, target); err != nil {
+		return err
+	}
+	if err := ctx.EnsureTrackedComposeOverrideSymlink(); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", components.BotMitigationName, disposition)
+	if state == corecomponent.StateOn {
+		fmt.Fprintln(cmd.OutOrStdout(), botMitigationTurnstileWarning)
+	}
 	return nil
 }
 

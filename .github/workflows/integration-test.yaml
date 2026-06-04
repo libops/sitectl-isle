@@ -12,13 +12,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  create-fcrepo:
+  create-isle:
+    name: sitectl create isle fcrepo=${{ matrix.fcrepo_state }} blazegraph=${{ matrix.blazegraph_state }} bot-mitigation=${{ matrix.bot_mitigation_state }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        fcrepo_state: [on, off]
-        blazegraph_state: [on]
+        include:
+          - fcrepo_state: on
+            blazegraph_state: on
+            isle_file_system_uri: public
+            iiif_implementation: triplet
+            iiif_topology: disabled
+            bot_mitigation_state: off
+          - fcrepo_state: off
+            blazegraph_state: on
+            isle_file_system_uri: public
+            iiif_implementation: triplet
+            iiif_topology: disabled
+            bot_mitigation_state: off
+          - fcrepo_state: off
+            blazegraph_state: off
+            isle_file_system_uri: private
+            iiif_implementation: triplet
+            iiif_topology: disabled
+            bot_mitigation_state: on
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
         with:
@@ -43,6 +61,6 @@ jobs:
 
       - name: Run create integration test
         working-directory: sitectl-isle
-        run: make integration-test FCREPO_STATE=${{ matrix.fcrepo_state }} BLAZEGRAPH_STATE=${{ matrix.blazegraph_state }}
+        run: make integration-test FCREPO_STATE=${{ matrix.fcrepo_state }} BLAZEGRAPH_STATE=${{ matrix.blazegraph_state }} ISLE_FILE_SYSTEM_URI=${{ matrix.isle_file_system_uri }} IIIF_IMPLEMENTATION=${{ matrix.iiif_implementation }} IIIF_TOPOLOGY=${{ matrix.iiif_topology }} BOT_MITIGATION_STATE=${{ matrix.bot_mitigation_state }}
         env:
           TERM: xterm-256color

@@ -69,6 +69,7 @@ type Options struct {
 	IIIF              string
 	IIIFTopology      string
 	IIIFUpstreamURL   string
+	BotMitigation     string
 	ComposeOverride   string
 	ISLEFileSystemURI string
 }
@@ -92,6 +93,9 @@ func Apply(opts Options) error {
 	if opts.IIIFTopology == "" {
 		opts.IIIFTopology = IIIFTopologyLocal
 	}
+	if opts.BotMitigation == "" {
+		opts.BotMitigation = BotMitigationStateOff
+	}
 	if opts.ISLEFileSystemURI == "" {
 		opts.ISLEFileSystemURI = DefaultISLEFileSystemURI
 	}
@@ -107,6 +111,9 @@ func Apply(opts Options) error {
 	}
 	if opts.IIIFTopology != IIIFTopologyLocal && opts.IIIFTopology != IIIFTopologyExternal {
 		return fmt.Errorf("invalid --iiif-topology value %q: expected local or external", opts.IIIFTopology)
+	}
+	if opts.BotMitigation != BotMitigationStateOn && opts.BotMitigation != BotMitigationStateOff {
+		return fmt.Errorf("invalid --bot-mitigation value %q: expected on or off", opts.BotMitigation)
 	}
 	if opts.IIIFTopology == IIIFTopologyExternal && strings.TrimSpace(opts.IIIFUpstreamURL) == "" {
 		return fmt.Errorf("invalid --iiif-upstream-url value %q: expected a non-empty upstream URL when --iiif-topology=external", opts.IIIFUpstreamURL)
@@ -141,6 +148,11 @@ func Apply(opts Options) error {
 
 	if err := ApplyIIIF(opts); err != nil {
 		return fmt.Errorf("apply iiif=%s topology=%s: %w", opts.IIIF, opts.IIIFTopology, err)
+	}
+	if opts.BotMitigation == BotMitigationStateOn {
+		if err := ApplyBotMitigation(opts.Path, opts.BotMitigation); err != nil {
+			return fmt.Errorf("apply bot-mitigation=%s: %w", opts.BotMitigation, err)
+		}
 	}
 
 	return nil

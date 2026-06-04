@@ -119,6 +119,9 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 		opts.IIIFTopology = createIIIFTopologyValue(decision.Disposition)
 		opts.IIIFUpstreamURL = strings.TrimSpace(decision.Options["upstream-url"])
 	}
+	if decision, ok := resolved.Decisions["bot-mitigation"]; ok {
+		opts.BotMitigation = string(decision.State)
+	}
 	if opts.ISLEFileSystemURI == "" {
 		opts.ISLEFileSystemURI = createpkg.DefaultISLEFileSystemURI
 	}
@@ -166,6 +169,9 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	if err := createApply(req.Apply); err != nil {
 		printCreateFailureSummary(cmd.OutOrStdout(), req)
 		return err
+	}
+	if req.Apply.BotMitigation == createpkg.BotMitigationStateOn {
+		fmt.Fprintln(cmd.OutOrStdout(), botMitigationTurnstileWarning)
 	}
 	if !req.SetupOnly {
 		if err := createRunStartup(cmd.OutOrStdout(), ctx); err != nil {
@@ -535,7 +541,7 @@ func printCreateFailureSummary(out io.Writer, req createRequest) {
 	fmt.Fprintf(out, "Checkout: %s\n", req.Path)
 	fmt.Fprintf(out, "Context:  %s\n", req.ContextName)
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, corecomponent.RenderCommandBlock(buildRecreateCommand(req)))
+	fmt.Fprintln(out, buildRecreateCommand(req))
 	fmt.Fprintln(out)
 }
 
@@ -559,6 +565,8 @@ func buildCommitCommand(req createRequest) string {
 
 func buildRecreateCommand(req createRequest) string {
 	args := []string{
+		`--type=` + shellDoubleQuote(recreateTargetType(req)),
+		`--checkout-source=` + shellDoubleQuote(recreateCheckoutSource(req)),
 		`--context=` + shellDoubleQuote(req.ContextName),
 		`--path=` + shellDoubleQuote(req.Path),
 		`--template-repo=` + shellDoubleQuote(req.TemplateRepo),
@@ -568,6 +576,7 @@ func buildRecreateCommand(req createRequest) string {
 		`--blazegraph=` + req.Apply.Blazegraph,
 		`--iiif=` + iiifDispositionFlagValue(req.Apply.IIIF),
 		`--iiif-topology=` + iiifTopologyDispositionFlagValue(req.Apply.IIIFTopology),
+		`--bot-mitigation=` + req.Apply.BotMitigation,
 		`--isle-file-system-uri=` + shellDoubleQuote(req.Apply.ISLEFileSystemURI),
 	}
 	if req.Apply.IIIFTopology == createpkg.IIIFTopologyExternal {
@@ -588,6 +597,20 @@ func buildRecreateCommand(req createRequest) string {
 		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func recreateTargetType(req createRequest) string {
+	if strings.TrimSpace(string(req.TargetType)) != "" {
+		return string(req.TargetType)
+	}
+	return string(config.ContextLocal)
+}
+
+func recreateCheckoutSource(req createRequest) string {
+	if strings.TrimSpace(string(req.CheckoutSource)) != "" {
+		return string(req.CheckoutSource)
+	}
+	return string(plugin.CheckoutSourceTemplate)
 }
 
 func iiifDispositionFlagValue(value string) string {
