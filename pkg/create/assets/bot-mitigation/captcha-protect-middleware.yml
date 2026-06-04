@@ -31,7 +31,7 @@
             - openalex.org
             - twitter.com
             - x.com
-          persistentStateFile: /tmp/state.json
+          persistentStateFile: /acme/state.json
           protectFileExtensions: php,html,jp2,tif,tiff
           enableStateReconciliation: "false"
           periodSeconds: 30
