@@ -74,3 +74,71 @@ services:
 		t.Fatalf("expected merge key and folded command preserved after disable, got:\n%s", disabledText)
 	}
 }
+
+func TestUpdateDrupalTraefikForBotMitigationMovesMiddlewareDefinitionToBottom(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	traefikPath := filepath.Join(projectDir, "drupal.yml")
+	traefik := `http:
+  services:
+    drupal:
+      loadBalancer:
+        servers:
+          - url: http://drupal:80
+  middlewares:
+    existing:
+      headers: {}
+  routers:
+    drupal:
+      rule: Host("example.test")
+      service: drupal
+{{ if eq (env "TLS_PROVIDER") "letsencrypt" }}
+  tls:
+    options:
+      default: {}
+{{ end }}
+`
+	if err := os.WriteFile(traefikPath, []byte(traefik), 0o644); err != nil {
+		t.Fatalf("WriteFile(drupal.yml) error = %v", err)
+	}
+
+	if err := updateDrupalTraefikForBotMitigation(traefikPath, true); err != nil {
+		t.Fatalf("updateDrupalTraefikForBotMitigation(on) error = %v", err)
+	}
+	if err := updateDrupalTraefikForBotMitigation(traefikPath, true); err != nil {
+		t.Fatalf("second updateDrupalTraefikForBotMitigation(on) error = %v", err)
+	}
+
+	updated, err := os.ReadFile(traefikPath)
+	if err != nil {
+		t.Fatalf("ReadFile(drupal.yml) error = %v", err)
+	}
+	rendered := string(updated)
+	definitionIdx := strings.LastIndex(rendered, "  middlewares:\n    existing:")
+	templateEndIdx := strings.Index(rendered, "{{ end }}")
+	if definitionIdx == -1 {
+		t.Fatalf("expected middleware definition at bottom, got:\n%s", rendered)
+	}
+	if templateEndIdx == -1 {
+		t.Fatalf("expected template end marker preserved, got:\n%s", rendered)
+	}
+	if definitionIdx < templateEndIdx {
+		t.Fatalf("expected middleware definition after template block, got:\n%s", rendered)
+	}
+	for _, want := range []string{
+		"      middlewares:\n        - captcha-protect",
+		"  middlewares:\n    existing:\n      headers: {}",
+		"    captcha-protect:\n      plugin:\n        captcha-protect:",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected drupal traefik config to contain %q, got:\n%s", want, rendered)
+		}
+	}
+	if got := strings.Count(rendered, "\n        - captcha-protect\n"); got != 1 {
+		t.Fatalf("expected one router captcha-protect reference, got %d:\n%s", got, rendered)
+	}
+	if got := strings.Count(rendered, "\n    captcha-protect:\n"); got != 1 {
+		t.Fatalf("expected one captcha-protect middleware definition, got %d:\n%s", got, rendered)
+	}
+}

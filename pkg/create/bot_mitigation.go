@@ -326,23 +326,29 @@ func ensureDrupalRouterCaptchaMiddleware(lines []string) ([]string, error) {
 }
 
 func ensureCaptchaProtectMiddlewareBlock(lines []string) ([]string, error) {
-	middlewaresIdx, ok := findIndentedYAMLKey(lines, 0, "middlewares", 2)
-	if !ok {
-		httpIdx, httpOK := findIndentedYAMLKey(lines, 0, "http", 0)
-		insertAt := len(lines)
-		if httpOK {
-			insertAt = yamlBlockEnd(lines, httpIdx, 0)
-		}
-		lines = insertTextLines(lines, insertAt, []string{"  middlewares:"})
-		middlewaresIdx, _ = findIndentedYAMLKey(lines, 0, "middlewares", 2)
-	}
-
 	block, err := botMitigationAssetLines("captcha-protect-middleware.yml")
 	if err != nil {
 		return nil, err
 	}
+	lines, middlewaresIdx := ensureBottomMiddlewareSection(lines)
 	insertAt := yamlBlockEnd(lines, middlewaresIdx, 2)
 	return insertTextLines(lines, insertAt, block), nil
+}
+
+func ensureBottomMiddlewareSection(lines []string) ([]string, int) {
+	middlewaresIdx, ok := findLastIndentedYAMLKey(lines, "middlewares", 2)
+	if !ok {
+		insertAt := len(lines)
+		lines = insertTextLines(lines, insertAt, []string{"  middlewares:"})
+		return lines, insertAt
+	}
+
+	middlewaresEnd := yamlBlockEnd(lines, middlewaresIdx, 2)
+	middlewaresBlock := append([]string{}, lines[middlewaresIdx:middlewaresEnd]...)
+	lines = append(lines[:middlewaresIdx], lines[middlewaresEnd:]...)
+	insertAt := len(lines)
+	lines = insertTextLines(lines, insertAt, middlewaresBlock)
+	return lines, insertAt
 }
 
 func removeCaptchaProtectMiddlewareReference(lines []string) []string {
@@ -375,6 +381,22 @@ func botMitigationAssetLines(name string) ([]string, error) {
 
 func findIndentedYAMLKey(lines []string, start int, key string, indent int) (int, bool) {
 	return findIndentedYAMLKeyBefore(lines, start, len(lines), key, indent)
+}
+
+func findLastIndentedYAMLKey(lines []string, key string, indent int) (int, bool) {
+	prefix := strings.Repeat(" ", indent) + key + ":"
+	found := 0
+	ok := false
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if leadingYAMLSpaces(line) == indent && strings.HasPrefix(line, prefix) {
+			found = i
+			ok = true
+		}
+	}
+	return found, ok
 }
 
 func findIndentedYAMLKeyBefore(lines []string, start, end int, key string, indent int) (int, bool) {
