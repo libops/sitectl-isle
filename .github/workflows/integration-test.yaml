@@ -12,7 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  create-fcrepo:
+  create-isle:
+    name: sitectl create isle fcrepo=${{ matrix.fcrepo_state }} blazegraph=${{ matrix.blazegraph_state }} bot-mitigation=${{ matrix.bot_mitigation_state }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
