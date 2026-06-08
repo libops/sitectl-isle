@@ -13,75 +13,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	validateFormat string
-)
-
-var validateCmd = &cobra.Command{
-	Use:   "validate",
-	Short: "Validate the ISLE project and context configuration",
-	Long: `Validate the active context's configuration and project layout.
-
-Checks include: context wiring, required Traefik configuration, Drupal rootfs path, and
-component state consistency.
-
-Exits non-zero if any check fails.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, err := resolveStatusContext()
-		if err != nil {
-			return err
-		}
-
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-
-		validators := append([]sitevalidate.Validator{}, sitevalidate.CoreValidators(cfg)...)
-		if commandSDK != nil {
-			validators = append(validators, commandSDK.ContextValidators()...)
-		}
-
-		results, err := sitevalidate.Run(ctx, validators...)
-		if err != nil {
-			return err
-		}
-		sitevalidate.SortResults(results)
-		report := sitevalidate.NewReport(ctx, results)
-		if err := sitevalidate.WriteReports(cmd.OutOrStdout(), []sitevalidate.Report{report}, validateFormat); err != nil {
-			return err
-		}
-		if !report.Valid {
-			return fmt.Errorf("validation failed")
-		}
-		return nil
-	},
-}
-
-func init() {
-	validateCmd.Flags().StringVar(&statusPath, "path", "", "Path to the project directory. Defaults to the active context project directory.")
-	corecomponent.AddDrupalRootfsFlag(validateCmd, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
-	corecomponent.AddReportFlags(validateCmd, nil, &validateFormat)
-}
-
 // isleValidateRunner implements plugin.ValidateRunner for the isle plugin.
 type isleValidateRunner struct {
-	drupalRootfs string
+	codebaseRootfs string
+	drupalRootfs   string
 }
 
 func (r *isleValidateRunner) BindFlags(cmd *cobra.Command) {
-	corecomponent.AddDrupalRootfsFlag(cmd, &r.drupalRootfs, createpkg.DefaultDrupalRootfs)
+	addCodebaseRootfsFlags(cmd, &r.codebaseRootfs, &r.drupalRootfs, createpkg.DefaultDrupalRootfs)
 }
 
 func (r *isleValidateRunner) Run(cmd *cobra.Command, ctx *config.Context) ([]sitevalidate.Result, error) {
-	return runIsleValidation(ctx, r.drupalRootfs)
+	rootfs, err := resolveCodebaseRootfsFlag(cmd, r.codebaseRootfs, r.drupalRootfs)
+	if err != nil {
+		return nil, err
+	}
+	return runIsleValidation(ctx, rootfs)
 }
 
 var _ plugin.ValidateRunner = (*isleValidateRunner)(nil)
-
-func isleContextValidator(ctx *config.Context) ([]sitevalidate.Result, error) {
-	return runIsleValidation(ctx, statusDrupalRootfs)
-}
 
 func runIsleValidation(ctx *config.Context, drupalRootfs string) ([]sitevalidate.Result, error) {
 	if ctx == nil {
@@ -92,26 +42,26 @@ func runIsleValidation(ctx *config.Context, drupalRootfs string) ([]sitevalidate
 	drupalRoot := ctx.ResolveProjectPath(drupalRootfs)
 	if strings.TrimSpace(drupalRoot) == "" {
 		results = append(results, sitevalidate.Result{
-			Name:   "drupal-rootfs",
+			Name:   "codebase-rootfs",
 			Status: sitevalidate.StatusFailed,
 			Detail: "Drupal rootfs path is empty",
 		})
 	} else if exists, err := ctx.FileExists(drupalRoot); err != nil {
 		results = append(results, sitevalidate.Result{
-			Name:   "drupal-rootfs",
+			Name:   "codebase-rootfs",
 			Status: sitevalidate.StatusFailed,
 			Detail: err.Error(),
 		})
 	} else if !exists {
 		results = append(results, sitevalidate.Result{
-			Name:    "drupal-rootfs",
+			Name:    "codebase-rootfs",
 			Status:  sitevalidate.StatusFailed,
 			Detail:  fmt.Sprintf("%s not found", drupalRoot),
-			FixHint: "pass --drupal-rootfs or update the checkout layout",
+			FixHint: "pass --codebase-rootfs or update the checkout layout",
 		})
 	} else {
 		results = append(results, sitevalidate.Result{
-			Name:   "drupal-rootfs",
+			Name:   "codebase-rootfs",
 			Status: sitevalidate.StatusOK,
 			Detail: drupalRoot,
 		})

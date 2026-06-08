@@ -53,11 +53,13 @@ func TestApplyTripletLocalReplacesCantaloupe(t *testing.T) {
 	tripletConfig := readFileForIIIFTest(t, filepath.Join(projectDir, "conf", "triplet", "config.yaml"))
 	assertContainsIIIF(t, tripletConfig, "allowed_origins:\n      - ${DOMAIN}")
 	assertContainsIIIF(t, tripletConfig, "max_source_bytes: 500GiB")
+	assertContainsIIIF(t, tripletConfig, "prefix: /_flysystem/fedora")
+	assertContainsIIIF(t, tripletConfig, "root: /fcrepo")
 	if strings.Contains(tripletConfig, "preserve.lehigh.edu") {
 		t.Fatalf("expected domain templating instead of hard-coded hosts, got:\n%s", tripletConfig)
 	}
 
-	devCompose := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.dev.yaml"))
+	devCompose := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.dev.yml"))
 	if strings.Contains(devCompose, "cantaloupe:") {
 		t.Fatalf("expected dev cantaloupe override removed, got:\n%s", devCompose)
 	}
@@ -86,12 +88,19 @@ func TestApplyTripletDistributedUsesExternalUpstreamAndLocalOverride(t *testing.
 	if strings.Contains(compose, "\n  triplet:\n") || strings.Contains(compose, "\n  cantaloupe:\n") {
 		t.Fatalf("expected distributed iiif without base iiif service, got:\n%s", compose)
 	}
+	assertContainsIIIF(t, compose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "https://iiif.example.org"`)
 	assertContainsIIIF(t, compose, `IIIF_UPSTREAM_URL: "https://iiif.example.org"`)
 
 	override := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.local.yml"))
 	assertContainsIIIF(t, override, "\n  triplet:\n")
 	assertContainsIIIF(t, override, "8080:8080")
 	assertContainsIIIF(t, override, `IIIF_UPSTREAM_URL: "http://triplet:8080"`)
+
+	devCompose := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.dev.yml"))
+	assertContainsIIIF(t, devCompose, "\n  triplet:\n")
+	assertContainsIIIF(t, devCompose, "8080:8080")
+	assertContainsIIIF(t, devCompose, `IIIF_UPSTREAM_URL: "http://triplet:8080"`)
+	assertContainsIIIF(t, devCompose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "${URI_SCHEME}://${DOMAIN}/iiif/3"`)
 
 	tripletTraefik := readFileForIIIFTest(t, filepath.Join(projectDir, "conf", "traefik", "triplet.yml"))
 	assertContainsIIIF(t, tripletTraefik, `{{ env "IIIF_UPSTREAM_URL" }}`)
@@ -117,6 +126,11 @@ func TestApplyTripletLocalWithoutFcrepoOmitsFedoraDependencyAndMount(t *testing.
 	assertContainsIIIF(t, compose, "\n  triplet:\n")
 	if strings.Contains(compose, "source: fcrepo-data") || strings.Contains(compose, "subpath: home/data/ocfl-root") || strings.Contains(compose, "condition: service_healthy") {
 		t.Fatalf("expected triplet without Fedora dependency or mount after fcrepo off, got:\n%s", compose)
+	}
+
+	tripletConfig := readFileForIIIFTest(t, filepath.Join(projectDir, "conf", "triplet", "config.yaml"))
+	if strings.Contains(tripletConfig, "/_flysystem/fedora") || strings.Contains(tripletConfig, "root: /fcrepo") {
+		t.Fatalf("expected triplet config without Fedora source after fcrepo off, got:\n%s", tripletConfig)
 	}
 }
 
@@ -182,6 +196,7 @@ func TestApplyCantaloupeDistributedUsesExternalUpstreamAndLocalOverride(t *testi
 	if strings.Contains(compose, "\n  cantaloupe:\n") || strings.Contains(compose, "\n  triplet:\n") {
 		t.Fatalf("expected distributed cantaloupe without base iiif service, got:\n%s", compose)
 	}
+	assertContainsIIIF(t, compose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "https://cantaloupe.example.org"`)
 	assertContainsIIIF(t, compose, `IIIF_UPSTREAM_URL: "https://cantaloupe.example.org"`)
 	if strings.Contains(compose, "CANTALOUPE_UPSTREAM_URL") {
 		t.Fatalf("expected legacy cantaloupe upstream env removed, got:\n%s", compose)
@@ -191,6 +206,12 @@ func TestApplyCantaloupeDistributedUsesExternalUpstreamAndLocalOverride(t *testi
 	assertContainsIIIF(t, override, "\n  cantaloupe:\n")
 	assertContainsIIIF(t, override, "8182:8182")
 	assertContainsIIIF(t, override, `IIIF_UPSTREAM_URL: "http://cantaloupe:8182"`)
+
+	devCompose := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.dev.yml"))
+	assertContainsIIIF(t, devCompose, "\n  cantaloupe:\n")
+	assertContainsIIIF(t, devCompose, "8182:8182")
+	assertContainsIIIF(t, devCompose, `IIIF_UPSTREAM_URL: "http://cantaloupe:8182"`)
+	assertContainsIIIF(t, devCompose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "${URI_SCHEME}://${DOMAIN}/cantaloupe/iiif/2"`)
 
 	cantaloupeTraefik := readFileForIIIFTest(t, filepath.Join(projectDir, "conf", "traefik", "cantaloupe.yml"))
 	assertContainsIIIF(t, cantaloupeTraefik, `{{ env "IIIF_UPSTREAM_URL" }}`)
@@ -241,7 +262,7 @@ services:
     environment:
       CANTALOUPE_UPSTREAM_URL: http://cantaloupe:8182
 `)
-	writeIIIFTestFile(t, filepath.Join(projectDir, "docker-compose.dev.yaml"), `services:
+	writeIIIFTestFile(t, filepath.Join(projectDir, "docker-compose.dev.yml"), `services:
   cantaloupe:
     volumes:
       - cantaloupe-data:/data:Z,rw

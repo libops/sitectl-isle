@@ -25,18 +25,17 @@ else
 fi
 mkdir -p "${TMP_PARENT}"
 TMP_DIR="$(mktemp -d "${TMP_PARENT%/}/sitectl-isle-test.XXXXXX")"
+SITECTL_HOME="${TMP_DIR}/home"
 BIN_DIR="${TMP_DIR}/bin"
 SITE_DIR="${TMP_DIR}/isle-site-template"
 PLUGIN_BIN="${BIN_DIR}/sitectl-isle"
 PATH="${BIN_DIR}:${PATH}"
 export PATH
+mkdir -p "${SITECTL_HOME}"
 
 cleanup() {
 	if [ -d "${SITE_DIR}" ]; then
-		(
-			cd "${SITE_DIR}" &&
-				docker compose down -v --remove-orphans >/dev/null 2>&1 || true
-		)
+		HOME="${SITECTL_HOME}" sitectl compose down -v --remove-orphans >/dev/null 2>&1 || true
 	fi
 	rm -rf "${TMP_DIR}"
 }
@@ -103,11 +102,11 @@ build_binaries() {
 }
 
 create_site() {
-	sitectl create isle \
+	HOME="${SITECTL_HOME}" sitectl create isle \
 		--path "${SITE_DIR}" \
-		--context "${SITECTL_CONTEXT}" \
 		--type local \
 		--checkout-source template \
+		--default-context \
 		--fcrepo "${FCREPO_STATE}" \
 		--blazegraph "${BLAZEGRAPH_STATE}" \
 		--iiif "${IIIF_IMPLEMENTATION}" \
@@ -148,6 +147,10 @@ run_make_target() {
 		run_compose_diagnostics
 		exit 1
 	fi
+}
+
+run_healthcheck() {
+	HOME="${SITECTL_HOME}" sitectl healthcheck
 }
 
 verify_demo_objects_created() {
@@ -288,6 +291,7 @@ main() {
 	set_assert_target
 	run_make_target init
 	run_make_target up
+	run_healthcheck
 	verify_bot_mitigation_challenge
 	verify_demo_objects_created
 

@@ -22,7 +22,7 @@ var componentExtensionName string
 var componentExtensionListName string
 
 var componentExtensionCmd = &cobra.Command{
-	Use:    "__component",
+	Use:    "component",
 	Short:  "Internal component extension command",
 	Hidden: true,
 }
@@ -44,7 +44,7 @@ var componentExtensionDescribeCmd = &cobra.Command{
 	Use:   "describe",
 	Short: "Internal component describe hook",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runComponentDescribe(cmd, componentExtensionName, true)
+		return runComponentDescribe(cmd, componentDescribeOptionsFromGlobals(componentExtensionName, true))
 	},
 }
 
@@ -52,7 +52,7 @@ var componentExtensionReconcileCmd = &cobra.Command{
 	Use:   "reconcile",
 	Short: "Internal component reconcile hook",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runComponentReconcile(cmd, componentExtensionName)
+		return runComponentReconcile(cmd, componentReconcileOptionsFromGlobals(componentExtensionName))
 	},
 }
 
@@ -65,23 +65,28 @@ var componentExtensionSetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return runComponentSet(cmd, args[0], stateValue)
+		return runComponentSetWithOptions(cmd, args[0], stateValue, componentSetOptionsFromGlobals())
 	},
 }
 
 // isleDebugRunner implements plugin.DebugRunner for the isle plugin.
 type isleDebugRunner struct {
-	drupalRootfs string
-	verbose      bool
+	codebaseRootfs string
+	drupalRootfs   string
+	verbose        bool
 }
 
 func (r *isleDebugRunner) BindFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&r.drupalRootfs, "drupal-rootfs", createpkg.DefaultDrupalRootfs, "Drupal rootfs path override")
+	addCodebaseRootfsFlags(cmd, &r.codebaseRootfs, &r.drupalRootfs, createpkg.DefaultDrupalRootfs)
 	cmd.Flags().BoolVar(&r.verbose, "verbose", false, "Include verbose debug details")
 }
 
 func (r *isleDebugRunner) Render(cmd *cobra.Command, ctx *config.Context) (string, error) {
-	return renderISLEDebugBody(cmd.Context(), ctx, r.drupalRootfs, r.verbose)
+	rootfs, err := resolveCodebaseRootfsFlag(cmd, r.codebaseRootfs, r.drupalRootfs)
+	if err != nil {
+		return "", err
+	}
+	return renderISLEDebugBody(cmd.Context(), ctx, rootfs, r.verbose)
 }
 
 func init() {
@@ -89,19 +94,20 @@ func init() {
 
 	componentExtensionDescribeCmd.Flags().StringVarP(&componentExtensionName, "component", "c", "", "Specific component to describe")
 	componentExtensionDescribeCmd.Flags().StringVar(&statusPath, "path", "", "Project path override")
-	componentExtensionDescribeCmd.Flags().StringVar(&statusDrupalRootfs, "drupal-rootfs", createpkg.DefaultDrupalRootfs, "Drupal rootfs path override")
+	addCodebaseRootfsFlags(componentExtensionDescribeCmd, &statusCodebaseRootfs, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	componentExtensionDescribeCmd.Flags().BoolVar(&statusVerbose, "verbose", false, "Include verbose component details")
 	componentExtensionDescribeCmd.Flags().StringVar(&statusFormat, "format", "", "Output format override")
 
 	componentExtensionReconcileCmd.Flags().StringVarP(&componentExtensionName, "component", "c", "", "Specific component to reconcile")
 	componentExtensionReconcileCmd.Flags().StringVar(&statusPath, "path", "", "Project path override")
-	componentExtensionReconcileCmd.Flags().StringVar(&statusDrupalRootfs, "drupal-rootfs", createpkg.DefaultDrupalRootfs, "Drupal rootfs path override")
+	addCodebaseRootfsFlags(componentExtensionReconcileCmd, &statusCodebaseRootfs, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	componentExtensionReconcileCmd.Flags().BoolVar(&componentReviewReport, "report", false, "Render a report instead of applying changes")
 	componentExtensionReconcileCmd.Flags().BoolVar(&componentReviewVerbose, "verbose", false, "Include verbose component details")
 	componentExtensionReconcileCmd.Flags().StringVar(&componentReviewFormat, "format", "", "Output format override")
+	componentExtensionReconcileCmd.Flags().BoolVar(&componentReviewYolo, "yolo", false, "Apply without confirmation")
 
 	componentExtensionSetCmd.Flags().StringVar(&statusPath, "path", "", "Project path override")
-	componentExtensionSetCmd.Flags().StringVar(&statusDrupalRootfs, "drupal-rootfs", createpkg.DefaultDrupalRootfs, "Drupal rootfs path override")
+	addCodebaseRootfsFlags(componentExtensionSetCmd, &statusCodebaseRootfs, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	componentExtensionSetCmd.Flags().StringVar(&componentSetState, "state", "", "Explicit state override")
 	componentExtensionSetCmd.Flags().StringVar(&componentSetDisposition, "disposition", "", "Explicit disposition override")
 	componentExtensionSetCmd.Flags().StringVar(&componentSetTLSMode, "tls-mode", "", "TLS mode override")

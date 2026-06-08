@@ -372,23 +372,8 @@ func runMiradorWarmFromURLs(
 	return resultErr
 }
 
-func fetchURLs(ctx context.Context, endpoint string, limit int) ([]string, error) {
-	var urls []string
-	err := enqueueMiradorURLs(ctx, nil, endpoint, limit, func(ctx context.Context, endpoint string, page int) ([]URLItem, error) {
-		return fetchURLPage(ctx, endpoint, page)
-	}, nil, func(item URLItem) {
-		if item.URL != "" {
-			urls = append(urls, item.URL)
-		}
-	})
-	if err != nil {
-		return nil, err
-	}
-	return urls, nil
-}
-
 func readMiradorURLsFromFile(path string, limit int) ([]string, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- this command intentionally reads a user-selected URL list file.
 	if err != nil {
 		return nil, fmt.Errorf("read url file failed: %w", err)
 	}
@@ -724,7 +709,9 @@ func warmManifestIIIFResources(ctx context.Context, manifestURL string) (int, er
 		if err != nil {
 			return 0, fmt.Errorf("GET iiif url failed for %s: %w", iiifURL, err)
 		}
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			return 0, fmt.Errorf("close iiif response body failed for %s: %w", iiifURL, err)
+		}
 		slog.Debug("HEAD IIIF asset complete", "url", iiifURL, "status", resp.Status, "request_number", index+1, "request_total", len(urls))
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 			return 0, fmt.Errorf("GET iiif url failed for %s: unexpected status %s", iiifURL, resp.Status)
@@ -767,7 +754,7 @@ func loadMiradorProgressTracker(endpoint string, restart bool) (*miradorProgress
 		completed: make(map[string]struct{}),
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- progress path is derived from the user's home directory and endpoint hash.
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return tracker, nil
@@ -797,7 +784,7 @@ func miradorProgressPath(endpoint string) (string, error) {
 
 	sum := sha256.Sum256([]byte(endpoint))
 	dir := filepath.Join(home, ".sitectl")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create Mirador progress directory failed: %w", err)
 	}
 
@@ -864,7 +851,7 @@ func (t *miradorProgressTracker) persistLocked() error {
 	}
 
 	tmpPath := t.path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return fmt.Errorf("write Mirador progress failed: %w", err)
 	}
 	if err := os.Rename(tmpPath, t.path); err != nil {

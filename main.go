@@ -20,7 +20,7 @@ func main() {
 		Description:  "Islandora (ISLE) utilities and migration tools",
 		Author:       "libops",
 		TemplateRepo: "https://github.com/islandora-devops/isle-site-template",
-		Includes:     []string{"drupal"},
+		Includes:     cmd.IncludedPlugins(),
 	})
 
 	cmd.RegisterCommands(sdk)

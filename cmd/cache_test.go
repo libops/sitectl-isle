@@ -15,7 +15,22 @@ import (
 	"time"
 )
 
-func TestFetchURLs(t *testing.T) {
+func fetchTestURLs(ctx context.Context, endpoint string, limit int) ([]string, error) {
+	var urls []string
+	err := enqueueMiradorURLs(ctx, nil, endpoint, limit, func(ctx context.Context, endpoint string, page int) ([]URLItem, error) {
+		return fetchURLPage(ctx, endpoint, page)
+	}, nil, func(item URLItem) {
+		if item.URL != "" {
+			urls = append(urls, item.URL)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return urls, nil
+}
+
+func TestFetchTestURLs(t *testing.T) {
 	responses := map[int]string{
 		0: `[
 			{"url":"https://example.test/one"},
@@ -33,30 +48,30 @@ func TestFetchURLs(t *testing.T) {
 	}))
 	defer server.Close()
 
-	got, err := fetchURLs(context.Background(), server.URL, 0)
+	got, err := fetchTestURLs(context.Background(), server.URL, 0)
 	if err != nil {
-		t.Fatalf("fetchURLs() error = %v", err)
+		t.Fatalf("fetchTestURLs() error = %v", err)
 	}
 
 	want := []string{"https://example.test/one", "https://example.test/two"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("fetchURLs() = %v, want %v", got, want)
+		t.Fatalf("fetchTestURLs() = %v, want %v", got, want)
 	}
 }
 
-func TestFetchURLsRejectsBadStatus(t *testing.T) {
+func TestFetchTestURLsRejectsBadStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nope", http.StatusBadGateway)
 	}))
 	defer server.Close()
 
-	_, err := fetchURLs(context.Background(), server.URL, 0)
+	_, err := fetchTestURLs(context.Background(), server.URL, 0)
 	if err == nil {
-		t.Fatal("fetchURLs() error = nil, want status error")
+		t.Fatal("fetchTestURLs() error = nil, want status error")
 	}
 }
 
-func TestFetchURLsRespectsLimitAcrossPages(t *testing.T) {
+func TestFetchTestURLsRespectsLimitAcrossPages(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
@@ -76,18 +91,18 @@ func TestFetchURLsRespectsLimitAcrossPages(t *testing.T) {
 	}))
 	defer server.Close()
 
-	got, err := fetchURLs(context.Background(), server.URL, 2)
+	got, err := fetchTestURLs(context.Background(), server.URL, 2)
 	if err != nil {
-		t.Fatalf("fetchURLs() error = %v", err)
+		t.Fatalf("fetchTestURLs() error = %v", err)
 	}
 
 	want := []string{"https://example.test/one", "https://example.test/two"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("fetchURLs() = %v, want %v", got, want)
+		t.Fatalf("fetchTestURLs() = %v, want %v", got, want)
 	}
 }
 
-func TestFetchURLsStartsFromEndpointPageParam(t *testing.T) {
+func TestFetchTestURLsStartsFromEndpointPageParam(t *testing.T) {
 	var pages []int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -106,13 +121,13 @@ func TestFetchURLsStartsFromEndpointPageParam(t *testing.T) {
 	}))
 	defer server.Close()
 
-	got, err := fetchURLs(context.Background(), server.URL+"?page=4&_format=json", 0)
+	got, err := fetchTestURLs(context.Background(), server.URL+"?page=4&_format=json", 0)
 	if err != nil {
-		t.Fatalf("fetchURLs() error = %v", err)
+		t.Fatalf("fetchTestURLs() error = %v", err)
 	}
 
 	if !reflect.DeepEqual(got, []string{"https://example.test/four"}) {
-		t.Fatalf("fetchURLs() = %v, want one result from page 4", got)
+		t.Fatalf("fetchTestURLs() = %v, want one result from page 4", got)
 	}
 	if !slices.Equal(pages, []int{4, 5}) {
 		t.Fatalf("pages fetched = %v, want [4 5]", pages)

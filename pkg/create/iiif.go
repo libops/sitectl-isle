@@ -39,10 +39,11 @@ func applyIIIF(opts Options) error {
 
 	switch opts.IIIF {
 	case IIIFTriplet:
-		if err := applyTripletIIIF(composePath, overridePath, opts.IIIFTopology, opts.IIIFUpstreamURL); err != nil {
+		includeFcrepo, err := applyTripletIIIF(composePath, overridePath, opts.IIIFTopology, opts.IIIFUpstreamURL)
+		if err != nil {
 			return err
 		}
-		if err := writeTripletFiles(opts.Path, opts.IIIFTopology); err != nil {
+		if err := writeTripletFiles(opts.Path, opts.IIIFTopology, includeFcrepo); err != nil {
 			return err
 		}
 		if err := removeCantaloupeFiles(opts.Path); err != nil {
@@ -116,77 +117,90 @@ func validateIIIFUpstreamURL(value string) error {
 	return nil
 }
 
-func applyTripletIIIF(composePath, overridePath, topology, upstreamURL string) error {
+func applyTripletIIIF(composePath, overridePath, topology, upstreamURL string) (bool, error) {
 	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	hasFcrepo := compose.HasService("fcrepo") && compose.HasVolume("fcrepo-data")
 	tripletBlock, err := tripletServiceBlock(composePath, hasFcrepo)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if err := compose.DeleteService("cantaloupe"); err != nil {
-		return err
+		return false, err
 	}
 	if err := compose.DeleteVolume(cantaloupeDataVolumeName); err != nil {
-		return err
+		return false, err
 	}
-	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_CANTALOUPE_URL", "${URI_SCHEME}://${DOMAIN}/iiif/3"); err != nil {
-		return err
+	drupalIIIFURL := "${URI_SCHEME}://${DOMAIN}/iiif/3"
+	if topology == IIIFTopologyExternal {
+		drupalIIIFURL = strings.TrimSpace(upstreamURL)
+	}
+	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_CANTALOUPE_URL", drupalIIIFURL); err != nil {
+		return false, err
 	}
 	if err := compose.DeleteServiceEnv("traefik", legacyCantaloupeEnvKey); err != nil {
-		return err
+		return false, err
 	}
 
 	switch topology {
 	case IIIFTopologyLocal:
 		if err := compose.DeleteService("triplet"); err != nil {
-			return err
+			return false, err
 		}
 		if err := compose.AddServiceBlock("triplet", tripletBlock); err != nil {
-			return err
+			return false, err
 		}
 		if err := ensureVolumeBlock(compose, tripletCacheVolumeName, "  triplet-cache: {}"); err != nil {
-			return err
+			return false, err
 		}
 		if err := compose.DeleteServiceEnv("traefik", iiifUpstreamEnvKey); err != nil {
-			return err
+			return false, err
 		}
 	case IIIFTopologyExternal:
 		if err := ensureExternalOverride(overridePath, "triplet", tripletBlock, tripletCacheVolumeName, "  triplet-cache: {}", localTripletUpstream, []string{"8080:8080"}); err != nil {
-			return err
+			return false, err
+		}
+		if err := ensureDevIIIFOverride(filepath.Dir(composePath), "triplet", tripletBlock, tripletCacheVolumeName, "  triplet-cache: {}", localTripletUpstream, []string{"8080:8080"}, "${URI_SCHEME}://${DOMAIN}/iiif/3"); err != nil {
+			return false, err
 		}
 		if err := compose.DeleteService("triplet"); err != nil {
-			return err
+			return false, err
 		}
 		if err := compose.DeleteVolume(tripletCacheVolumeName); err != nil {
-			return err
+			return false, err
 		}
 		if err := ensureServiceEnv(compose, "traefik", iiifUpstreamEnvKey, strings.TrimSpace(upstreamURL)); err != nil {
-			return err
+			return false, err
 		}
 	default:
-		return fmt.Errorf("unsupported iiif topology %q", topology)
+		return false, fmt.Errorf("unsupported iiif topology %q", topology)
 	}
 
 	if err := compose.Save(); err != nil {
-		return err
+		return false, err
 	}
 	if err := removeOverrideIIIFService(overridePath, "cantaloupe", cantaloupeDataVolumeName); err != nil {
-		return err
+		return false, err
 	}
-	if err := removeDevCantaloupeOverrides(filepath.Dir(composePath)); err != nil {
-		return err
+	if err := removeDevIIIFService(filepath.Dir(composePath), "cantaloupe", cantaloupeDataVolumeName); err != nil {
+		return false, err
 	}
 	if topology == IIIFTopologyLocal {
 		if err := removeOverrideIIIFService(overridePath, "triplet", tripletCacheVolumeName); err != nil {
-			return err
+			return false, err
 		}
-		return removeOverrideIIIFUpstreamEnv(overridePath)
+		if err := removeDevIIIFService(filepath.Dir(composePath), "triplet", tripletCacheVolumeName); err != nil {
+			return false, err
+		}
+		if err := removeOverrideIIIFUpstreamEnv(overridePath); err != nil {
+			return false, err
+		}
+		return hasFcrepo, removeDevIIIFEnv(filepath.Dir(composePath))
 	}
-	return nil
+	return hasFcrepo, nil
 }
 
 func applyCantaloupeIIIF(composePath, overridePath, topology, upstreamURL string) error {
@@ -206,7 +220,11 @@ func applyCantaloupeIIIF(composePath, overridePath, topology, upstreamURL string
 	if err := compose.DeleteVolume(tripletCacheVolumeName); err != nil {
 		return err
 	}
-	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_CANTALOUPE_URL", "${URI_SCHEME}://${DOMAIN}/cantaloupe/iiif/2"); err != nil {
+	drupalIIIFURL := "${URI_SCHEME}://${DOMAIN}/cantaloupe/iiif/2"
+	if topology == IIIFTopologyExternal {
+		drupalIIIFURL = strings.TrimSpace(upstreamURL)
+	}
+	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_CANTALOUPE_URL", drupalIIIFURL); err != nil {
 		return err
 	}
 	if err := compose.DeleteServiceEnv("traefik", legacyCantaloupeEnvKey); err != nil {
@@ -231,6 +249,9 @@ func applyCantaloupeIIIF(composePath, overridePath, topology, upstreamURL string
 		if err := ensureExternalOverride(overridePath, "cantaloupe", cantaloupeBlock, cantaloupeDataVolumeName, "  cantaloupe-data: {}", localCantaloupeUpstream, []string{"8182:8182"}); err != nil {
 			return err
 		}
+		if err := ensureDevIIIFOverride(filepath.Dir(composePath), "cantaloupe", cantaloupeBlock, cantaloupeDataVolumeName, "  cantaloupe-data: {}", localCantaloupeUpstream, []string{"8182:8182"}, "${URI_SCHEME}://${DOMAIN}/cantaloupe/iiif/2"); err != nil {
+			return err
+		}
 		if err := compose.DeleteService("cantaloupe"); err != nil {
 			return err
 		}
@@ -250,11 +271,20 @@ func applyCantaloupeIIIF(composePath, overridePath, topology, upstreamURL string
 	if err := removeOverrideIIIFService(overridePath, "triplet", tripletCacheVolumeName); err != nil {
 		return err
 	}
+	if err := removeDevIIIFService(filepath.Dir(composePath), "triplet", tripletCacheVolumeName); err != nil {
+		return err
+	}
 	if topology == IIIFTopologyLocal {
 		if err := removeOverrideIIIFService(overridePath, "cantaloupe", cantaloupeDataVolumeName); err != nil {
 			return err
 		}
-		return removeOverrideIIIFUpstreamEnv(overridePath)
+		if err := removeDevIIIFService(filepath.Dir(composePath), "cantaloupe", cantaloupeDataVolumeName); err != nil {
+			return err
+		}
+		if err := removeOverrideIIIFUpstreamEnv(overridePath); err != nil {
+			return err
+		}
+		return removeDevIIIFEnv(filepath.Dir(composePath))
 	}
 	return nil
 }
@@ -317,20 +347,71 @@ func removeOverrideIIIFUpstreamEnv(overridePath string) error {
 	return overrideCompose.Save()
 }
 
-func removeDevCantaloupeOverrides(projectDir string) error {
-	for _, name := range []string{"docker-compose.dev.yml", "docker-compose.dev.yaml"} {
-		compose, err := corecomponent.LoadComposeFileOptional(filepath.Join(projectDir, name))
-		if err != nil {
-			return err
-		}
-		if err := compose.DeleteService("cantaloupe"); err != nil {
-			return err
-		}
-		if err := compose.Save(); err != nil {
+func ensureDevIIIFOverride(projectDir, serviceName, serviceBlock, volumeName, volumeBlock, localUpstream string, ports []string, drupalURL string) error {
+	devCompose, err := corecomponent.LoadComposeFileOptional(dockerComposeDevPath(projectDir))
+	if err != nil {
+		return err
+	}
+	if err := devCompose.DeleteService(serviceName); err != nil {
+		return err
+	}
+	if err := devCompose.AddServiceBlock(serviceName, serviceBlock); err != nil {
+		return err
+	}
+	if len(ports) > 0 {
+		if err := devCompose.SetServiceStringList(serviceName, "ports", ports); err != nil {
 			return err
 		}
 	}
-	return nil
+	if err := ensureVolumeBlock(devCompose, volumeName, volumeBlock); err != nil {
+		return err
+	}
+	if err := ensureServiceEnv(devCompose, "traefik", iiifUpstreamEnvKey, localUpstream); err != nil {
+		return err
+	}
+	if err := ensureServiceEnv(devCompose, "drupal", "DRUPAL_DEFAULT_CANTALOUPE_URL", drupalURL); err != nil {
+		return err
+	}
+	if err := devCompose.DeleteServiceEnv("traefik", legacyCantaloupeEnvKey); err != nil {
+		return err
+	}
+	return devCompose.Save()
+}
+
+func removeDevIIIFService(projectDir, serviceName, volumeName string) error {
+	devCompose, err := corecomponent.LoadComposeFileOptional(dockerComposeDevPath(projectDir))
+	if err != nil {
+		return err
+	}
+	if err := devCompose.DeleteService(serviceName); err != nil {
+		return err
+	}
+	if volumeName != "" {
+		if err := devCompose.DeleteVolume(volumeName); err != nil {
+			return err
+		}
+	}
+	if err := devCompose.DeleteServiceEnv("traefik", legacyCantaloupeEnvKey); err != nil {
+		return err
+	}
+	return devCompose.Save()
+}
+
+func removeDevIIIFEnv(projectDir string) error {
+	devCompose, err := corecomponent.LoadComposeFileOptional(dockerComposeDevPath(projectDir))
+	if err != nil {
+		return err
+	}
+	if err := devCompose.DeleteServiceEnv("traefik", iiifUpstreamEnvKey); err != nil {
+		return err
+	}
+	if err := devCompose.DeleteServiceEnv("drupal", "DRUPAL_DEFAULT_CANTALOUPE_URL"); err != nil {
+		return err
+	}
+	if err := devCompose.DeleteServiceEnv("traefik", legacyCantaloupeEnvKey); err != nil {
+		return err
+	}
+	return devCompose.Save()
 }
 
 func currentOrDefaultServiceBlock(compose *corecomponent.ComposeFile, serviceName, fallback string) string {
@@ -395,7 +476,7 @@ func commonMergeLine(composePath string) string {
 	return ""
 }
 
-func writeTripletFiles(projectDir, topology string) error {
+func writeTripletFiles(projectDir, topology string, includeFcrepo bool) error {
 	upstream := localTripletUpstream
 	if topology == IIIFTopologyExternal {
 		upstream = `{{ env "IIIF_UPSTREAM_URL" }}`
@@ -404,7 +485,7 @@ func writeTripletFiles(projectDir, topology string) error {
 	if err != nil {
 		return err
 	}
-	tripletConfig, err := tripletConfigYAML()
+	tripletConfig, err := tripletConfigYAML(includeFcrepo)
 	if err != nil {
 		return err
 	}
@@ -444,7 +525,7 @@ func removeCantaloupeFiles(projectDir string) error {
 
 func writeProjectFile(projectDir, rel, contents string) error {
 	path := filepath.Join(projectDir, rel)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- generated project config directories must remain readable by the compose stack.
 		return err
 	}
 	return os.WriteFile(path, []byte(strings.TrimRight(contents, "\n")+"\n"), 0o644) // #nosec G306 -- generated project configuration is non-secret.
@@ -479,7 +560,7 @@ func updateRobotsIIIF(projectDir, drupalRootfs string, enabled bool) error {
 	if enabled && !seen && !inserted {
 		out = append(out, "Disallow: /iiif/*")
 	}
-	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644) // #nosec G306 -- generated project configuration is non-secret.
+	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644) // #nosec G306,G703 -- generated project configuration is non-secret and scoped under the selected project rootfs.
 }
 
 func renderIIIFAsset(name string, replacements map[string]string) (string, error) {
@@ -509,6 +590,16 @@ func cantaloupeTraefikConfig(upstream string) (string, error) {
 	})
 }
 
-func tripletConfigYAML() (string, error) {
-	return renderIIIFAsset("triplet-config.yaml", nil)
+func tripletConfigYAML(includeFcrepo bool) (string, error) {
+	fcrepoSource := ""
+	if includeFcrepo {
+		var err error
+		fcrepoSource, err = renderIIIFAsset("triplet-fcrepo-source.yml", nil)
+		if err != nil {
+			return "", err
+		}
+	}
+	return renderIIIFAsset("triplet-config.yaml", map[string]string{
+		"FCREPO_SOURCE": fcrepoSource,
+	})
 }

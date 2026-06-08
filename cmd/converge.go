@@ -10,27 +10,35 @@ import (
 
 // isleConvergeRunner implements plugin.ConvergeRunner for the isle plugin.
 type isleConvergeRunner struct {
-	componentName string
-	report        bool
-	verbose       bool
-	format        string
-	drupalRootfs  string
+	componentName  string
+	path           string
+	report         bool
+	verbose        bool
+	format         string
+	yolo           bool
+	codebaseRootfs string
+	drupalRootfs   string
 }
 
 func (r *isleConvergeRunner) BindFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&r.componentName, "component", "c", "", "Specific component to converge")
-	cmd.Flags().StringVar(&statusPath, "path", "", "Project path override")
-	corecomponent.AddDrupalRootfsFlag(cmd, &r.drupalRootfs, createpkg.DefaultDrupalRootfs)
+	cmd.Flags().StringVar(&r.path, "path", "", "Project path override")
+	addCodebaseRootfsFlags(cmd, &r.codebaseRootfs, &r.drupalRootfs, createpkg.DefaultDrupalRootfs)
 	corecomponent.AddReviewFlags(cmd, &r.report, &r.verbose, &r.format)
+	cmd.Flags().BoolVar(&r.yolo, "yolo", false, "Apply without confirmation")
 }
 
 func (r *isleConvergeRunner) Run(cmd *cobra.Command, ctx *config.Context) error {
-	// Sync runner-bound rootfs into the package var that status helpers read.
-	statusDrupalRootfs = r.drupalRootfs
-	componentReviewReport = r.report
-	componentReviewVerbose = r.verbose
-	componentReviewFormat = r.format
-	return runComponentReconcile(cmd, r.componentName)
+	return runComponentReconcile(cmd, componentReconcileOptions{
+		ComponentName:  r.componentName,
+		Path:           r.path,
+		CodebaseRootfs: r.codebaseRootfs,
+		DrupalRootfs:   r.drupalRootfs,
+		Report:         r.report,
+		Verbose:        r.verbose,
+		Format:         r.format,
+		Yolo:           r.yolo,
+	})
 }
 
 var _ plugin.ConvergeRunner = (*isleConvergeRunner)(nil)

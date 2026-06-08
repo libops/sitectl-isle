@@ -2,7 +2,8 @@
 {{COMMON_MERGE}}    image: ghcr.io/libops/triplet:v1.1.0@sha256:ebdd90375f515e863a57372940a61a3b071c3bfb3134c699e2b5d726949603c8
 {{FCREPO_DEPENDS_ON}}
     environment:
-      TRIPLET_PUBLIC_BASE_URL: https://${DOMAIN}
+      TRIPLET_PUBLIC_BASE_URL: ${URI_SCHEME:-http}://${DOMAIN}
+      DOMAIN: ${URI_SCHEME:-http}://${DOMAIN}
     volumes:
       - drupal-public-files:/public:ro
       - drupal-private-files:/private:ro
