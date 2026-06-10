@@ -10,58 +10,85 @@ import (
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
+	"github.com/libops/sitectl/pkg/plugin"
 	"github.com/spf13/cobra"
 )
 
 var (
-	statusPath         string
-	statusDrupalRootfs string
-	statusVerbose      bool
-	statusFormat       string
+	statusPath           string
+	statusCodebaseRootfs string
+	statusDrupalRootfs   string
+	statusVerbose        bool
+	statusFormat         string
+	invokeIncludedRPC    = invokeSDKIncludedRPC
 )
 
-var statusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Report ISLE component state for a checked out project",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runStatus(cmd)
-	},
+type componentDescribeOptions struct {
+	ComponentName   string
+	IncludeIncluded bool
+	Path            string
+	CodebaseRootfs  string
+	DrupalRootfs    string
+	Verbose         bool
+	Format          string
 }
 
-func init() {
-	statusCmd.Flags().StringVar(&statusPath, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
-	corecomponent.AddDrupalRootfsFlag(statusCmd, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
-	corecomponent.AddReportFlags(statusCmd, &statusVerbose, &statusFormat)
+func componentDescribeOptionsFromGlobals(componentName string, includeIncluded bool) componentDescribeOptions {
+	return componentDescribeOptions{
+		ComponentName:   componentName,
+		IncludeIncluded: includeIncluded,
+		Path:            statusPath,
+		CodebaseRootfs:  statusCodebaseRootfs,
+		DrupalRootfs:    statusDrupalRootfs,
+		Verbose:         statusVerbose,
+		Format:          statusFormat,
+	}
 }
 
-func runStatus(cmd *cobra.Command) error {
-	return runComponentDescribe(cmd, "", true)
-}
-
-func runComponentDescribe(cmd *cobra.Command, componentName string, includeIncluded bool) error {
-	ctx, err := resolveStatusContext()
+func runComponentDescribe(cmd *cobra.Command, opts componentDescribeOptions) error {
+	ctx, err := resolveStatusContextForPath(opts.Path)
+	if err != nil {
+		return err
+	}
+	rootfs, err := resolveCodebaseRootfsFlag(cmd, opts.CodebaseRootfs, opts.DrupalRootfs)
 	if err != nil {
 		return err
 	}
 
-	statuses, err := detectComponentViewsForContext(ctx, statusDrupalRootfs)
+	statuses, err := detectComponentViewsForContext(ctx, rootfs)
 	if err != nil {
 		return err
 	}
+	componentName := strings.TrimSpace(opts.ComponentName)
 	statuses, err = filterComponentViews(statuses, componentName)
 	if err != nil {
 		return err
 	}
 
-	if err := corecomponent.WriteComponentStatusReportWithFormat(cmd.OutOrStdout(), statuses, statusVerbose, statusFormat); err != nil {
+	if err := corecomponent.WriteComponentStatusReportWithFormat(cmd.OutOrStdout(), statuses, opts.Verbose, opts.Format); err != nil {
 		return err
 	}
-	if includeIncluded && strings.TrimSpace(componentName) == "" && commandSDK != nil {
-		outputs, err := commandSDK.InvokeIncludedPlugins([]string{"__component", "describe"})
-		if err != nil {
-			return err
-		}
-		for _, output := range outputs {
+	// Included plugins are appended only for the full default view. A targeted
+	// ISLE component describe should not fail because an included plugin does
+	// not know that component name.
+	if opts.IncludeIncluded && componentName == "" && commandSDK != nil {
+		for _, include := range commandSDK.Metadata.Includes {
+			req, err := plugin.NewComponentDescribeRequest(plugin.ComponentTargetParams{
+				Path:           strings.TrimSpace(opts.Path),
+				CodebaseRootfs: strings.TrimSpace(rootfs),
+				Verbose:        opts.Verbose,
+				Format:         strings.TrimSpace(opts.Format),
+			})
+			if err != nil {
+				return err
+			}
+			resp, err := invokeIncludedRPC(commandSDK, include, req, plugin.CommandExecOptions{
+				Context: cmd.Context(),
+			})
+			if err != nil {
+				return err
+			}
+			output := resp.Output
 			if strings.TrimSpace(output) == "" {
 				continue
 			}
@@ -71,6 +98,10 @@ func runComponentDescribe(cmd *cobra.Command, componentName string, includeInclu
 		}
 	}
 	return nil
+}
+
+func invokeSDKIncludedRPC(sdk *plugin.SDK, include string, req plugin.RPCRequest, opts plugin.CommandExecOptions) (plugin.RPCResponse, error) {
+	return sdk.InvokeIncludedPluginRPC(include, req, opts)
 }
 
 type componentView = corecomponent.ReviewView
@@ -108,6 +139,10 @@ func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string
 			disposition = iiifTopologyDisposition(sdkStatuses[i].State)
 			if upstream := currentIIIFUpstreamURL(siteCtx.ProjectDir); strings.TrimSpace(upstream) != "" {
 				followUps["upstream-url"] = strings.TrimSpace(upstream)
+			}
+		default:
+			if createpkg.IsDerivativeService(sdkStatuses[i].Name) {
+				disposition = derivativeServiceDisposition(sdkStatuses[i].State)
 			}
 		}
 		views = append(views, componentView{
@@ -186,6 +221,17 @@ func iiifTopologyDisposition(state corecomponent.DetectedState) corecomponent.Di
 		return corecomponent.DispositionDistributed
 	case corecomponent.DetectedState(corecomponent.StateOff):
 		return corecomponent.DispositionDisabled
+	default:
+		return ""
+	}
+}
+
+func derivativeServiceDisposition(state corecomponent.DetectedState) corecomponent.Disposition {
+	switch state {
+	case corecomponent.DetectedState(corecomponent.StateOn):
+		return corecomponent.DispositionDistributed
+	case corecomponent.DetectedState(corecomponent.StateOff):
+		return corecomponent.DispositionEnabled
 	default:
 		return ""
 	}
@@ -273,9 +319,9 @@ func renderTLSDetail(status traefikconfig.Status) string {
 	}
 }
 
-func resolveStatusContext() (*config.Context, error) {
-	if strings.TrimSpace(statusPath) != "" {
-		return localStatusContext(statusPath)
+func resolveStatusContextForPath(path string) (*config.Context, error) {
+	if strings.TrimSpace(path) != "" {
+		return localStatusContext(path)
 	}
 	if commandSDK == nil {
 		return nil, fmt.Errorf("plugin sdk is not initialized")

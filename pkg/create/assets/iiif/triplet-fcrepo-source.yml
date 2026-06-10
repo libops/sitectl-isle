@@ -1,0 +1,4 @@
+      - prefix: /_flysystem/fedora
+        root: /fcrepo
+        ocfl: true
+        auth_probe: true

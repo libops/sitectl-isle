@@ -3,6 +3,7 @@
 set -euo pipefail
 
 SITECTL_PATH="${1:-../sitectl}"
+SERVICE_MODULES=()
 SITECTL_GOMOD="${SITECTL_PATH}/go.mod"
 
 if [[ ! -f "${SITECTL_GOMOD}" ]]; then
@@ -11,13 +12,28 @@ if [[ ! -f "${SITECTL_GOMOD}" ]]; then
 	exit 0
 fi
 
-cat > go.work <<EOF
-$(grep -E "^go (\d|\.)+$" go.mod)
-
-use (
-    .
-    ${SITECTL_PATH}
+WORK_USES=(
+	"."
+	"${SITECTL_PATH}"
 )
-EOF
+for module in "${SERVICE_MODULES[@]}"; do
+	if [[ -f "${module}/go.mod" ]]; then
+		WORK_USES+=("${module}")
+	fi
+done
+
+GO_LINE="$(grep -E '^go [0-9]+([.][0-9]+)*$' go.mod || true)"
+if [[ -z "${GO_LINE}" ]]; then
+	echo "Unable to read Go directive from go.mod"
+	exit 1
+fi
+{
+	printf '%s\n\n' "${GO_LINE}"
+	printf 'use (\n'
+	for module in "${WORK_USES[@]}"; do
+		printf '    %s\n' "${module}"
+	done
+	printf ')\n'
+} > go.work
 
 echo "Wrote go.work using local sitectl checkout at ${SITECTL_PATH}"

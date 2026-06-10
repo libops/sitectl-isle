@@ -55,10 +55,7 @@ sources:
         root: /private
         auth_probe: true
 
-      - prefix: /_flysystem/fedora
-        root: /fcrepo
-        ocfl: true
-        auth_probe: true
+{{FCREPO_SOURCE}}
   http:
     allowed_origins:
       - ${DOMAIN}

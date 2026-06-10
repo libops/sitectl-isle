@@ -45,7 +45,7 @@ func IIIF(source TemplateSource) Definition {
 						Path:  ".volumes.cantaloupe-data",
 					},
 					{
-						Files: []string{"docker-compose.dev.yml", "docker-compose.dev.yaml"},
+						Files: []string{"docker-compose.dev.yml"},
 						Op:    OpDelete,
 						Path:  ".services.cantaloupe",
 					},
@@ -136,7 +136,7 @@ func IIIFTopology() Definition {
 			Idempotent: true,
 			Enable: corecomponent.TransitionBehavior{
 				DataMigration: corecomponent.DataMigrationNone,
-				Summary:       "Distributed topology removes the selected IIIF service from the base stack and routes Traefik to the configured upstream.",
+				Summary:       "Distributed topology removes the selected IIIF service from the base stack and points Drupal at the configured upstream.",
 			},
 			Disable: corecomponent.TransitionBehavior{
 				DataMigration: corecomponent.DataMigrationNone,

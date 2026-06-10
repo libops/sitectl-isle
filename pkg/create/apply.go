@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	corecomponent "github.com/libops/sitectl/pkg/component"
+	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 )
 
 const (
@@ -18,6 +19,9 @@ const (
 	IIIFTriplet          = "triplet"
 	IIIFTopologyLocal    = "local"
 	IIIFTopologyExternal = "external"
+
+	DerivativeTopologyLocal       = "local"
+	DerivativeTopologyDistributed = "distributed"
 
 	DefaultDrupalRootfs      = "drupal/rootfs/var/www/drupal"
 	DefaultISLEFileSystemURI = "private"
@@ -62,16 +66,17 @@ var mediaSchemeFiles = []string{
 }
 
 type Options struct {
-	Path              string
-	DrupalRootfs      string
-	Fcrepo            string
-	Blazegraph        string
-	IIIF              string
-	IIIFTopology      string
-	IIIFUpstreamURL   string
-	BotMitigation     string
-	ComposeOverride   string
-	ISLEFileSystemURI string
+	Path               string
+	DrupalRootfs       string
+	Fcrepo             string
+	Blazegraph         string
+	IIIF               string
+	IIIFTopology       string
+	IIIFUpstreamURL    string
+	BotMitigation      string
+	ComposeOverride    string
+	ISLEFileSystemURI  string
+	DerivativeServices map[string]string
 }
 
 func Apply(opts Options) error {
@@ -94,7 +99,7 @@ func Apply(opts Options) error {
 		opts.IIIFTopology = IIIFTopologyLocal
 	}
 	if opts.BotMitigation == "" {
-		opts.BotMitigation = BotMitigationStateOff
+		opts.BotMitigation = coretraefik.BotMitigationStateOff
 	}
 	if opts.ISLEFileSystemURI == "" {
 		opts.ISLEFileSystemURI = DefaultISLEFileSystemURI
@@ -112,7 +117,7 @@ func Apply(opts Options) error {
 	if opts.IIIFTopology != IIIFTopologyLocal && opts.IIIFTopology != IIIFTopologyExternal {
 		return fmt.Errorf("invalid --iiif-topology value %q: expected local or external", opts.IIIFTopology)
 	}
-	if opts.BotMitigation != BotMitigationStateOn && opts.BotMitigation != BotMitigationStateOff {
+	if opts.BotMitigation != coretraefik.BotMitigationStateOn && opts.BotMitigation != coretraefik.BotMitigationStateOff {
 		return fmt.Errorf("invalid --bot-mitigation value %q: expected on or off", opts.BotMitigation)
 	}
 	if opts.IIIFTopology == IIIFTopologyExternal && strings.TrimSpace(opts.IIIFUpstreamURL) == "" {
@@ -149,13 +154,25 @@ func Apply(opts Options) error {
 	if err := ApplyIIIF(opts); err != nil {
 		return fmt.Errorf("apply iiif=%s topology=%s: %w", opts.IIIF, opts.IIIFTopology, err)
 	}
-	if opts.BotMitigation == BotMitigationStateOn {
-		if err := ApplyBotMitigation(opts.Path, opts.BotMitigation); err != nil {
+	if len(opts.DerivativeServices) > 0 {
+		if err := ApplyDerivativeServices(opts); err != nil {
+			return fmt.Errorf("apply derivative services: %w", err)
+		}
+	}
+	if opts.BotMitigation == coretraefik.BotMitigationStateOn {
+		if err := coretraefik.ApplyBotMitigation(opts.Path, opts.BotMitigation, isleBotMitigationOptions()); err != nil {
 			return fmt.Errorf("apply bot-mitigation=%s: %w", opts.BotMitigation, err)
 		}
 	}
 
 	return nil
+}
+
+func isleBotMitigationOptions() coretraefik.BotMitigationOptions {
+	return coretraefik.BotMitigationOptions{
+		RouterName:       "drupal",
+		RouterConfigPath: "conf/traefik/drupal.yml",
+	}
 }
 
 func applyFcrepoOff(projectDir, drupalRootfs, targetScheme string) error {

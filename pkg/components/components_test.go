@@ -166,36 +166,31 @@ func TestExternalCantaloupeDefinition(t *testing.T) {
 	}
 }
 
-func TestBotMitigationDefinition(t *testing.T) {
+func TestDerivativeServiceDefinition(t *testing.T) {
 	t.Parallel()
 
-	definition := BotMitigation()
+	definition := DerivativeService("homarus")
 
-	if definition.Name != "bot-mitigation" {
-		t.Fatalf("expected name bot-mitigation, got %q", definition.Name)
+	if definition.Name != "homarus" {
+		t.Fatalf("expected name homarus, got %q", definition.Name)
 	}
-	if definition.DefaultState != corecomponent.StateOff {
-		t.Fatalf("expected default state off, got %q", definition.DefaultState)
+	if definition.DefaultDisposition != corecomponent.DispositionEnabled {
+		t.Fatalf("expected default disposition enabled, got %q", definition.DefaultDisposition)
 	}
-	if definition.DefaultDisposition != corecomponent.DispositionDisabled {
-		t.Fatalf("expected default disposition disabled, got %q", definition.DefaultDisposition)
-	}
-	if !definition.PromptOnCreate {
-		t.Fatal("expected bot-mitigation to prompt on create")
-	}
-	if definition.Guidance.Question == "" || definition.Guidance.EnabledHelp == "" || definition.Guidance.DisabledHelp == "" {
-		t.Fatal("expected bot-mitigation guidance")
+	if definition.PromptOnCreate {
+		t.Fatal("expected derivative service not to prompt during create")
 	}
 	if !definition.Gates.LocalOnly {
-		t.Fatal("expected bot-mitigation to be local-only")
+		t.Fatal("expected derivative service to be local-only")
 	}
-	if !definition.Behavior.Idempotent {
-		t.Fatal("expected bot-mitigation to be marked idempotent")
+	if len(definition.AllowedDispositions) != 2 || definition.AllowedDispositions[0] != corecomponent.DispositionEnabled || definition.AllowedDispositions[1] != corecomponent.DispositionDistributed {
+		t.Fatalf("expected enabled/distributed dispositions, got %#v", definition.AllowedDispositions)
 	}
-	assertHasRule(t, definition.On.Compose.Rules, OpSet, ".services.traefik.environment.TURNSTILE_SITE_KEY")
-	assertHasRule(t, definition.On.Compose.Rules, OpSet, ".services.traefik.environment.TURNSTILE_SECRET_KEY")
-	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.traefik.environment.TURNSTILE_SITE_KEY")
-	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.traefik.environment.TURNSTILE_SECRET_KEY")
+
+	assertHasRule(t, definition.On.Compose.Rules, OpDelete, ".services.homarus")
+	assertHasRule(t, definition.On.Compose.Rules, OpSet, ".services.alpaca.environment.ALPACA_DERIVATIVE_HOMARUS_URL")
+	assertHasRule(t, definition.Off.Compose.Rules, OpRestore, ".services.homarus")
+	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.alpaca.environment.ALPACA_DERIVATIVE_HOMARUS_URL")
 }
 
 func assertHasWholeFileRule(t *testing.T, rules []YAMLRule, op RuleOp, file string) {

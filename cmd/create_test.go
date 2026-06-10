@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
+	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
 )
 
@@ -77,7 +79,7 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	if req.Apply.IIIFTopology != createpkg.IIIFTopologyLocal {
 		t.Fatalf("expected default local iiif topology, got %q", req.Apply.IIIFTopology)
 	}
-	if req.Apply.BotMitigation != createpkg.BotMitigationStateOff {
+	if req.Apply.BotMitigation != coretraefik.BotMitigationStateOff {
 		t.Fatalf("expected prompted bot mitigation off, got %q", req.Apply.BotMitigation)
 	}
 	if req.Apply.ISLEFileSystemURI != "public" {
@@ -130,6 +132,7 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	_ = cmd.Flags().Set("iiif-topology", "distributed")
 	_ = cmd.Flags().Set("iiif-upstream-url", "https://iiif.example.org")
 	_ = cmd.Flags().Set("bot-mitigation", "on")
+	_ = cmd.Flags().Set("homarus", "distributed")
 	_ = cmd.Flags().Set("isle-file-system-uri", "public")
 
 	req, err := resolveCreateRequest(cmd)
@@ -137,8 +140,11 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if req.Apply.Fcrepo != "off" || req.Apply.Blazegraph != "on" || req.Apply.IIIF != createpkg.IIIFTriplet || req.Apply.IIIFTopology != createpkg.IIIFTopologyExternal || req.Apply.IIIFUpstreamURL != "https://iiif.example.org" || req.Apply.BotMitigation != createpkg.BotMitigationStateOn || req.Apply.ISLEFileSystemURI != "public" {
+	if req.Apply.Fcrepo != "off" || req.Apply.Blazegraph != "on" || req.Apply.IIIF != createpkg.IIIFTriplet || req.Apply.IIIFTopology != createpkg.IIIFTopologyExternal || req.Apply.IIIFUpstreamURL != "https://iiif.example.org" || req.Apply.BotMitigation != coretraefik.BotMitigationStateOn || req.Apply.ISLEFileSystemURI != "public" {
 		t.Fatalf("unexpected options %+v", req.Apply)
+	}
+	if req.Apply.DerivativeServices["homarus"] != createpkg.DerivativeTopologyDistributed {
+		t.Fatalf("expected homarus distributed option, got %+v", req.Apply.DerivativeServices)
 	}
 }
 
@@ -191,6 +197,60 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 	}
 	if req.Apply.DrupalRootfs != createpkg.DefaultDrupalRootfs {
 		t.Fatalf("expected drupal rootfs preserved, got %q", req.Apply.DrupalRootfs)
+	}
+}
+
+func TestBindCreateFlagsFallsBackToLocalComponentsWhenIncludedPluginMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	plugin.InvalidateInstalledDiscoveryCache()
+	t.Cleanup(plugin.InvalidateInstalledDiscoveryCache)
+
+	oldSDK := commandSDK
+	oldDrupalRootfs := createDrupalRootfs
+	oldInput := createInput
+	oldBindErr := createComponentBindErr
+	t.Cleanup(func() {
+		commandSDK = oldSDK
+		createDrupalRootfs = oldDrupalRootfs
+		createInput = oldInput
+		createComponentBindErr = oldBindErr
+	})
+
+	createInput = func(question ...string) (string, error) {
+		t.Fatal("did not expect prompt")
+		return "", nil
+	}
+	commandSDK = plugin.NewSDK(plugin.Metadata{Name: "isle", Includes: []string{"drupal"}})
+	commandSDK.RegisterComponentDefinitions(orderedComponentDefinitions()...)
+	cmd := &cobra.Command{Use: "create"}
+	cmd.Flags().String("context", "", "")
+
+	var recovered any
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		bindCreateFlags(cmd)
+	}()
+	if recovered != nil {
+		t.Fatalf("bindCreateFlags() panicked: %v", recovered)
+	}
+	if createComponentBindErr == nil {
+		t.Fatal("expected bind-time included plugin error")
+	}
+
+	for _, name := range []string{"path", "fcrepo", "homarus", "drupal-rootfs"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Fatalf("expected fallback flag %q to be registered", name)
+		}
+	}
+
+	_, err := resolveCreateRequest(cmd)
+	if err == nil {
+		t.Fatal("expected lazy included plugin error")
+	}
+	if !strings.Contains(err.Error(), "load create component definitions") || !strings.Contains(err.Error(), `plugin "drupal" is not installed`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -435,6 +495,7 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	oldApply := createApply
 	oldBootstrap := createBootstrapCheckout
 	oldRunStartup := createRunStartup
+	oldSleep := createSleep
 	t.Cleanup(func() {
 		commandSDK = oldSDK
 		createEnsureLocalContext = oldEnsure
@@ -442,8 +503,10 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 		createApply = oldApply
 		createBootstrapCheckout = oldBootstrap
 		createRunStartup = oldRunStartup
+		createSleep = oldSleep
 	})
 
+	createSleep = func(time.Duration) {}
 	commandSDK = &plugin.SDK{}
 	projectDir := filepath.Join(t.TempDir(), "site")
 	createEnsureLocalContext = func(_ *plugin.SDK, req createRequest) (*config.Context, error) {
@@ -523,6 +586,95 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	}
 }
 
+func TestRunCreateCommandWritesProgressToStderrDuringRPC(t *testing.T) {
+	t.Setenv("SITECTL_RPC", "1")
+
+	oldSDK := commandSDK
+	oldEnsure := createEnsureLocalContext
+	oldClone := createCloneTemplateRepo
+	oldApply := createApply
+	oldBootstrap := createBootstrapCheckout
+	oldRunStartup := createRunStartup
+	oldSleep := createSleep
+	t.Cleanup(func() {
+		commandSDK = oldSDK
+		createEnsureLocalContext = oldEnsure
+		createCloneTemplateRepo = oldClone
+		createApply = oldApply
+		createBootstrapCheckout = oldBootstrap
+		createRunStartup = oldRunStartup
+		createSleep = oldSleep
+	})
+
+	createSleep = func(time.Duration) {}
+	commandSDK = &plugin.SDK{}
+	projectDir := filepath.Join(t.TempDir(), "site")
+	createEnsureLocalContext = func(_ *plugin.SDK, req createRequest) (*config.Context, error) {
+		return &config.Context{Name: "isle-local", ProjectDir: projectDir}, nil
+	}
+	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
+		return os.MkdirAll(opts.ProjectDir, 0o755)
+	}
+	createApply = func(opts createpkg.Options) error { return nil }
+	createBootstrapCheckout = func(out io.Writer, gotProjectDir string) error {
+		if gotProjectDir != projectDir {
+			t.Fatalf("expected bootstrap in %q, got %q", projectDir, gotProjectDir)
+		}
+		_, err := fmt.Fprintln(out, "bootstrap progress")
+		return err
+	}
+	createRunStartup = func(_ io.Writer, ctx *config.Context) error {
+		t.Fatal("did not expect startup to run")
+		return nil
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := &cobra.Command{Use: "create"}
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := runCreateCommand(cmd, createRequest{
+		ComposeCreateRequest: plugin.ComposeCreateRequest{
+			Path:           projectDir,
+			DrupalRootfs:   createpkg.DefaultDrupalRootfs,
+			TemplateRepo:   defaultTemplateRepo,
+			TemplateBranch: defaultTemplateBranch,
+			SetupOnly:      true,
+		},
+		Apply: createpkg.Options{
+			DrupalRootfs:      createpkg.DefaultDrupalRootfs,
+			Fcrepo:            createpkg.FcrepoStateOff,
+			Blazegraph:        createpkg.FcrepoStateOff,
+			ISLEFileSystemURI: createpkg.PrivateISLEFileSystemURI,
+		},
+	})
+	if err != nil {
+		t.Fatalf("runCreateCommand() error = %v", err)
+	}
+
+	progress := stripANSI(stderr.String())
+	for _, want := range []string{
+		"Preparing the sitectl context",
+		"TEMPLATE CHECKOUT",
+		"bootstrap progress",
+		"TEMPLATE CONFIGURATION",
+		"Applying ISLE options... done",
+	} {
+		if !strings.Contains(progress, want) {
+			t.Fatalf("expected stderr progress to contain %q, got:\n%s", want, progress)
+		}
+	}
+
+	summary := stripANSI(stdout.String())
+	if !strings.Contains(summary, "CREATE COMPLETE") {
+		t.Fatalf("expected stdout summary, got:\n%s", summary)
+	}
+	if strings.Contains(summary, "Template configuration") {
+		t.Fatalf("expected progress to stay out of stdout summary, got:\n%s", summary)
+	}
+}
+
 func TestPrintCreateFailureSummaryUsesPlainReplayCommand(t *testing.T) {
 	var out bytes.Buffer
 	req := createRequest{
@@ -541,7 +693,7 @@ func TestPrintCreateFailureSummaryUsesPlainReplayCommand(t *testing.T) {
 			Blazegraph:        createpkg.FcrepoStateOff,
 			IIIF:              createpkg.IIIFTriplet,
 			IIIFTopology:      createpkg.IIIFTopologyLocal,
-			BotMitigation:     createpkg.BotMitigationStateOn,
+			BotMitigation:     coretraefik.BotMitigationStateOn,
 			ISLEFileSystemURI: createpkg.PrivateISLEFileSystemURI,
 		},
 	}
@@ -572,6 +724,7 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	oldApply := createApply
 	oldBootstrap := createBootstrapCheckout
 	oldRunStartup := createRunStartup
+	oldSleep := createSleep
 	t.Cleanup(func() {
 		commandSDK = oldSDK
 		createEnsureLocalContext = oldEnsure
@@ -579,8 +732,10 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 		createApply = oldApply
 		createBootstrapCheckout = oldBootstrap
 		createRunStartup = oldRunStartup
+		createSleep = oldSleep
 	})
 
+	createSleep = func(time.Duration) {}
 	commandSDK = &plugin.SDK{}
 	projectDir := filepath.Join(t.TempDir(), "site")
 	createEnsureLocalContext = func(_ *plugin.SDK, req createRequest) (*config.Context, error) {

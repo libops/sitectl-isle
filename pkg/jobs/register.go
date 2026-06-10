@@ -99,11 +99,12 @@ func RunFcrepoDBBackup(cmd *cobra.Command, ctx *config.Context, outputPath strin
 
 	exitCode, err := cli.Exec(cmd.Context(), docker.ExecOptions{
 		Container:    containerName,
-		Cmd:          []string{"mysqldump", "-h", "mariadb", "-u", "fcrepo", "-p" + strings.TrimSpace(password), "fcrepo"},
+		Cmd:          []string{"mysqldump", "-h", "mariadb", "-u", "fcrepo", "fcrepo"},
+		Env:          []string{"MYSQL_PWD=" + strings.TrimSpace(password)},
 		AttachStdout: true,
 		AttachStderr: true,
 		Stdout:       gzipWriter,
-		Stderr:       os.Stderr,
+		Stderr:       cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		return err
@@ -176,13 +177,14 @@ func RunFcrepoDBImport(cmd *cobra.Command, ctx *config.Context, inputPath string
 
 	exitCode, err := cli.Exec(cmd.Context(), docker.ExecOptions{
 		Container:    containerName,
-		Cmd:          []string{"mysql", "-h", "mariadb", "-u", "fcrepo", "-p" + strings.TrimSpace(password), "fcrepo"},
+		Cmd:          []string{"mysql", "-h", "mariadb", "-u", "fcrepo", "fcrepo"},
+		Env:          []string{"MYSQL_PWD=" + strings.TrimSpace(password)},
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
 		Stdin:        gzipReader,
 		Stdout:       io.Discard,
-		Stderr:       os.Stderr,
+		Stderr:       cmd.ErrOrStderr(),
 	})
 	if err != nil {
 		return err

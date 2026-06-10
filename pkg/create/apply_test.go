@@ -442,3 +442,178 @@ volumes:
 		t.Fatalf("expected archive uri_scheme, got:\n%s", string(mediaField))
 	}
 }
+
+func TestApplyDerivativeServicesDistributed(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+services:
+  alpaca:
+    environment: {}
+  homarus:
+    image: islandora/homarus:${ISLANDORA_TAG}
+  mergepdf:
+    image: islandora/mergepdf:${ISLANDORA_TAG}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+
+	if err := ApplyDerivativeServices(Options{
+		Path: projectDir,
+		DerivativeServices: map[string]string{
+			"homarus":  DerivativeTopologyDistributed,
+			"mergepdf": DerivativeTopologyDistributed,
+		},
+	}); err != nil {
+		t.Fatalf("ApplyDerivativeServices() error = %v", err)
+	}
+
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(compose) error = %v", err)
+	}
+	compose := string(composeData)
+	for _, service := range []string{"homarus", "mergepdf"} {
+		if strings.Contains(compose, "\n  "+service+":\n") {
+			t.Fatalf("expected %s service removed, got:\n%s", service, compose)
+		}
+	}
+	for _, want := range []string{
+		`ALPACA_DERIVATIVE_HOMARUS_URL: "https://microservices.libops.site/homarus"`,
+		`ALPACA_DERIVATIVE_MERGEPDF_URL: "https://microservices.libops.site/mergepdf"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		}
+	}
+
+	devComposeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.dev.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(dev compose) error = %v", err)
+	}
+	devCompose := string(devComposeData)
+	for _, service := range []string{"homarus", "mergepdf"} {
+		if !strings.Contains(devCompose, "\n  "+service+":\n") {
+			t.Fatalf("expected dev compose to contain %s service, got:\n%s", service, devCompose)
+		}
+	}
+	for _, want := range []string{
+		`ALPACA_DERIVATIVE_HOMARUS_URL: "http://homarus:8080/"`,
+		`ALPACA_DERIVATIVE_MERGEPDF_URL: "http://mergepdf:8080/"`,
+	} {
+		if !strings.Contains(devCompose, want) {
+			t.Fatalf("expected dev compose to contain %q, got:\n%s", want, devCompose)
+		}
+	}
+}
+
+func TestApplyDerivativeServicesDistributedFITSPreservesLocalCrayfits(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+services:
+  alpaca:
+    environment: {}
+  crayfits:
+    image: islandora/crayfits:${ISLANDORA_TAG}
+  fits:
+    image: islandora/fits:${ISLANDORA_TAG}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+
+	if err := ApplyDerivativeServices(Options{
+		Path: projectDir,
+		DerivativeServices: map[string]string{
+			"fits": DerivativeTopologyDistributed,
+		},
+	}); err != nil {
+		t.Fatalf("ApplyDerivativeServices() error = %v", err)
+	}
+
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(compose) error = %v", err)
+	}
+	compose := string(composeData)
+	if strings.Contains(compose, "\n  fits:\n") {
+		t.Fatalf("expected fits service removed, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, "\n  crayfits:\n") {
+		t.Fatalf("expected crayfits service preserved, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, `CRAYFITS_WEBSERVICE_URI: "https://microservices.libops.site/fits/examine"`) {
+		t.Fatalf("expected crayfits to point at distributed fits, got:\n%s", compose)
+	}
+	if strings.Contains(compose, "ALPACA_DERIVATIVE_FITS_URL") {
+		t.Fatalf("expected alpaca to keep using local crayfits when only fits is distributed, got:\n%s", compose)
+	}
+
+	devComposeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.dev.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(dev compose) error = %v", err)
+	}
+	devCompose := string(devComposeData)
+	if !strings.Contains(devCompose, "\n  fits:\n") {
+		t.Fatalf("expected dev compose to contain fits service, got:\n%s", devCompose)
+	}
+	if !strings.Contains(devCompose, `CRAYFITS_WEBSERVICE_URI: "http://fits:8080/fits/examine"`) {
+		t.Fatalf("expected dev compose to reset crayfits fits URL, got:\n%s", devCompose)
+	}
+}
+
+func TestApplyDerivativeServicesDistributedCrayfitsUsesManagedCrayfits(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+services:
+  alpaca:
+    environment: {}
+  crayfits:
+    image: islandora/crayfits:${ISLANDORA_TAG}
+  fits:
+    image: islandora/fits:${ISLANDORA_TAG}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+
+	if err := ApplyDerivativeServices(Options{
+		Path: projectDir,
+		DerivativeServices: map[string]string{
+			"crayfits": DerivativeTopologyDistributed,
+			"fits":     DerivativeTopologyDistributed,
+		},
+	}); err != nil {
+		t.Fatalf("ApplyDerivativeServices() error = %v", err)
+	}
+
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(compose) error = %v", err)
+	}
+	compose := string(composeData)
+	if strings.Contains(compose, "\n  crayfits:\n") || strings.Contains(compose, "\n  fits:\n") {
+		t.Fatalf("expected crayfits and fits services removed, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, `ALPACA_DERIVATIVE_FITS_URL: "https://microservices.libops.site/crayfits"`) {
+		t.Fatalf("expected alpaca to point at managed crayfits, got:\n%s", compose)
+	}
+
+	devComposeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.dev.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(dev compose) error = %v", err)
+	}
+	devCompose := string(devComposeData)
+	if !strings.Contains(devCompose, "\n  crayfits:\n") || !strings.Contains(devCompose, "\n  fits:\n") {
+		t.Fatalf("expected dev compose to contain crayfits and fits services, got:\n%s", devCompose)
+	}
+	if !strings.Contains(devCompose, `ALPACA_DERIVATIVE_FITS_URL: "http://crayfits:8080/"`) {
+		t.Fatalf("expected dev compose to reset alpaca fits URL, got:\n%s", devCompose)
+	}
+	if !strings.Contains(devCompose, `CRAYFITS_WEBSERVICE_URI: "http://fits:8080/fits/examine"`) {
+		t.Fatalf("expected dev compose to reset crayfits fits URL, got:\n%s", devCompose)
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/helpers"
 	"github.com/libops/sitectl/pkg/plugin"
+	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
 )
 
@@ -39,6 +40,7 @@ var (
 	createLookPath           = exec.LookPath
 	createRunCheckCommand    = runCheckCommand
 	createSleep              = time.Sleep
+	createComponentBindErr   error
 )
 
 const (
@@ -58,8 +60,9 @@ func (createRunner) BindFlags(cmd *cobra.Command) {
 }
 
 func (createRunner) Run(cmd *cobra.Command) error {
-	printIslandoraIntro(cmd, cmd.OutOrStdout())
-	if err := createCheckPrereqs(cmd.OutOrStdout()); err != nil {
+	progress := createProgressOutput(cmd)
+	printIslandoraIntro(cmd, progress)
+	if err := createCheckPrereqs(progress); err != nil {
 		return err
 	}
 	req, err := resolveCreateRequest(cmd)
@@ -92,11 +95,39 @@ func createDefinition() plugin.CreateSpec {
 
 func bindCreateFlags(cmd *cobra.Command) {
 	if err := commandSDK.BindComposeCreateFlags(cmd, createDefinition(), &createDrupalRootfs, createpkg.DefaultDrupalRootfs); err != nil {
-		panic(err)
+		createComponentBindErr = err
+		bindLocalCreateComponentFlags(cmd)
+		return
+	}
+	createComponentBindErr = nil
+}
+
+func bindLocalCreateComponentFlags(cmd *cobra.Command) {
+	if cmd == nil || commandSDK == nil {
+		return
+	}
+
+	localDefs := commandSDK.LocalComponentDefinitions()
+	options := make([]corecomponent.CreateOption, 0, len(localDefs))
+	for _, def := range localDefs {
+		if def.Name == "" || cmd.Flags().Lookup(def.Name) != nil {
+			continue
+		}
+		options = append(options, def.CreateOption())
+	}
+	corecomponent.AddCreateFlags(cmd, options...)
+	if cmd.Flags().Lookup("drupal-rootfs") == nil {
+		corecomponent.AddDrupalRootfsFlag(cmd, &createDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	}
 }
 
 func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
+	if createComponentBindErr != nil {
+		if _, err := commandSDK.CreateComponentDefinitions(); err != nil {
+			return createRequest{}, fmt.Errorf("load create component definitions: %w", err)
+		}
+		createComponentBindErr = nil
+	}
 	resolved, err := commandSDK.ResolveComposeCreateRequest(cmd, createInput, createDrupalRootfs, "", defaultTemplateRepo, defaultTemplateBranch)
 	if err != nil {
 		return createRequest{}, err
@@ -122,6 +153,16 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 	if decision, ok := resolved.Decisions["bot-mitigation"]; ok {
 		opts.BotMitigation = string(decision.State)
 	}
+	for _, name := range createpkg.DerivativeServiceNames() {
+		decision, ok := resolved.Decisions[name]
+		if !ok || !cmd.Flags().Changed(name) {
+			continue
+		}
+		if opts.DerivativeServices == nil {
+			opts.DerivativeServices = map[string]string{}
+		}
+		opts.DerivativeServices[name] = createDerivativeTopologyValue(decision.Disposition)
+	}
 	if opts.ISLEFileSystemURI == "" {
 		opts.ISLEFileSystemURI = createpkg.DefaultISLEFileSystemURI
 	}
@@ -145,16 +186,27 @@ func createIIIFTopologyValue(disposition corecomponent.Disposition) string {
 	return createpkg.IIIFTopologyLocal
 }
 
+func createDerivativeTopologyValue(disposition corecomponent.Disposition) string {
+	if disposition == corecomponent.DispositionDistributed {
+		return createpkg.DerivativeTopologyDistributed
+	}
+	return createpkg.DerivativeTopologyLocal
+}
+
 func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	if commandSDK == nil {
 		return fmt.Errorf("plugin sdk is not initialized")
 	}
 
+	progress := createProgressOutput(cmd)
+	summary := cmd.OutOrStdout()
+	fmt.Fprintln(progress, corecomponent.RenderSection("Context", "Preparing the sitectl context for this ISLE checkout."))
 	ctx, err := createEnsureLocalContext(commandSDK, req)
 	if err != nil {
 		return err
 	}
-	cloned, err := ensureClonedCheckout(cmd.OutOrStdout(), req.TemplateRepo, req.TemplateBranch, ctx.ProjectDir)
+	fmt.Fprintln(progress)
+	cloned, err := ensureClonedCheckout(progress, req.TemplateRepo, req.TemplateBranch, ctx.ProjectDir)
 	if err != nil {
 		return err
 	}
@@ -162,26 +214,41 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	req.Path = ctx.ProjectDir
 	req.Apply.Path = ctx.ProjectDir
 	if cloned {
-		if err := createBootstrapCheckout(cmd.OutOrStdout(), ctx.ProjectDir); err != nil {
+		if err := createBootstrapCheckout(progress, ctx.ProjectDir); err != nil {
 			return err
 		}
 	}
-	if err := createApply(req.Apply); err != nil {
-		printCreateFailureSummary(cmd.OutOrStdout(), req)
+	fmt.Fprintln(progress)
+	fmt.Fprintln(progress, corecomponent.RenderSection("Template configuration", "Applying requested ISLE component and topology choices."))
+	fmt.Fprintln(progress)
+	if err := runWithSpinner(progress, "Applying ISLE options", func() error {
+		return createApply(req.Apply)
+	}); err != nil {
+		printCreateFailureSummary(summary, req)
 		return err
 	}
-	if req.Apply.BotMitigation == createpkg.BotMitigationStateOn {
-		fmt.Fprintln(cmd.OutOrStdout(), botMitigationTurnstileWarning)
+	if req.Apply.BotMitigation == coretraefik.BotMitigationStateOn {
+		fmt.Fprintln(progress, botMitigationTurnstileWarning)
 	}
 	if !req.SetupOnly {
-		if err := createRunStartup(cmd.OutOrStdout(), ctx); err != nil {
-			printCreateFailureSummary(cmd.OutOrStdout(), req)
+		if err := createRunStartup(progress, ctx); err != nil {
+			printCreateFailureSummary(summary, req)
 			return err
 		}
 	}
 
-	printCreateSummary(cmd.OutOrStdout(), req)
+	printCreateSummary(summary, req)
 	return nil
+}
+
+func createProgressOutput(cmd *cobra.Command) io.Writer {
+	if cmd == nil {
+		return os.Stderr
+	}
+	if os.Getenv("SITECTL_RPC") == "1" {
+		return cmd.ErrOrStderr()
+	}
+	return cmd.OutOrStdout()
 }
 
 func printIslandoraIntro(cmd *cobra.Command, out io.Writer) {
@@ -582,6 +649,13 @@ func buildRecreateCommand(req createRequest) string {
 	if req.Apply.IIIFTopology == createpkg.IIIFTopologyExternal {
 		args = append(args, `--iiif-upstream-url=`+shellDoubleQuote(req.Apply.IIIFUpstreamURL))
 	}
+	for _, name := range createpkg.DerivativeServiceNames() {
+		topology, ok := req.Apply.DerivativeServices[name]
+		if !ok {
+			continue
+		}
+		args = append(args, `--`+name+`=`+derivativeTopologyDispositionFlagValue(topology))
+	}
 	if req.SetDefaultContext {
 		args = append(args, "--default-context")
 	}
@@ -625,6 +699,13 @@ func iiifTopologyDispositionFlagValue(value string) string {
 		return string(corecomponent.DispositionDistributed)
 	}
 	return string(corecomponent.DispositionDisabled)
+}
+
+func derivativeTopologyDispositionFlagValue(value string) string {
+	if value == createpkg.DerivativeTopologyDistributed {
+		return string(corecomponent.DispositionDistributed)
+	}
+	return string(corecomponent.DispositionEnabled)
 }
 
 func shellDoubleQuote(value string) string {

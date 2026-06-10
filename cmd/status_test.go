@@ -8,9 +8,25 @@ import (
 	"testing"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
+	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
+	"github.com/spf13/cobra"
 )
+
+func newStatusTestCommand() *cobra.Command {
+	var path string
+	var codebaseRootfs string
+	var drupalRootfs string
+	var verbose bool
+	var format string
+
+	cmd := &cobra.Command{Use: "status"}
+	cmd.Flags().StringVar(&path, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
+	addCodebaseRootfsFlags(cmd, &codebaseRootfs, &drupalRootfs, createpkg.DefaultDrupalRootfs)
+	corecomponent.AddReportFlags(cmd, &verbose, &format)
+	return cmd
+}
 
 func TestStatusCommandReportsOn(t *testing.T) {
 	projectDir := t.TempDir()
@@ -29,11 +45,11 @@ func TestStatusCommandReportsOn(t *testing.T) {
 	statusVerbose = false
 
 	var out bytes.Buffer
-	cmd := statusCmd
+	cmd := newStatusTestCommand()
 	cmd.SetOut(&out)
 
-	if err := runStatus(cmd); err != nil {
-		t.Fatalf("runStatus() error = %v", err)
+	if err := runComponentDescribe(cmd, componentDescribeOptionsFromGlobals("", true)); err != nil {
+		t.Fatalf("runComponentDescribe() error = %v", err)
 	}
 
 	rendered := out.String()
@@ -82,11 +98,11 @@ func TestStatusCommandReportsOff(t *testing.T) {
 	statusVerbose = false
 
 	var out bytes.Buffer
-	cmd := statusCmd
+	cmd := newStatusTestCommand()
 	cmd.SetOut(&out)
 
-	if err := runStatus(cmd); err != nil {
-		t.Fatalf("runStatus() error = %v", err)
+	if err := runComponentDescribe(cmd, componentDescribeOptionsFromGlobals("", true)); err != nil {
+		t.Fatalf("runComponentDescribe() error = %v", err)
 	}
 
 	rendered := out.String()
@@ -145,11 +161,11 @@ volumes:
 	statusVerbose = true
 
 	var out bytes.Buffer
-	cmd := statusCmd
+	cmd := newStatusTestCommand()
 	cmd.SetOut(&out)
 
-	if err := runStatus(cmd); err != nil {
-		t.Fatalf("runStatus() error = %v", err)
+	if err := runComponentDescribe(cmd, componentDescribeOptionsFromGlobals("", true)); err != nil {
+		t.Fatalf("runComponentDescribe() error = %v", err)
 	}
 
 	rendered := out.String()
@@ -201,11 +217,11 @@ func TestStatusCommandUsesActiveContextProjectDir(t *testing.T) {
 	statusVerbose = false
 
 	var out bytes.Buffer
-	cmd := statusCmd
+	cmd := newStatusTestCommand()
 	cmd.SetOut(&out)
 
-	if err := runStatus(cmd); err != nil {
-		t.Fatalf("runStatus() error = %v", err)
+	if err := runComponentDescribe(cmd, componentDescribeOptionsFromGlobals("", true)); err != nil {
+		t.Fatalf("runComponentDescribe() error = %v", err)
 	}
 
 	rendered := out.String()
@@ -217,15 +233,81 @@ func TestStatusCommandUsesActiveContextProjectDir(t *testing.T) {
 	}
 }
 
-func TestResolveStatusContextUsesDotContextAsCWD(t *testing.T) {
+func TestComponentDescribeForwardsIncludedPluginSelectors(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
 
 	oldSDK := commandSDK
 	oldStatusPath := statusPath
+	oldStatusCodebaseRootfs := statusCodebaseRootfs
+	oldStatusDrupalRootfs := statusDrupalRootfs
+	oldStatusVerbose := statusVerbose
+	oldStatusFormat := statusFormat
+	oldInvokeIncludedRPC := invokeIncludedRPC
 	t.Cleanup(func() {
 		commandSDK = oldSDK
 		statusPath = oldStatusPath
+		statusCodebaseRootfs = oldStatusCodebaseRootfs
+		statusDrupalRootfs = oldStatusDrupalRootfs
+		statusVerbose = oldStatusVerbose
+		statusFormat = oldStatusFormat
+		invokeIncludedRPC = oldInvokeIncludedRPC
+	})
+
+	commandSDK = plugin.NewSDK(plugin.Metadata{
+		Name:     "isle",
+		Version:  "test",
+		Includes: []string{"drupal"},
+	})
+	statusPath = projectDir
+	statusCodebaseRootfs = createpkg.DefaultDrupalRootfs
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	statusVerbose = true
+	statusFormat = "json"
+
+	var gotInclude string
+	var gotParams plugin.ComponentTargetParams
+	invokeIncludedRPC = func(sdk *plugin.SDK, include string, req plugin.RPCRequest, opts plugin.CommandExecOptions) (plugin.RPCResponse, error) {
+		gotInclude = include
+		var err error
+		gotParams, err = plugin.DecodeRPCParams[plugin.ComponentTargetParams](req.Params)
+		if err != nil {
+			return plugin.RPCResponse{}, err
+		}
+		return plugin.RPCResponse{OK: true, Output: "included output\n"}, nil
+	}
+
+	var out bytes.Buffer
+	cmd := newStatusTestCommand()
+	cmd.SetOut(&out)
+
+	if err := runComponentDescribe(cmd, componentDescribeOptionsFromGlobals("", true)); err != nil {
+		t.Fatalf("runComponentDescribe() error = %v", err)
+	}
+	if gotInclude != "drupal" {
+		t.Fatalf("expected drupal include, got %q", gotInclude)
+	}
+	if gotParams.Path != projectDir {
+		t.Fatalf("expected included path %q, got %q", projectDir, gotParams.Path)
+	}
+	if gotParams.CodebaseRootfs != createpkg.DefaultDrupalRootfs {
+		t.Fatalf("expected included rootfs %q, got %q", createpkg.DefaultDrupalRootfs, gotParams.CodebaseRootfs)
+	}
+	if !gotParams.Verbose || gotParams.Format != "json" {
+		t.Fatalf("expected verbose json included params, got %+v", gotParams)
+	}
+	if !strings.Contains(out.String(), "included output") {
+		t.Fatalf("expected included output, got:\n%s", out.String())
+	}
+}
+
+func TestResolveStatusContextUsesDotContextAsCWD(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldSDK := commandSDK
+	t.Cleanup(func() {
+		commandSDK = oldSDK
 	})
 
 	oldWD, err := os.Getwd()
@@ -248,14 +330,17 @@ func TestResolveStatusContextUsesDotContextAsCWD(t *testing.T) {
 		return &config.ProjectClaim{Plugin: "isle", ProjectDir: projectDir, Reason: "test claim"}, nil
 	})
 	commandSDK.Config.Context = "."
-	statusPath = ""
 
-	ctx, err := resolveStatusContext()
+	ctx, err := resolveStatusContextForPath("")
 	if err != nil {
-		t.Fatalf("resolveStatusContext() error = %v", err)
+		t.Fatalf("resolveStatusContextForPath() error = %v", err)
 	}
-	if ctx.ProjectDir != projectDir {
-		t.Fatalf("expected project dir %q, got %q", projectDir, ctx.ProjectDir)
+	expectedProjectDir := projectDir
+	if resolved, err := filepath.EvalSymlinks(expectedProjectDir); err == nil {
+		expectedProjectDir = resolved
+	}
+	if ctx.ProjectDir != expectedProjectDir {
+		t.Fatalf("expected project dir %q, got %q", expectedProjectDir, ctx.ProjectDir)
 	}
 	if ctx.Plugin != "isle" || ctx.DockerHostType != config.ContextLocal {
 		t.Fatalf("unexpected context: %+v", ctx)
@@ -328,11 +413,11 @@ services:
 	statusVerbose = false
 
 	var out bytes.Buffer
-	cmd := statusCmd
+	cmd := newStatusTestCommand()
 	cmd.SetOut(&out)
 
-	if err := runStatus(cmd); err != nil {
-		t.Fatalf("runStatus() error = %v", err)
+	if err := runComponentDescribe(cmd, componentDescribeOptionsFromGlobals("", true)); err != nil {
+		t.Fatalf("runComponentDescribe() error = %v", err)
 	}
 
 	rendered := out.String()

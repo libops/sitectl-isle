@@ -11,7 +11,27 @@ import (
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
+	"github.com/spf13/cobra"
 )
+
+func newComponentReviewTestCommand() *cobra.Command {
+	var path string
+	var codebaseRootfs string
+	var drupalRootfs string
+	var componentName string
+	var report bool
+	var verbose bool
+	var format string
+	var yolo bool
+
+	cmd := &cobra.Command{Use: "review"}
+	cmd.Flags().StringVar(&path, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
+	addCodebaseRootfsFlags(cmd, &codebaseRootfs, &drupalRootfs, createpkg.DefaultDrupalRootfs)
+	cmd.Flags().StringVarP(&componentName, "component", "c", "", "Specific component to reconcile")
+	corecomponent.AddReviewFlags(cmd, &report, &verbose, &format)
+	cmd.Flags().BoolVar(&yolo, "yolo", false, "Apply without confirmation")
+	return cmd
+}
 
 func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 	projectDir := t.TempDir()
@@ -70,7 +90,7 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := componentReviewCmd
+	cmd := newComponentReviewTestCommand()
 	cmd.SetOut(&out)
 
 	if err := runComponentReview(cmd); err != nil {
@@ -170,7 +190,7 @@ func TestRunComponentReviewUsesDetectedTLSModeAsPromptDefault(t *testing.T) {
 		return defaultValue, nil
 	}
 
-	if err := runComponentReview(componentReviewCmd); err != nil {
+	if err := runComponentReview(newComponentReviewTestCommand()); err != nil {
 		t.Fatalf("runComponentReview() error = %v", err)
 	}
 
@@ -248,7 +268,7 @@ func TestRunComponentReviewReportDoesNotPromptOrApply(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	cmd := componentReviewCmd
+	cmd := newComponentReviewTestCommand()
 	cmd.SetOut(&out)
 
 	if err := runComponentReview(cmd); err != nil {
@@ -285,7 +305,7 @@ func TestRunComponentReviewReportTableFormat(t *testing.T) {
 	componentReviewFormat = corecomponent.ReportFormatTable
 
 	var out bytes.Buffer
-	cmd := componentReviewCmd
+	cmd := newComponentReviewTestCommand()
 	cmd.SetOut(&out)
 
 	if err := runComponentReview(cmd); err != nil {
@@ -350,7 +370,7 @@ volumes:
 	componentReviewFormat = corecomponent.ReportFormatJSON
 
 	var out bytes.Buffer
-	cmd := componentReviewCmd
+	cmd := newComponentReviewTestCommand()
 	cmd.SetOut(&out)
 
 	if err := runComponentReview(cmd); err != nil {
@@ -431,7 +451,7 @@ volumes:
 	componentReviewFormat = corecomponent.ReportFormatSection
 
 	var out bytes.Buffer
-	cmd := componentReviewCmd
+	cmd := newComponentReviewTestCommand()
 	cmd.SetOut(&out)
 
 	if err := runComponentReview(cmd); err != nil {

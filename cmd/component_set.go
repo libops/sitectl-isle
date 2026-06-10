@@ -12,6 +12,7 @@ import (
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
+	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
 )
 
@@ -29,37 +30,43 @@ var (
 
 const botMitigationTurnstileWarning = "Bot mitigation is using Cloudflare Turnstile test keys by default. Configure real TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY values from Cloudflare; the test keys always allow JavaScript-capable bots to pass."
 
-var componentSetCmd = &cobra.Command{
-	Use:   "set <name> [disposition]",
-	Short: "Set an ISLE component on or off for the current project",
-	Args:  cobra.RangeArgs(1, 2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		stateValue, err := resolveComponentSetStateValue(cmd, args)
-		if err != nil {
-			return err
-		}
-		return runComponentSet(cmd, args[0], stateValue)
-	},
+type componentSetOptions struct {
+	Path           string
+	CodebaseRootfs string
+	DrupalRootfs   string
+	State          string
+	Disposition    string
+	Yolo           bool
+	TLSMode        string
 }
 
-func init() {
-	componentSetCmd.Flags().StringVar(&statusPath, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
-	corecomponent.AddDrupalRootfsFlag(componentSetCmd, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
-	componentSetCmd.Flags().StringVar(&componentSetState, "state", "", "Component state to apply. Valid values are on or off. If omitted, the command prompts interactively.")
-	componentSetCmd.Flags().StringVar(&componentSetDisposition, "disposition", "", "Component disposition to apply. Valid values depend on the component, commonly disabled, superceded, enabled, or distributed.")
-	componentSetCmd.Flags().BoolVar(&componentSetYolo, "yolo", false, "Apply the component change without confirmation")
-	componentSetCmd.Flags().StringVar(&componentSetTLSMode, "tls-mode", "", "TLS mode for the selected component. Valid values are http, self-managed, mkcert, or letsencrypt.")
-	addComponentSetFollowUpFlags(componentSetCmd, managedComponentDefinitions())
-	componentCmd.AddCommand(componentSetCmd)
+func componentSetOptionsFromGlobals() componentSetOptions {
+	return componentSetOptions{
+		Path:           statusPath,
+		CodebaseRootfs: statusCodebaseRootfs,
+		DrupalRootfs:   statusDrupalRootfs,
+		State:          componentSetState,
+		Disposition:    componentSetDisposition,
+		Yolo:           componentSetYolo,
+		TLSMode:        componentSetTLSMode,
+	}
 }
 
 func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
-	ctx, err := resolveStatusContext()
+	return runComponentSetWithOptions(cmd, name, stateValue, componentSetOptionsFromGlobals())
+}
+
+func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opts componentSetOptions) error {
+	ctx, err := resolveStatusContextForPath(opts.Path)
 	if err != nil {
 		return err
 	}
 	if ctx.DockerHostType != config.ContextLocal {
 		return fmt.Errorf("component changes are local-only; context %q is %q", ctx.Name, ctx.DockerHostType)
+	}
+	rootfs, err := resolveCodebaseRootfsFlag(cmd, opts.CodebaseRootfs, opts.DrupalRootfs)
+	if err != nil {
+		return err
 	}
 
 	var state corecomponent.State
@@ -85,7 +92,7 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 		state = corecomponent.DispositionToState(disposition)
 	}
 
-	statuses, err := detectComponentViewsForContext(ctx, statusDrupalRootfs)
+	statuses, err := detectComponentViewsForContext(ctx, rootfs)
 	if err != nil {
 		return err
 	}
@@ -123,22 +130,24 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 	if disposition == "" {
 		disposition = corecomponent.StateToDisposition(state)
 	}
+	disposition, state = normalizeComponentSetDispositionState(name, disposition, state)
 
-	followUps, err := resolveComponentSetFollowUps(cmd, def, statusByName[name], disposition, state)
+	tlsMode := strings.TrimSpace(opts.TLSMode)
+	followUps, err := resolveComponentSetFollowUps(cmd, def, statusByName[name], disposition, opts)
 	if err != nil {
 		return err
 	}
 
-	if !componentSetYolo {
-		if requiresTLSModeSelection(name, disposition) {
+	if !opts.Yolo {
+		if requiresTLSModeSelection(name, disposition, tlsMode) {
 			mode, err := resolveTLSComponentMode(name)
 			if err != nil {
 				return err
 			}
-			componentSetTLSMode = mode
+			tlsMode = mode
 			followUps["tls-mode"] = mode
 		}
-		prompt, err := componentSetPrompt(def, disposition, state, followUps)
+		prompt, err := componentSetPrompt(def, disposition, state, followUps, tlsMode)
 		if err != nil {
 			return err
 		}
@@ -152,17 +161,20 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 	}
 
 	if name == "isle-tls" || name == "isle-tls-override" {
-		return runTLSComponentSet(cmd, ctx, name, disposition, state)
+		return runTLSComponentSet(cmd, ctx, name, disposition, state, tlsMode)
 	}
 	if name == "iiif" || name == "iiif-topology" {
-		return runIIIFComponentSet(cmd, ctx, name, disposition, statusByName, followUps, currentStates)
+		return runIIIFComponentSet(cmd, ctx, rootfs, name, disposition, statusByName, followUps, currentStates)
 	}
-	if name == components.BotMitigationName {
+	if createpkg.IsDerivativeService(name) {
+		return runDerivativeServiceComponentSet(cmd, ctx, name, disposition)
+	}
+	if name == coretraefik.BotMitigationName {
 		return runBotMitigationComponentSet(cmd, ctx, disposition, state)
 	}
-	opts := createpkg.Options{
+	applyOpts := createpkg.Options{
 		Path:            ctx.ProjectDir,
-		DrupalRootfs:    statusDrupalRootfs,
+		DrupalRootfs:    rootfs,
 		Fcrepo:          string(resolveComponentCreateState("fcrepo", name, state, currentStates)),
 		Blazegraph:      string(resolveComponentCreateState("blazegraph", name, state, currentStates)),
 		IIIF:            resolveIIIFCreateValue(name, disposition, currentStates),
@@ -170,28 +182,28 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 		IIIFUpstreamURL: resolveIIIFTopologyUpstream(name, followUps, statusByName),
 		ComposeOverride: resolveEnvironmentOverridePath(ctx),
 	}
-	if opts.Fcrepo == "" {
-		opts.Fcrepo = createpkg.FcrepoStateOn
+	if applyOpts.Fcrepo == "" {
+		applyOpts.Fcrepo = createpkg.FcrepoStateOn
 	}
-	if opts.Blazegraph == "" {
-		opts.Blazegraph = createpkg.FcrepoStateOn
+	if applyOpts.Blazegraph == "" {
+		applyOpts.Blazegraph = createpkg.FcrepoStateOn
 	}
-	if opts.IIIF == "" {
-		opts.IIIF = createpkg.IIIFCantaloupe
+	if applyOpts.IIIF == "" {
+		applyOpts.IIIF = createpkg.IIIFCantaloupe
 	}
-	if opts.IIIFTopology == "" {
-		opts.IIIFTopology = createpkg.IIIFTopologyLocal
+	if applyOpts.IIIFTopology == "" {
+		applyOpts.IIIFTopology = createpkg.IIIFTopologyLocal
 	}
 
-	if opts.Fcrepo == createpkg.FcrepoStateOff {
-		scheme, err := resolveCurrentFileSystemURI(ctx.ProjectDir, statusDrupalRootfs)
+	if applyOpts.Fcrepo == createpkg.FcrepoStateOff {
+		scheme, err := resolveCurrentFileSystemURI(ctx.ProjectDir, rootfs)
 		if err != nil {
 			return err
 		}
-		opts.ISLEFileSystemURI = scheme
+		applyOpts.ISLEFileSystemURI = scheme
 	}
 
-	if err := componentApplyOptions(opts); err != nil {
+	if err := componentApplyOptions(applyOpts); err != nil {
 		return err
 	}
 	if err := ctx.EnsureTrackedComposeOverrideSymlink(); err != nil {
@@ -216,13 +228,15 @@ func componentDefinitions() map[string]corecomponent.Definition {
 }
 
 func orderedComponentDefinitions() []corecomponent.Definition {
-	return []corecomponent.Definition{
+	defs := []corecomponent.Definition{
 		components.Fcrepo(components.TemplateSource{}),
 		components.Blazegraph(components.TemplateSource{}),
 		components.IIIF(components.TemplateSource{}),
 		components.IIIFTopology(),
-		components.BotMitigation(),
+		coretraefik.BotMitigation(isleBotMitigationOptions()),
 	}
+	defs = append(defs, components.DerivativeServices()...)
+	return defs
 }
 
 func managedComponentDefinitions() []corecomponent.Definition {
@@ -247,22 +261,39 @@ func componentCatalogDefinitions() []corecomponent.Definition {
 }
 
 func blocksComponentSetOnDrift(targetName, driftedName string) bool {
+	if createpkg.IsDerivativeService(targetName) {
+		return false
+	}
 	switch targetName {
-	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override", components.BotMitigationName:
+	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override", coretraefik.BotMitigationName:
 		return false
 	}
 	switch driftedName {
-	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override", components.BotMitigationName:
+	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override", coretraefik.BotMitigationName:
 		return false
 	default:
-		return true
+		return !createpkg.IsDerivativeService(driftedName)
 	}
 }
 
-func runIIIFComponentSet(cmd *cobra.Command, ctx *config.Context, name string, disposition corecomponent.Disposition, statusByName map[string]componentView, followUps map[string]string, currentStates map[string]corecomponent.DetectedState) error {
+func normalizeComponentSetDispositionState(name string, disposition corecomponent.Disposition, state corecomponent.State) (corecomponent.Disposition, corecomponent.State) {
+	if !createpkg.IsDerivativeService(name) {
+		return disposition, state
+	}
+	switch disposition {
+	case corecomponent.DispositionDistributed:
+		return disposition, corecomponent.StateOn
+	case corecomponent.DispositionEnabled:
+		return disposition, corecomponent.StateOff
+	default:
+		return disposition, state
+	}
+}
+
+func runIIIFComponentSet(cmd *cobra.Command, ctx *config.Context, drupalRootfs, name string, disposition corecomponent.Disposition, statusByName map[string]componentView, followUps map[string]string, currentStates map[string]corecomponent.DetectedState) error {
 	opts := createpkg.Options{
 		Path:            ctx.ProjectDir,
-		DrupalRootfs:    statusDrupalRootfs,
+		DrupalRootfs:    drupalRootfs,
 		IIIF:            resolveIIIFCreateValue(name, disposition, currentStates),
 		IIIFTopology:    resolveIIIFTopologyCreateValue(name, disposition, currentStates),
 		IIIFUpstreamURL: resolveIIIFTopologyUpstream(name, followUps, statusByName),
@@ -290,21 +321,47 @@ func runIIIFComponentSet(cmd *cobra.Command, ctx *config.Context, name string, d
 }
 
 func runBotMitigationComponentSet(cmd *cobra.Command, ctx *config.Context, disposition corecomponent.Disposition, state corecomponent.State) error {
-	target := createpkg.BotMitigationStateOff
+	target := coretraefik.BotMitigationStateOff
 	if state == corecomponent.StateOn {
-		target = createpkg.BotMitigationStateOn
+		target = coretraefik.BotMitigationStateOn
 	}
-	if err := createpkg.ApplyBotMitigation(ctx.ProjectDir, target); err != nil {
+	if err := coretraefik.ApplyBotMitigation(ctx.ProjectDir, target, isleBotMitigationOptions()); err != nil {
 		return err
 	}
 	if err := ctx.EnsureTrackedComposeOverrideSymlink(); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", components.BotMitigationName, disposition)
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", coretraefik.BotMitigationName, disposition)
 	if state == corecomponent.StateOn {
 		fmt.Fprintln(cmd.OutOrStdout(), botMitigationTurnstileWarning)
 	}
 	return nil
+}
+
+func runDerivativeServiceComponentSet(cmd *cobra.Command, ctx *config.Context, name string, disposition corecomponent.Disposition) error {
+	topology := createpkg.DerivativeTopologyLocal
+	if disposition == corecomponent.DispositionDistributed {
+		topology = createpkg.DerivativeTopologyDistributed
+	}
+	opts := createpkg.Options{
+		Path: ctx.ProjectDir,
+		DerivativeServices: map[string]string{
+			name: topology,
+		},
+	}
+	if err := createpkg.ApplyDerivativeServices(opts); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", name, disposition)
+	return nil
+}
+
+func isleBotMitigationOptions() coretraefik.BotMitigationOptions {
+	return coretraefik.BotMitigationOptions{
+		RouterName:       "drupal",
+		RouterConfigPath: "conf/traefik/drupal.yml",
+	}
 }
 
 func resolveIIIFCreateValue(targetName string, targetDisposition corecomponent.Disposition, current map[string]corecomponent.DetectedState) string {
@@ -354,7 +411,7 @@ func resolveComponentCreateState(componentName, targetName string, targetState c
 	}
 }
 
-func componentSetPrompt(def corecomponent.Definition, disposition corecomponent.Disposition, state corecomponent.State, followUps map[string]string) (string, error) {
+func componentSetPrompt(def corecomponent.Definition, disposition corecomponent.Disposition, state corecomponent.State, followUps map[string]string, tlsMode string) (string, error) {
 	var summary string
 	switch state {
 	case corecomponent.StateOn:
@@ -376,7 +433,7 @@ func componentSetPrompt(def corecomponent.Definition, disposition corecomponent.
 	if strings.TrimSpace(summary) != "" {
 		body = append(body, "", summary)
 	}
-	if requestedMode := componentRequestedMode(def.Name, disposition, state); strings.TrimSpace(requestedMode) != "" {
+	if requestedMode := componentRequestedMode(def.Name, disposition, tlsMode); strings.TrimSpace(requestedMode) != "" {
 		body = append(body, "", fmt.Sprintf("Requested mode: `%s`.", requestedMode))
 	}
 	if rendered := corecomponent.RenderDecisionFollowUps(def, corecomponent.ReviewDecision{
@@ -396,8 +453,8 @@ func componentSetPrompt(def corecomponent.Definition, disposition corecomponent.
 	return section + "\n\n" + prompt, nil
 }
 
-func runTLSComponentSet(cmd *cobra.Command, ctx *config.Context, name string, disposition corecomponent.Disposition, state corecomponent.State) error {
-	mode, err := resolvedTLSMode(name, disposition, state)
+func runTLSComponentSet(cmd *cobra.Command, ctx *config.Context, name string, disposition corecomponent.Disposition, state corecomponent.State, tlsMode string) error {
+	mode, err := resolvedTLSMode(name, disposition, tlsMode)
 	if err != nil {
 		return err
 	}
@@ -425,8 +482,8 @@ func runTLSComponentSet(cmd *cobra.Command, ctx *config.Context, name string, di
 	return nil
 }
 
-func componentRequestedMode(name string, disposition corecomponent.Disposition, state corecomponent.State) string {
-	mode, err := resolvedTLSMode(name, disposition, state)
+func componentRequestedMode(name string, disposition corecomponent.Disposition, tlsMode string) string {
+	mode, err := resolvedTLSMode(name, disposition, tlsMode)
 	if err != nil {
 		return ""
 	}
@@ -442,8 +499,8 @@ func confirmComponentSet(prompt string) (bool, error) {
 	return value == "y" || value == "yes", nil
 }
 
-func requiresTLSModeSelection(name string, disposition corecomponent.Disposition) bool {
-	return disposition == corecomponent.DispositionEnabled && strings.TrimSpace(componentSetTLSMode) == "" &&
+func requiresTLSModeSelection(name string, disposition corecomponent.Disposition, tlsMode string) bool {
+	return disposition == corecomponent.DispositionEnabled && strings.TrimSpace(tlsMode) == "" &&
 		(name == "isle-tls" || name == "isle-tls-override")
 }
 
@@ -455,24 +512,25 @@ func resolveTLSComponentMode(name string) (string, error) {
 	return promptTLSComponentMode(name, defaultValue, componentSetInput, componentPromptChoice)
 }
 
-func resolvedTLSMode(name string, disposition corecomponent.Disposition, state corecomponent.State) (string, error) {
+func resolvedTLSMode(name string, disposition corecomponent.Disposition, tlsMode string) (string, error) {
+	tlsMode = strings.TrimSpace(tlsMode)
 	switch name {
 	case "isle-tls":
 		if disposition != corecomponent.DispositionEnabled {
 			return traefikconfig.ModeHTTP, nil
 		}
-		if strings.TrimSpace(componentSetTLSMode) == "" {
+		if tlsMode == "" {
 			return traefikconfig.ModeSelfManaged, nil
 		}
-		return componentSetTLSMode, nil
+		return tlsMode, nil
 	case "isle-tls-override":
 		if disposition != corecomponent.DispositionEnabled {
 			return traefikconfig.ModeInherited, nil
 		}
-		if strings.TrimSpace(componentSetTLSMode) == "" {
+		if tlsMode == "" {
 			return traefikconfig.ModeMkcert, nil
 		}
-		return componentSetTLSMode, nil
+		return tlsMode, nil
 	default:
 		return "", fmt.Errorf("unsupported TLS component %q", name)
 	}
@@ -553,26 +611,43 @@ func promptTLSComponentMode(name, defaultValue string, input corecomponent.Input
 
 // isleSetRunner implements plugin.SetRunner for the isle plugin.
 type isleSetRunner struct {
-	drupalRootfs string
+	codebaseRootfs string
+	drupalRootfs   string
+	path           string
+	state          string
+	disposition    string
+	yolo           bool
+	tlsMode        string
 }
 
 func (r *isleSetRunner) BindFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&statusPath, "path", "", "Project path override")
-	corecomponent.AddDrupalRootfsFlag(cmd, &r.drupalRootfs, createpkg.DefaultDrupalRootfs)
-	cmd.Flags().StringVar(&componentSetState, "state", "", "Component state to apply (on, off)")
-	cmd.Flags().StringVar(&componentSetDisposition, "disposition", "", "Component disposition to apply")
-	cmd.Flags().BoolVar(&componentSetYolo, "yolo", false, "Apply without confirmation")
-	cmd.Flags().StringVar(&componentSetTLSMode, "tls-mode", "", "TLS mode for the selected component")
+	cmd.Flags().StringVar(&r.path, "path", "", "Project path override")
+	addCodebaseRootfsFlags(cmd, &r.codebaseRootfs, &r.drupalRootfs, createpkg.DefaultDrupalRootfs)
+	cmd.Flags().StringVar(&r.state, "state", "", "Component state to apply (on, off)")
+	cmd.Flags().StringVar(&r.disposition, "disposition", "", "Component disposition to apply")
+	cmd.Flags().BoolVar(&r.yolo, "yolo", false, "Apply without confirmation")
+	cmd.Flags().StringVar(&r.tlsMode, "tls-mode", "", "TLS mode for the selected component")
 	addComponentSetFollowUpFlags(cmd, managedComponentDefinitions())
 }
 
 func (r *isleSetRunner) Run(cmd *cobra.Command, args []string, ctx *config.Context) error {
-	statusDrupalRootfs = r.drupalRootfs
-	stateValue, err := resolveComponentSetStateValue(cmd, args)
+	rootfs, err := resolveCodebaseRootfsFlag(cmd, r.codebaseRootfs, r.drupalRootfs)
 	if err != nil {
 		return err
 	}
-	return runComponentSet(cmd, args[0], stateValue)
+	stateValue, err := resolveComponentSetStateValueFrom(cmd, args, r.state, r.disposition)
+	if err != nil {
+		return err
+	}
+	return runComponentSetWithOptions(cmd, args[0], stateValue, componentSetOptions{
+		Path:           r.path,
+		CodebaseRootfs: rootfs,
+		DrupalRootfs:   rootfs,
+		State:          r.state,
+		Disposition:    r.disposition,
+		Yolo:           r.yolo,
+		TLSMode:        r.tlsMode,
+	})
 }
 
 var _ plugin.SetRunner = (*isleSetRunner)(nil)
@@ -623,7 +698,7 @@ func componentSetFollowUpFlagName(componentName, followUpName string) string {
 	return componentName + "-" + followUpName
 }
 
-func resolveComponentSetFollowUps(cmd *cobra.Command, def corecomponent.Definition, view componentView, disposition corecomponent.Disposition, state corecomponent.State) (map[string]string, error) {
+func resolveComponentSetFollowUps(cmd *cobra.Command, def corecomponent.Definition, view componentView, disposition corecomponent.Disposition, opts componentSetOptions) (map[string]string, error) {
 	options := map[string]string{}
 	for _, spec := range def.FollowUpsForDisposition(disposition) {
 		flagName := componentSetFollowUpSpecFlagName(def.Name, spec)
@@ -633,19 +708,19 @@ func resolveComponentSetFollowUps(cmd *cobra.Command, def corecomponent.Definiti
 			if defaultValue == "" {
 				defaultValue = strings.TrimSpace(spec.DefaultValue)
 			}
-			if strings.TrimSpace(componentSetTLSMode) != "" {
-				defaultValue = strings.TrimSpace(componentSetTLSMode)
+			if strings.TrimSpace(opts.TLSMode) != "" {
+				defaultValue = strings.TrimSpace(opts.TLSMode)
 			}
 			options[spec.Name] = defaultValue
-		case spec.Name == "tls-mode" && strings.TrimSpace(componentSetTLSMode) != "":
-			options[spec.Name] = strings.TrimSpace(componentSetTLSMode)
+		case spec.Name == "tls-mode" && strings.TrimSpace(opts.TLSMode) != "":
+			options[spec.Name] = strings.TrimSpace(opts.TLSMode)
 		case cmd != nil && cmd.Flags().Lookup(flagName) != nil && cmd.Flags().Changed(flagName):
 			value, err := cmd.Flags().GetString(flagName)
 			if err != nil {
 				return nil, err
 			}
 			options[spec.Name] = strings.TrimSpace(value)
-		case componentSetYolo:
+		case opts.Yolo:
 			defaultValue := strings.TrimSpace(view.FollowUpValues[spec.Name])
 			if defaultValue == "" {
 				defaultValue = strings.TrimSpace(spec.DefaultValue)
@@ -674,6 +749,10 @@ func componentSetFollowUpSpecFlagName(componentName string, followUp corecompone
 }
 
 func resolveComponentSetStateValue(cmd *cobra.Command, args []string) (string, error) {
+	return resolveComponentSetStateValueFrom(cmd, args, componentSetState, componentSetDisposition)
+}
+
+func resolveComponentSetStateValueFrom(cmd *cobra.Command, args []string, stateFlag, dispositionFlag string) (string, error) {
 	positionalState := ""
 	if len(args) > 1 {
 		positionalState = args[1]
@@ -687,10 +766,10 @@ func resolveComponentSetStateValue(cmd *cobra.Command, args []string) (string, e
 		return positionalState, nil
 	}
 	if dispositionChanged {
-		return componentSetDisposition, nil
+		return dispositionFlag, nil
 	}
 	if flagChanged {
-		return componentSetState, nil
+		return stateFlag, nil
 	}
 	return "", nil
 }

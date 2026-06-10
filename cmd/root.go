@@ -15,26 +15,16 @@ func RegisterCommands(sdk *plugin.SDK) {
 		RequiredComposerPackages: []string{"drupal/islandora"},
 		Reason:                   "drupal service with drupal/islandora in composer.json",
 	})
-	sdk.RegisterContextValidator(isleContextValidator)
 	pluginjobs.Register(sdk)
 	sdk.RegisterComponentDefinitions(orderedComponentDefinitions()...)
-	sdk.AddCommand(sdk.GetDiscoveryMetadataCommand())
-	sdk.AddCommand(componentExtensionCmd)
+	sdk.RegisterComponentCommand(componentExtensionCmd)
 	sdk.AddCommand(cacheCmd)
 	sdk.RegisterCreateRunner(createDefinition(), createRunner{})
-	sdk.AddStandardComposeCommands(plugin.StandardComposeCommandOptions{
-		DisplayName:     "ISLE",
-		BuildCommands:   createDefinition().DockerComposeBuild,
-		InitCommands:    createDefinition().DockerComposeInit,
-		UpCommands:      createDefinition().DockerComposeUp,
-		DownCommands:    createDefinition().DockerComposeDown,
-		RolloutCommands: createDefinition().DockerComposeRollout,
-	})
-	sdk.RegisterDebugHandler(&isleDebugRunner{})
+	sdk.RegisterDebugRunner(&isleDebugRunner{})
 	sdk.RegisterConvergeRunner(&isleConvergeRunner{})
 	sdk.RegisterSetRunner(&isleSetRunner{})
 	sdk.RegisterValidateRunner(&isleValidateRunner{})
+	sdk.RegisterHealthcheckRunner(isleHealthcheckRunner{})
 	sdk.AddCommand(migrateCmd)
 	sdk.AddCommand(syncCmd)
-	sdk.AddCommand(validateCmd)
 }

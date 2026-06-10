@@ -20,6 +20,7 @@ var (
 	componentReviewReport            bool
 	componentReviewVerbose           bool
 	componentReviewFormat            string
+	componentReviewYolo              bool
 )
 
 type componentReviewDecision struct {
@@ -32,39 +33,52 @@ type componentReviewDecision struct {
 
 type promptReviewDecision = corecomponent.ReviewDecision
 
-var componentReviewCmd = &cobra.Command{
-	Use:   "review",
-	Short: "Review and adjust ISLE component state for the current project",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runComponentReview(cmd)
-	},
+type componentReconcileOptions struct {
+	ComponentName  string
+	Path           string
+	CodebaseRootfs string
+	DrupalRootfs   string
+	Report         bool
+	Verbose        bool
+	Format         string
+	Yolo           bool
 }
 
-func init() {
-	componentReviewCmd.Flags().StringVar(&statusPath, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
-	corecomponent.AddDrupalRootfsFlag(componentReviewCmd, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
-	componentReviewCmd.Flags().StringVarP(&componentReviewName, "component", "c", "", "Specific component to reconcile")
-	corecomponent.AddReviewFlags(componentReviewCmd, &componentReviewReport, &componentReviewVerbose, &componentReviewFormat)
-	componentCmd.AddCommand(componentReviewCmd)
+func componentReconcileOptionsFromGlobals(componentName string) componentReconcileOptions {
+	return componentReconcileOptions{
+		ComponentName:  componentName,
+		Path:           statusPath,
+		CodebaseRootfs: statusCodebaseRootfs,
+		DrupalRootfs:   statusDrupalRootfs,
+		Report:         componentReviewReport,
+		Verbose:        componentReviewVerbose,
+		Format:         componentReviewFormat,
+		Yolo:           componentReviewYolo,
+	}
 }
 
 func runComponentReview(cmd *cobra.Command) error {
-	return runComponentReconcile(cmd, componentReviewName)
+	return runComponentReconcile(cmd, componentReconcileOptionsFromGlobals(componentReviewName))
 }
 
-func runComponentReconcile(cmd *cobra.Command, componentName string) error {
-	ctx, err := resolveStatusContext()
+func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) error {
+	ctx, err := resolveStatusContextForPath(opts.Path)
 	if err != nil {
 		return err
 	}
 	if ctx.DockerHostType != config.ContextLocal {
 		return fmt.Errorf("component review is local-only; context %q is %q", ctx.Name, ctx.DockerHostType)
 	}
-
-	statuses, err := detectComponentViewsForContext(ctx, statusDrupalRootfs)
+	rootfs, err := resolveCodebaseRootfsFlag(cmd, opts.CodebaseRootfs, opts.DrupalRootfs)
 	if err != nil {
 		return err
 	}
+
+	statuses, err := detectComponentViewsForContext(ctx, rootfs)
+	if err != nil {
+		return err
+	}
+	componentName := strings.TrimSpace(opts.ComponentName)
 	if strings.TrimSpace(componentName) != "" {
 		for _, status := range statuses {
 			if status.Name == componentName {
@@ -79,8 +93,8 @@ func runComponentReconcile(cmd *cobra.Command, componentName string) error {
 	if err != nil {
 		return err
 	}
-	if componentReviewReport {
-		return corecomponent.WriteComponentStatusReportWithFormat(cmd.OutOrStdout(), statuses, componentReviewVerbose, componentReviewFormat)
+	if opts.Report {
+		return corecomponent.WriteComponentStatusReportWithFormat(cmd.OutOrStdout(), statuses, opts.Verbose, opts.Format)
 	}
 
 	rawDecisions, err := corecomponent.RunReview(statuses, corecomponent.ReviewOptions{
@@ -89,17 +103,22 @@ func runComponentReconcile(cmd *cobra.Command, componentName string) error {
 		PromptDisposition: componentReviewPromptDisposition,
 		PromptChoice:      componentReviewPromptChoice,
 		SummaryLine:       componentReviewSummaryLine,
-		Confirm:           confirmComponentReview,
+		Confirm: func(prompt string) (bool, error) {
+			if opts.Yolo {
+				return true, nil
+			}
+			return confirmComponentReview(prompt)
+		},
 	})
 	if err != nil {
 		return err
 	}
 	decisions := convertComponentReviewDecisions(rawDecisions)
 	if strings.TrimSpace(componentName) != "" {
-		decisions = mergeCurrentComponentReviewDecisions(ctx, decisions)
+		decisions = mergeCurrentComponentReviewDecisions(ctx, rootfs, decisions)
 	}
 
-	if err := applyComponentReview(ctx, statusDrupalRootfs, decisions); err != nil {
+	if err := applyComponentReview(ctx, rootfs, decisions); err != nil {
 		return err
 	}
 
@@ -116,8 +135,8 @@ func runComponentReconcile(cmd *cobra.Command, componentName string) error {
 	return nil
 }
 
-func mergeCurrentComponentReviewDecisions(ctx *config.Context, decisions map[string]componentReviewDecision) map[string]componentReviewDecision {
-	statuses, err := detectComponentViewsForContext(ctx, statusDrupalRootfs)
+func mergeCurrentComponentReviewDecisions(ctx *config.Context, drupalRootfs string, decisions map[string]componentReviewDecision) map[string]componentReviewDecision {
+	statuses, err := detectComponentViewsForContext(ctx, drupalRootfs)
 	if err != nil {
 		return decisions
 	}
@@ -188,14 +207,15 @@ func convertComponentReviewDecisions(raw map[string]promptReviewDecision) map[st
 
 func applyComponentReview(ctx *config.Context, drupalRootfs string, decisions map[string]componentReviewDecision) error {
 	opts := createpkg.Options{
-		Path:            ctx.ProjectDir,
-		DrupalRootfs:    drupalRootfs,
-		Fcrepo:          string(decisions["fcrepo"].State),
-		Blazegraph:      string(decisions["blazegraph"].State),
-		IIIF:            reviewIIIFCreateValue(decisions["iiif"]),
-		IIIFTopology:    reviewIIIFTopologyCreateValue(decisions["iiif-topology"]),
-		IIIFUpstreamURL: strings.TrimSpace(decisions["iiif-topology"].UpstreamURL),
-		ComposeOverride: resolveEnvironmentOverridePath(ctx),
+		Path:               ctx.ProjectDir,
+		DrupalRootfs:       drupalRootfs,
+		Fcrepo:             string(decisions["fcrepo"].State),
+		Blazegraph:         string(decisions["blazegraph"].State),
+		IIIF:               reviewIIIFCreateValue(decisions["iiif"]),
+		IIIFTopology:       reviewIIIFTopologyCreateValue(decisions["iiif-topology"]),
+		IIIFUpstreamURL:    strings.TrimSpace(decisions["iiif-topology"].UpstreamURL),
+		ComposeOverride:    resolveEnvironmentOverridePath(ctx),
+		DerivativeServices: reviewDerivativeServiceTopologies(decisions),
 	}
 	if opts.Fcrepo == "" {
 		opts.Fcrepo = createpkg.FcrepoStateOn
@@ -245,6 +265,25 @@ func reviewIIIFTopologyCreateValue(decision componentReviewDecision) string {
 		return createpkg.IIIFTopologyExternal
 	}
 	return createpkg.IIIFTopologyLocal
+}
+
+func reviewDerivativeServiceTopologies(decisions map[string]componentReviewDecision) map[string]string {
+	out := map[string]string{}
+	for _, name := range createpkg.DerivativeServiceNames() {
+		decision, ok := decisions[name]
+		if !ok {
+			continue
+		}
+		if decision.Disposition == corecomponent.DispositionDistributed {
+			out[name] = createpkg.DerivativeTopologyDistributed
+		} else {
+			out[name] = createpkg.DerivativeTopologyLocal
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func reviewDecisionLabel(decision componentReviewDecision) string {
