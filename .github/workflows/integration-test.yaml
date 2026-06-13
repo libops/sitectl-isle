@@ -47,9 +47,20 @@ jobs:
         --iiif ${{ matrix.iiif_implementation }}
         --iiif-topology ${{ matrix.iiif_topology }}
         --bot-mitigation ${{ matrix.bot_mitigation_state }}
+      run-verify: true
+      verify-args: >-
+        --fcrepo ${{ matrix.fcrepo_state }}
+        --blazegraph ${{ matrix.blazegraph_state }}
+        --isle-file-system-uri ${{ matrix.isle_file_system_uri }}
+        --iiif ${{ matrix.iiif_implementation }}
+        --iiif-topology ${{ matrix.iiif_topology }}
+        --bot-mitigation ${{ matrix.bot_mitigation_state }}
+        --demo-objects
       checkout-path: sitectl-isle
       checkout-source: template
       project-path: isle-site-template
       local-plugin-path: sitectl-isle
-      packages: sitectl sitectl-drupal
+      sitectl-repository: libops/sitectl
+      sitectl-ref: main
+      packages: sitectl-drupal
       timeout-minutes: 120
