@@ -23,7 +23,7 @@ func (isleHealthcheckRunner) Run(cmd *cobra.Command, ctx *config.Context) ([]sit
 	if err != nil {
 		return nil, err
 	}
-	defer checker.Close()
+	defer func() { _ = checker.Close() }()
 
 	results = append(results,
 		checker.CheckMariaDB(cmd.Context(), "mariadb"),

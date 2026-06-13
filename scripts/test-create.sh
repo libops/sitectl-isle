@@ -33,11 +33,26 @@ PATH="${BIN_DIR}:${PATH}"
 export PATH
 mkdir -p "${SITECTL_HOME}"
 
+remove_tmp_dir() {
+	if [ ! -d "${TMP_DIR}" ]; then
+		return
+	fi
+	chmod -R u+rwX "${TMP_DIR}" 2>/dev/null || true
+	if rm -rf "${TMP_DIR}" 2>/dev/null; then
+		return
+	fi
+	if command -v sudo >/dev/null 2>&1; then
+		sudo chown -R "$(id -u):$(id -g)" "${TMP_DIR}" 2>/dev/null || true
+		sudo chmod -R u+rwX "${TMP_DIR}" 2>/dev/null || true
+	fi
+	rm -rf "${TMP_DIR}"
+}
+
 cleanup() {
 	if [ -d "${SITE_DIR}" ]; then
 		HOME="${SITECTL_HOME}" sitectl compose down -v --remove-orphans >/dev/null 2>&1 || true
 	fi
-	rm -rf "${TMP_DIR}"
+	remove_tmp_dir
 }
 trap cleanup EXIT
 
