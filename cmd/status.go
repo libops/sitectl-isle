@@ -140,6 +140,8 @@ func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string
 			if upstream := currentIIIFUpstreamURL(siteCtx.ProjectDir); strings.TrimSpace(upstream) != "" {
 				followUps["upstream-url"] = strings.TrimSpace(upstream)
 			}
+		case "codebase":
+			disposition = codebaseDisposition(sdkStatuses[i].State)
 		default:
 			if createpkg.IsDerivativeService(sdkStatuses[i].Name) {
 				disposition = derivativeServiceDisposition(sdkStatuses[i].State)
@@ -232,6 +234,17 @@ func derivativeServiceDisposition(state corecomponent.DetectedState) corecompone
 		return corecomponent.DispositionDistributed
 	case corecomponent.DetectedState(corecomponent.StateOff):
 		return corecomponent.DispositionEnabled
+	default:
+		return ""
+	}
+}
+
+func codebaseDisposition(state corecomponent.DetectedState) corecomponent.Disposition {
+	switch state {
+	case corecomponent.DetectedState(corecomponent.StateOn):
+		return corecomponent.DispositionGitRoot
+	case corecomponent.DetectedState(corecomponent.StateOff):
+		return corecomponent.DispositionNested
 	default:
 		return ""
 	}

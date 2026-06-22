@@ -5,12 +5,13 @@ set -x
 
 export TERM="${TERM:-dumb}"
 
-FCREPO_STATE="${1:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] [disabled|distributed] [bot-mitigation-on|off] }"
-ISLE_FILE_SYSTEM_URI="${2:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] [disabled|distributed] [bot-mitigation-on|off] }"
+FCREPO_STATE="${1:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] [disabled|distributed] [bot-mitigation-on|off] [nested|git-root] }"
+ISLE_FILE_SYSTEM_URI="${2:?usage: ./scripts/test-create.sh <fcrepo-on|off> <public|private> [blazegraph-on|off] [cantaloupe|triplet] [disabled|distributed] [bot-mitigation-on|off] [nested|git-root] }"
 BLAZEGRAPH_STATE="${3:-on}"
 IIIF_IMPLEMENTATION="${4:-triplet}"
 IIIF_TOPOLOGY="${5:-disabled}"
 BOT_MITIGATION_STATE="${6:-off}"
+CODEBASE_LAYOUT="${7:-nested}"
 GIT_REMOTE_URL="${GIT_REMOTE_URL:-}"
 SITECTL_CONTEXT="${SITECTL_CONTEXT:-integration-test}"
 
@@ -126,9 +127,41 @@ create_site() {
 		--blazegraph "${BLAZEGRAPH_STATE}" \
 		--iiif "${IIIF_IMPLEMENTATION}" \
 		--iiif-topology "${IIIF_TOPOLOGY}" \
+		--codebase "${CODEBASE_LAYOUT}" \
 		--bot-mitigation "${BOT_MITIGATION_STATE}" \
 		--isle-file-system-uri "${ISLE_FILE_SYSTEM_URI}" \
 		--setup-only
+}
+
+verify_codebase_layout() {
+	case "${CODEBASE_LAYOUT}" in
+	git-root)
+		for path in Dockerfile composer.json composer.lock config/sync web/modules/custom web/themes/custom; do
+			if [ ! -e "${SITE_DIR}/${path}" ]; then
+				echo "expected git-root codebase path ${path}" >&2
+				exit 1
+			fi
+		done
+		if [ -e "${SITE_DIR}/drupal/Dockerfile" ]; then
+			echo "drupal/Dockerfile still exists after create --codebase git-root" >&2
+			exit 1
+		fi
+		if ! grep -Eq '^[[:space:]]+context: \.?$' "${SITE_DIR}/docker-compose.yml"; then
+			echo "drupal build context was not updated to git root" >&2
+			exit 1
+		fi
+		;;
+	nested)
+		if [ ! -e "${SITE_DIR}/drupal/Dockerfile" ] || [ ! -e "${SITE_DIR}/drupal/rootfs/var/www/drupal/composer.json" ]; then
+			echo "expected upstream nested Drupal codebase layout" >&2
+			exit 1
+		fi
+		;;
+	*)
+		echo "unexpected codebase layout: ${CODEBASE_LAYOUT}" >&2
+		exit 1
+		;;
+	esac
 }
 
 set_assert_target() {
@@ -302,6 +335,7 @@ verify_bot_mitigation_challenge() {
 main() {
 	build_binaries
 	create_site
+	verify_codebase_layout
 	verify_iiif_implementation
 	set_assert_target
 	run_make_target init

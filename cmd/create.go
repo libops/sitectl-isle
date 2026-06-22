@@ -153,6 +153,9 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 	if decision, ok := resolved.Decisions["bot-mitigation"]; ok {
 		opts.BotMitigation = string(decision.State)
 	}
+	if decision, ok := resolved.Decisions["codebase"]; ok {
+		opts.Codebase = createCodebaseValue(decision.Disposition)
+	}
 	for _, name := range createpkg.DerivativeServiceNames() {
 		decision, ok := resolved.Decisions[name]
 		if !ok || !cmd.Flags().Changed(name) {
@@ -165,6 +168,10 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 	}
 	if opts.ISLEFileSystemURI == "" {
 		opts.ISLEFileSystemURI = createpkg.DefaultISLEFileSystemURI
+	}
+	if opts.Codebase == createpkg.CodebaseGitRoot {
+		resolved.DrupalRootfs = corecomponent.DefaultDrupalRootfs
+		opts.DrupalRootfs = corecomponent.DefaultDrupalRootfs
 	}
 	return createRequest{
 		ComposeCreateRequest: resolved,
@@ -191,6 +198,13 @@ func createDerivativeTopologyValue(disposition corecomponent.Disposition) string
 		return createpkg.DerivativeTopologyDistributed
 	}
 	return createpkg.DerivativeTopologyLocal
+}
+
+func createCodebaseValue(disposition corecomponent.Disposition) string {
+	if disposition == corecomponent.DispositionGitRoot {
+		return createpkg.CodebaseGitRoot
+	}
+	return createpkg.CodebaseNested
 }
 
 func runCreateCommand(cmd *cobra.Command, req createRequest) error {
@@ -643,6 +657,7 @@ func buildRecreateCommand(req createRequest) string {
 		`--blazegraph=` + req.Apply.Blazegraph,
 		`--iiif=` + iiifDispositionFlagValue(req.Apply.IIIF),
 		`--iiif-topology=` + iiifTopologyDispositionFlagValue(req.Apply.IIIFTopology),
+		`--codebase=` + codebaseDispositionFlagValue(req.Apply.Codebase),
 		`--bot-mitigation=` + req.Apply.BotMitigation,
 		`--isle-file-system-uri=` + shellDoubleQuote(req.Apply.ISLEFileSystemURI),
 	}
@@ -706,6 +721,13 @@ func derivativeTopologyDispositionFlagValue(value string) string {
 		return string(corecomponent.DispositionDistributed)
 	}
 	return string(corecomponent.DispositionEnabled)
+}
+
+func codebaseDispositionFlagValue(value string) string {
+	if value == createpkg.CodebaseGitRoot {
+		return string(corecomponent.DispositionGitRoot)
+	}
+	return string(corecomponent.DispositionNested)
 }
 
 func shellDoubleQuote(value string) string {

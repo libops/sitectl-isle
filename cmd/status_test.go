@@ -438,7 +438,7 @@ services:
 func writeISLEOnFixture(t *testing.T, projectDir string) {
 	t.Helper()
 
-	configDir := filepath.Join(projectDir, "drupal", "rootfs", "var", "www", "drupal", "config", "sync")
+	configDir := filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "config", "sync")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(configDir) error = %v", err)
 	}

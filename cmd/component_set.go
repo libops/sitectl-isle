@@ -181,6 +181,7 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 		IIIFTopology:    resolveIIIFTopologyCreateValue(name, disposition, currentStates),
 		IIIFUpstreamURL: resolveIIIFTopologyUpstream(name, followUps, statusByName),
 		ComposeOverride: resolveEnvironmentOverridePath(ctx),
+		Codebase:        resolveCodebaseCreateValue(name, disposition, currentStates),
 	}
 	if applyOpts.Fcrepo == "" {
 		applyOpts.Fcrepo = createpkg.FcrepoStateOn
@@ -193,6 +194,9 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	}
 	if applyOpts.IIIFTopology == "" {
 		applyOpts.IIIFTopology = createpkg.IIIFTopologyLocal
+	}
+	if applyOpts.Codebase == "" {
+		applyOpts.Codebase = createpkg.CodebaseNested
 	}
 
 	if applyOpts.Fcrepo == createpkg.FcrepoStateOff {
@@ -207,6 +211,9 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 		return err
 	}
 	if err := ctx.EnsureTrackedComposeOverrideSymlink(); err != nil {
+		return err
+	}
+	if err := updateContextRootfsForCodebase(ctx, opts.Path, name, applyOpts.Codebase); err != nil {
 		return err
 	}
 
@@ -233,6 +240,7 @@ func orderedComponentDefinitions() []corecomponent.Definition {
 		components.Blazegraph(components.TemplateSource{}),
 		components.IIIF(components.TemplateSource{}),
 		components.IIIFTopology(),
+		components.Codebase(),
 		coretraefik.BotMitigation(isleBotMitigationOptions()),
 	}
 	defs = append(defs, components.DerivativeServices()...)
@@ -265,11 +273,11 @@ func blocksComponentSetOnDrift(targetName, driftedName string) bool {
 		return false
 	}
 	switch targetName {
-	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override", coretraefik.BotMitigationName:
+	case "iiif", "iiif-topology", "codebase", "isle-tls", "isle-tls-override", coretraefik.BotMitigationName:
 		return false
 	}
 	switch driftedName {
-	case "iiif", "iiif-topology", "isle-tls", "isle-tls-override", coretraefik.BotMitigationName:
+	case "iiif", "iiif-topology", "codebase", "isle-tls", "isle-tls-override", coretraefik.BotMitigationName:
 		return false
 	default:
 		return !createpkg.IsDerivativeService(driftedName)
@@ -409,6 +417,27 @@ func resolveComponentCreateState(componentName, targetName string, targetState c
 	default:
 		return corecomponent.StateOn
 	}
+}
+
+func resolveCodebaseCreateValue(targetName string, targetDisposition corecomponent.Disposition, current map[string]corecomponent.DetectedState) string {
+	if targetName == "codebase" {
+		if targetDisposition == corecomponent.DispositionGitRoot {
+			return createpkg.CodebaseGitRoot
+		}
+		return createpkg.CodebaseNested
+	}
+	if current["codebase"] == corecomponent.DetectedState(corecomponent.StateOn) {
+		return createpkg.CodebaseGitRoot
+	}
+	return createpkg.CodebaseNested
+}
+
+func updateContextRootfsForCodebase(ctx *config.Context, pathOverride, targetName, codebase string) error {
+	if ctx == nil || strings.TrimSpace(pathOverride) != "" || targetName != "codebase" || codebase != createpkg.CodebaseGitRoot {
+		return nil
+	}
+	ctx.DrupalRootfs = corecomponent.DefaultDrupalRootfs
+	return config.SaveContext(ctx, false)
 }
 
 func componentSetPrompt(def corecomponent.Definition, disposition corecomponent.Disposition, state corecomponent.State, followUps map[string]string, tlsMode string) (string, error) {

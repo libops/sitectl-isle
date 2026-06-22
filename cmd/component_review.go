@@ -118,7 +118,7 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 		decisions = mergeCurrentComponentReviewDecisions(ctx, rootfs, decisions)
 	}
 
-	if err := applyComponentReview(ctx, rootfs, decisions); err != nil {
+	if err := applyComponentReview(ctx, rootfs, opts.Path, decisions); err != nil {
 		return err
 	}
 
@@ -205,7 +205,7 @@ func convertComponentReviewDecisions(raw map[string]promptReviewDecision) map[st
 	return decisions
 }
 
-func applyComponentReview(ctx *config.Context, drupalRootfs string, decisions map[string]componentReviewDecision) error {
+func applyComponentReview(ctx *config.Context, drupalRootfs, pathOverride string, decisions map[string]componentReviewDecision) error {
 	opts := createpkg.Options{
 		Path:               ctx.ProjectDir,
 		DrupalRootfs:       drupalRootfs,
@@ -216,6 +216,7 @@ func applyComponentReview(ctx *config.Context, drupalRootfs string, decisions ma
 		IIIFUpstreamURL:    strings.TrimSpace(decisions["iiif-topology"].UpstreamURL),
 		ComposeOverride:    resolveEnvironmentOverridePath(ctx),
 		DerivativeServices: reviewDerivativeServiceTopologies(decisions),
+		Codebase:           reviewCodebaseCreateValue(decisions["codebase"]),
 	}
 	if opts.Fcrepo == "" {
 		opts.Fcrepo = createpkg.FcrepoStateOn
@@ -228,6 +229,9 @@ func applyComponentReview(ctx *config.Context, drupalRootfs string, decisions ma
 	}
 	if opts.IIIFTopology == "" {
 		opts.IIIFTopology = createpkg.IIIFTopologyLocal
+	}
+	if opts.Codebase == "" {
+		opts.Codebase = createpkg.CodebaseNested
 	}
 
 	if opts.Fcrepo == createpkg.FcrepoStateOff {
@@ -248,6 +252,9 @@ func applyComponentReview(ctx *config.Context, drupalRootfs string, decisions ma
 		return err
 	}
 	if err := traefikconfig.ApplyOverride(ctx.ProjectDir, resolveEnvironmentOverridePath(ctx), decisions["isle-tls-override"].State == corecomponent.StateOn, reviewResolvedTLSMode("isle-tls-override", decisions["isle-tls-override"])); err != nil {
+		return err
+	}
+	if err := updateContextRootfsForCodebase(ctx, pathOverride, "codebase", opts.Codebase); err != nil {
 		return err
 	}
 	return ctx.EnsureTrackedComposeOverrideSymlink()
@@ -284,6 +291,13 @@ func reviewDerivativeServiceTopologies(decisions map[string]componentReviewDecis
 		return nil
 	}
 	return out
+}
+
+func reviewCodebaseCreateValue(decision componentReviewDecision) string {
+	if decision.Disposition == corecomponent.DispositionGitRoot {
+		return createpkg.CodebaseGitRoot
+	}
+	return createpkg.CodebaseNested
 }
 
 func reviewDecisionLabel(decision componentReviewDecision) string {

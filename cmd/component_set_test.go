@@ -91,7 +91,7 @@ func TestRunComponentSetUsesCurrentFilesystemURIWhenTurningFcrepoOff(t *testing.
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
 
-	fieldPath := filepath.Join(projectDir, "drupal", "rootfs", "var", "www", "drupal", "config", "sync", "field.storage.media.field_media_file.yml")
+	fieldPath := filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "config", "sync", "field.storage.media.field_media_file.yml")
 	writeFileForTest(t, fieldPath, "settings:\n  uri_scheme: \"archive\"\n")
 
 	oldStatusPath := statusPath
