@@ -1076,7 +1076,7 @@ func addDerivativeServiceFixture(t *testing.T, projectDir, service string) {
 	if err != nil {
 		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
 	}
-	block := "\n  " + service + ":\n    image: islandora/" + service + ":${ISLANDORA_TAG}\n"
+	block := "\n  " + service + ":\n    image: libops/" + service + ":test\n"
 	updated := strings.Replace(string(data), "\n  traefik:\n", block+"\n  traefik:\n", 1)
 	if updated == string(data) {
 		t.Fatalf("failed to insert %s service fixture", service)

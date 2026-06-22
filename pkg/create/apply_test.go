@@ -522,7 +522,7 @@ services:
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
     <<: *common
-    image: islandora/blazegraph:${ISLANDORA_TAG}
+    image: libops/blazegraph@sha256:7f4c0b54d9ef0f0822913559d57498e8de2774cadb664161cfe32f40650d8fc0
     volumes:
       - blazegraph-data:/data:rw
   drupal:
@@ -533,7 +533,7 @@ services:
       DRUPAL_DEFAULT_FCREPO_URL: ${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/
   fcrepo:
     <<: *common
-    image: islandora/fcrepo6:${ISLANDORA_TAG}
+    image: libops/fcrepo@sha256:611b9b15bf205c369aa664d119126429785da28d255635d8aeeb29ddf4ce03f0
     volumes:
       - fcrepo-data:/data:rw
   traefik:
@@ -666,9 +666,9 @@ services:
   alpaca:
     environment: {}
   homarus:
-    image: islandora/homarus:${ISLANDORA_TAG}
+    image: libops/homarus:test
   mergepdf:
-    image: islandora/mergepdf:${ISLANDORA_TAG}
+    image: islandora/mergepdf:test
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}
@@ -731,9 +731,9 @@ services:
   alpaca:
     environment: {}
   crayfits:
-    image: islandora/crayfits:${ISLANDORA_TAG}
+    image: libops/crayfits:test
   fits:
-    image: islandora/fits:${ISLANDORA_TAG}
+    image: libops/fits:test
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}
@@ -787,9 +787,9 @@ services:
   alpaca:
     environment: {}
   crayfits:
-    image: islandora/crayfits:${ISLANDORA_TAG}
+    image: libops/crayfits:test
   fits:
-    image: islandora/fits:${ISLANDORA_TAG}
+    image: libops/fits:test
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}

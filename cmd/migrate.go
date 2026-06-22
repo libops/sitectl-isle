@@ -215,7 +215,7 @@ func mergeDevProdService(name string, dev, prod interface{}) map[string]interfac
 	// Special case for init service
 	if name == "init" {
 		return map[string]interface{}{
-			"image":   "islandora/base:${ISLANDORA_TAG}",
+			"image":   "libops/base@sha256:4a8d3997ac565981cd91ca36fd5a2b64955bac8d78a3632abd5a7137609be631",
 			"restart": "no",
 			"networks": map[string]interface{}{
 				"default": interface{}(nil),

@@ -249,12 +249,12 @@ services:
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: ""
   fcrepo:
     <<: *common
-    image: islandora/fcrepo6:${ISLANDORA_TAG}
+    image: libops/fcrepo@sha256:611b9b15bf205c369aa664d119126429785da28d255635d8aeeb29ddf4ce03f0
     volumes:
       - fcrepo-data:/data:rw
   cantaloupe:
     <<: *common
-    image: islandora/cantaloupe:${ISLANDORA_TAG}
+    image: islandora/cantaloupe:main@sha256:82ac2324593018e5a5a98b44f4508a2ec0b1cda5c0e50be53e695205480a0ee2
     volumes:
       - cantaloupe-data:/data:rw
   traefik:

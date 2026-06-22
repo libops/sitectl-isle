@@ -128,7 +128,7 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 		}
 		createComponentBindErr = nil
 	}
-	resolved, err := commandSDK.ResolveComposeCreateRequest(cmd, createInput, createDrupalRootfs, "", defaultTemplateRepo, defaultTemplateBranch)
+	resolved, err := commandSDK.ResolveComposeCreateRequest(cmd, createInput, "isle", createDrupalRootfs, "", defaultTemplateRepo, defaultTemplateBranch)
 	if err != nil {
 		return createRequest{}, err
 	}
@@ -240,6 +240,13 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	}); err != nil {
 		printCreateFailureSummary(summary, req)
 		return err
+	}
+	if !req.ImageOverrides.Empty() {
+		if err := plugin.ApplyComposeImageOverrides(ctx.ProjectDir, req.ImageOverrides); err != nil {
+			printCreateFailureSummary(summary, req)
+			return err
+		}
+		fmt.Fprintf(progress, "Wrote %s\n", plugin.ComposeImageOverrideFile)
 	}
 	if req.Apply.BotMitigation == coretraefik.BotMitigationStateOn {
 		fmt.Fprintln(progress, botMitigationTurnstileWarning)

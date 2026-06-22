@@ -3,7 +3,7 @@ module github.com/libops/sitectl-isle
 go 1.26.1
 
 require (
-	github.com/libops/sitectl v0.20.0
+	github.com/libops/sitectl v0.21.4
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -12,7 +12,7 @@ require (
 	charm.land/bubbles/v2 v2.1.0 // indirect
 	charm.land/bubbletea/v2 v2.0.7 // indirect
 	charm.land/fang/v2 v2.0.1 // indirect
-	charm.land/lipgloss/v2 v2.0.3 // indirect
+	charm.land/lipgloss/v2 v2.0.4 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
