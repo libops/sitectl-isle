@@ -1,5 +1,5 @@
   cantaloupe:
-{{COMMON_MERGE}}    image: islandora/cantaloupe:${ISLANDORA_TAG}
+{{COMMON_MERGE}}    image: islandora/cantaloupe:main@sha256:82ac2324593018e5a5a98b44f4508a2ec0b1cda5c0e50be53e695205480a0ee2
     secrets:
       - source: CERT_PUBLIC_KEY
       - source: CERT_AUTHORITY

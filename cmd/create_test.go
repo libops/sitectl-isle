@@ -131,6 +131,7 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	_ = cmd.Flags().Set("iiif", "triplet")
 	_ = cmd.Flags().Set("iiif-topology", "distributed")
 	_ = cmd.Flags().Set("iiif-upstream-url", "https://iiif.example.org")
+	_ = cmd.Flags().Set("codebase", "git-root")
 	_ = cmd.Flags().Set("bot-mitigation", "on")
 	_ = cmd.Flags().Set("homarus", "distributed")
 	_ = cmd.Flags().Set("isle-file-system-uri", "public")
@@ -140,8 +141,11 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if req.Apply.Fcrepo != "off" || req.Apply.Blazegraph != "on" || req.Apply.IIIF != createpkg.IIIFTriplet || req.Apply.IIIFTopology != createpkg.IIIFTopologyExternal || req.Apply.IIIFUpstreamURL != "https://iiif.example.org" || req.Apply.BotMitigation != coretraefik.BotMitigationStateOn || req.Apply.ISLEFileSystemURI != "public" {
+	if req.Apply.Fcrepo != "off" || req.Apply.Blazegraph != "on" || req.Apply.IIIF != createpkg.IIIFTriplet || req.Apply.IIIFTopology != createpkg.IIIFTopologyExternal || req.Apply.IIIFUpstreamURL != "https://iiif.example.org" || req.Apply.Codebase != createpkg.CodebaseGitRoot || req.Apply.BotMitigation != coretraefik.BotMitigationStateOn || req.Apply.ISLEFileSystemURI != "public" {
 		t.Fatalf("unexpected options %+v", req.Apply)
+	}
+	if req.DrupalRootfs != "." || req.Apply.DrupalRootfs != "." {
+		t.Fatalf("expected git-root codebase to use root drupal rootfs, got request=%q apply=%q", req.DrupalRootfs, req.Apply.DrupalRootfs)
 	}
 	if req.Apply.DerivativeServices["homarus"] != createpkg.DerivativeTopologyDistributed {
 		t.Fatalf("expected homarus distributed option, got %+v", req.Apply.DerivativeServices)

@@ -10,6 +10,8 @@ import (
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
+	"github.com/libops/sitectl/pkg/config"
+	"github.com/libops/sitectl/pkg/plugin"
 	"github.com/spf13/cobra"
 )
 
@@ -91,7 +93,7 @@ func TestRunComponentSetUsesCurrentFilesystemURIWhenTurningFcrepoOff(t *testing.
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
 
-	fieldPath := filepath.Join(projectDir, "drupal", "rootfs", "var", "www", "drupal", "config", "sync", "field.storage.media.field_media_file.yml")
+	fieldPath := filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "config", "sync", "field.storage.media.field_media_file.yml")
 	writeFileForTest(t, fieldPath, "settings:\n  uri_scheme: \"archive\"\n")
 
 	oldStatusPath := statusPath
@@ -123,6 +125,127 @@ func TestRunComponentSetUsesCurrentFilesystemURIWhenTurningFcrepoOff(t *testing.
 	if got.ISLEFileSystemURI != "archive" {
 		t.Fatalf("expected archive filesystem uri, got %q", got.ISLEFileSystemURI)
 	}
+}
+
+func TestRunComponentSetSwitchesDefaultCodebaseToGitRoot(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+	writeISLEDefaultCodebaseFixture(t, projectDir)
+
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	if err := config.SaveContext(&config.Context{
+		Name:           "isle-local",
+		Site:           "isle-local",
+		Plugin:         "isle",
+		DockerHostType: config.ContextLocal,
+		DockerSocket:   "/var/run/docker.sock",
+		ProjectDir:     projectDir,
+		DrupalRootfs:   createpkg.DefaultDrupalRootfs,
+	}, true); err != nil {
+		t.Fatalf("SaveContext() error = %v", err)
+	}
+
+	oldSDK := commandSDK
+	oldStatusPath := statusPath
+	oldStatusCodebaseRootfs := statusCodebaseRootfs
+	oldStatusDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldApply := componentApplyOptions
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		commandSDK = oldSDK
+		statusPath = oldStatusPath
+		statusCodebaseRootfs = oldStatusCodebaseRootfs
+		statusDrupalRootfs = oldStatusDrupalRootfs
+		componentSetYolo = oldYolo
+		componentApplyOptions = oldApply
+		componentPromptChoice = oldPromptChoice
+	})
+
+	commandSDK = plugin.NewSDK(plugin.Metadata{
+		Name:        "isle",
+		Version:     "test",
+		Description: "test",
+	})
+	commandSDK.Config.Context = "isle-local"
+	statusPath = ""
+	statusCodebaseRootfs = createpkg.DefaultDrupalRootfs
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+	componentApplyOptions = createpkg.Apply
+
+	var out bytes.Buffer
+	cmd := newComponentSetTestCommand()
+	cmd.SetOut(&out)
+
+	if err := runComponentSet(cmd, "codebase", "git-root"); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+
+	if !strings.Contains(out.String(), "codebase: git-root") {
+		t.Fatalf("expected command output, got:\n%s", out.String())
+	}
+	for _, rel := range []string{
+		"Dockerfile",
+		".dockerignore",
+		"composer.json",
+		"composer.lock",
+		"config/sync/field.storage.media.field_media_file.yml",
+		"web/modules/custom/.gitkeep",
+		"web/themes/custom/.gitkeep",
+	} {
+		if _, err := os.Stat(filepath.Join(projectDir, rel)); err != nil {
+			t.Fatalf("expected git-root codebase path %s: %v", rel, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "drupal", "Dockerfile")); !os.IsNotExist(err) {
+		t.Fatalf("expected drupal/Dockerfile to move to git root, stat err = %v", err)
+	}
+
+	compose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	if !strings.Contains(compose, "context: .") || strings.Contains(compose, "context: ./drupal") {
+		t.Fatalf("expected drupal build context to switch to git root, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, "- .:/drupal:rw") || strings.Contains(compose, "- ./drupal:/drupal:rw") {
+		t.Fatalf("expected init bind mount to switch to git root, got:\n%s", compose)
+	}
+
+	devCompose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.dev.yml"))
+	if strings.Contains(devCompose, "drupal/rootfs/var/www/drupal") {
+		t.Fatalf("expected dev bind mounts to point at git root, got:\n%s", devCompose)
+	}
+	for _, want := range []string{
+		"./assets:/var/www/drupal/assets",
+		"./composer.json:/var/www/drupal/composer.json",
+		"./config:/var/www/drupal/config",
+	} {
+		if !strings.Contains(devCompose, want) {
+			t.Fatalf("expected dev compose to contain %q, got:\n%s", want, devCompose)
+		}
+	}
+
+	stored, err := config.GetContext("isle-local")
+	if err != nil {
+		t.Fatalf("GetContext() error = %v", err)
+	}
+	if stored.DrupalRootfs != corecomponent.DefaultDrupalRootfs {
+		t.Fatalf("expected active context DrupalRootfs %q, got %q", corecomponent.DefaultDrupalRootfs, stored.DrupalRootfs)
+	}
+	views, err := detectComponentViewsForContext(&stored, stored.EffectiveDrupalRootfs())
+	if err != nil {
+		t.Fatalf("detectComponentViewsForContext() error = %v", err)
+	}
+	for _, view := range views {
+		if view.Name == "codebase" {
+			if view.Disposition != corecomponent.DispositionGitRoot {
+				t.Fatalf("expected codebase disposition git-root after switch, got %q", view.Disposition)
+			}
+			return
+		}
+	}
+	t.Fatal("expected codebase component status after switch")
 }
 
 func TestIsleSetRunnerPropagatesCodebaseRootfsAliases(t *testing.T) {
@@ -1068,6 +1191,74 @@ func writeFileForTest(t *testing.T, path, contents string) {
 	}
 }
 
+func readFileForTest(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", path, err)
+	}
+	return string(data)
+}
+
+func writeISLEDefaultCodebaseFixture(t *testing.T, projectDir string) {
+	t.Helper()
+
+	for _, dir := range []string{
+		filepath.Join(projectDir, "drupal"),
+		filepath.Join(projectDir, "drupal", "rootfs", "etc", "s6-overlay", "scripts"),
+		filepath.Join(projectDir, "drupal", "rootfs", "opt", "solr"),
+		filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "assets"),
+		filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "recipes"),
+		filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "web", "modules", "custom"),
+		filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "web", "themes", "custom"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", dir, err)
+		}
+	}
+
+	writeFileForTest(t, filepath.Join(projectDir, "drupal", "Dockerfile"), `# syntax=docker/dockerfile:1.23.0
+ARG REPOSITORY
+ARG TAG
+FROM ${REPOSITORY}/drupal:${TAG}
+
+ARG TARGETARCH
+
+COPY --link rootfs /
+
+RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
+    composer install -d /var/www/drupal && \
+    chown -R nginx:nginx /var/www/drupal && \
+    cleanup.sh
+`)
+	writeFileForTest(t, filepath.Join(projectDir, "drupal", ".dockerignore"), "README.md\n")
+	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.dev.yml"), `services:
+  drupal:
+    volumes:
+      - ./drupal/rootfs/var/www/drupal/assets:/var/www/drupal/assets:z,rw,${CONSISTENCY}
+      - ./drupal/rootfs/var/www/drupal/composer.json:/var/www/drupal/composer.json:z,rw,${CONSISTENCY}
+      - ./drupal/rootfs/var/www/drupal/config:/var/www/drupal/config:z,rw,${CONSISTENCY}
+      - ./drupal/rootfs/var/www/drupal/web/modules/custom:/var/www/drupal/web/modules/custom:z,rw,${CONSISTENCY}
+      - ./drupal/rootfs/var/www/drupal/web/themes/custom:/var/www/drupal/web/themes/custom:z,rw,${CONSISTENCY}
+`)
+	for _, rel := range []string{
+		"assets/default_settings.txt",
+		"composer.json",
+		"composer.lock",
+		"recipes/README.txt",
+		"web/modules/custom/.gitkeep",
+		"web/themes/custom/.gitkeep",
+	} {
+		writeFileForTest(t, filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, rel), rel+"\n")
+	}
+
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	compose := readFileForTest(t, composePath)
+	compose = strings.Replace(compose, "  drupal:\n    environment:\n", "  drupal:\n    build:\n      context: ./drupal\n    environment:\n", 1)
+	compose = strings.Replace(compose, "  traefik:\n", "  init:\n    volumes:\n      - ./drupal:/drupal:rw\n  traefik:\n", 1)
+	writeFileForTest(t, composePath, compose)
+}
+
 func addDerivativeServiceFixture(t *testing.T, projectDir, service string) {
 	t.Helper()
 
@@ -1076,7 +1267,7 @@ func addDerivativeServiceFixture(t *testing.T, projectDir, service string) {
 	if err != nil {
 		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
 	}
-	block := "\n  " + service + ":\n    image: islandora/" + service + ":${ISLANDORA_TAG}\n"
+	block := "\n  " + service + ":\n    image: libops/" + service + ":test\n"
 	updated := strings.Replace(string(data), "\n  traefik:\n", block+"\n  traefik:\n", 1)
 	if updated == string(data) {
 		t.Fatalf("failed to insert %s service fixture", service)

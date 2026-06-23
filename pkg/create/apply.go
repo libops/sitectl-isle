@@ -23,6 +23,9 @@ const (
 	DerivativeTopologyLocal       = "local"
 	DerivativeTopologyDistributed = "distributed"
 
+	CodebaseNested  = "nested"
+	CodebaseGitRoot = "git-root"
+
 	DefaultDrupalRootfs      = "drupal/rootfs/var/www/drupal"
 	DefaultISLEFileSystemURI = "private"
 	PublicISLEFileSystemURI  = "public"
@@ -77,6 +80,7 @@ type Options struct {
 	ComposeOverride    string
 	ISLEFileSystemURI  string
 	DerivativeServices map[string]string
+	Codebase           string
 }
 
 func Apply(opts Options) error {
@@ -104,6 +108,9 @@ func Apply(opts Options) error {
 	if opts.ISLEFileSystemURI == "" {
 		opts.ISLEFileSystemURI = DefaultISLEFileSystemURI
 	}
+	if opts.Codebase == "" {
+		opts.Codebase = CodebaseNested
+	}
 
 	if opts.Fcrepo != FcrepoStateOn && opts.Fcrepo != FcrepoStateOff {
 		return fmt.Errorf("invalid --fcrepo value %q: expected on or off", opts.Fcrepo)
@@ -125,6 +132,16 @@ func Apply(opts Options) error {
 	}
 	if strings.TrimSpace(opts.ISLEFileSystemURI) == "" {
 		return fmt.Errorf("invalid --isle-file-system-uri value %q: expected a non-empty filesystem URI", opts.ISLEFileSystemURI)
+	}
+	if opts.Codebase != CodebaseNested && opts.Codebase != CodebaseGitRoot {
+		return fmt.Errorf("invalid --codebase value %q: expected nested or git-root", opts.Codebase)
+	}
+
+	if opts.Codebase == CodebaseGitRoot {
+		if err := applyCodebaseGitRoot(opts.Path); err != nil {
+			return fmt.Errorf("apply codebase=git-root: %w", err)
+		}
+		opts.DrupalRootfs = corecomponent.DefaultDrupalRootfs
 	}
 
 	composePath := filepath.Join(opts.Path, "docker-compose.yml")
@@ -173,6 +190,179 @@ func isleBotMitigationOptions() coretraefik.BotMitigationOptions {
 		RouterName:       "drupal",
 		RouterConfigPath: "conf/traefik/drupal.yml",
 	}
+}
+
+func applyCodebaseGitRoot(projectDir string) error {
+	projectDir = filepath.Clean(projectDir)
+	if err := moveIfExists(filepath.Join(projectDir, "drupal", "Dockerfile"), filepath.Join(projectDir, "Dockerfile")); err != nil {
+		return err
+	}
+	if err := moveIfExists(filepath.Join(projectDir, "drupal", ".dockerignore"), filepath.Join(projectDir, ".dockerignore")); err != nil {
+		return err
+	}
+	if err := moveDirectoryContents(filepath.Join(projectDir, "drupal", "rootfs", "var", "www", "drupal"), projectDir, false); err != nil {
+		return err
+	}
+	if err := rewriteGitRootDockerfile(filepath.Join(projectDir, "Dockerfile")); err != nil {
+		return err
+	}
+	if err := writeGitRootDockerignore(filepath.Join(projectDir, ".dockerignore")); err != nil {
+		return err
+	}
+	if err := rewriteCodebaseComposePaths(filepath.Join(projectDir, "docker-compose.yml")); err != nil {
+		return err
+	}
+	if err := rewriteCodebaseDevComposePaths(filepath.Join(projectDir, "docker-compose.dev.yml")); err != nil {
+		return err
+	}
+	return nil
+}
+
+func moveIfExists(source, target string) error {
+	if _, err := os.Stat(source); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat %s: %w", source, err)
+	}
+	if err := os.Rename(source, target); err != nil {
+		return fmt.Errorf("move %s to %s: %w", source, target, err)
+	}
+	return nil
+}
+
+func moveDirectoryContents(sourceDir, targetDir string, includeDotfiles bool) error {
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s: %w", sourceDir, err)
+	}
+	for _, entry := range entries {
+		if !includeDotfiles && strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		source := filepath.Join(sourceDir, entry.Name())
+		target := filepath.Join(targetDir, entry.Name())
+		if err := os.Rename(source, target); err != nil {
+			return fmt.Errorf("move %s to %s: %w", source, target, err)
+		}
+	}
+	return nil
+}
+
+func rewriteGitRootDockerfile(path string) error {
+	data, err := os.ReadFile(path) // #nosec G304 -- Dockerfile path is scoped to the selected project.
+	if err != nil {
+		return fmt.Errorf("read Dockerfile: %w", err)
+	}
+	if strings.Contains(string(data), "COPY --link composer.json composer.lock /var/www/drupal/") &&
+		strings.Contains(string(data), "COPY --link drupal/rootfs/etc/ /etc/") {
+		return nil
+	}
+
+	header := dockerfileHeader(string(data))
+	contents := strings.TrimRight(header, "\n") + `
+
+COPY --link composer.json composer.lock /var/www/drupal/
+COPY --link assets/ /var/www/drupal/assets/
+
+RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
+    composer install -d /var/www/drupal && \
+    cleanup.sh
+
+COPY --link config/ /var/www/drupal/config/
+COPY --link recipes/ /var/www/drupal/recipes/
+COPY --link web/modules/custom/ /var/www/drupal/web/modules/custom/
+COPY --link web/themes/custom/ /var/www/drupal/web/themes/custom/
+COPY --link drupal/rootfs/etc/ /etc/
+COPY --link drupal/rootfs/opt/ /opt/
+
+RUN chown -R nginx:nginx /var/www/drupal && \
+    cleanup.sh
+`
+	return writeFilePreserveMode(path, []byte(contents))
+}
+
+func dockerfileHeader(contents string) string {
+	lines := strings.Split(contents, "\n")
+	out := []string{}
+	foundTargetArch := false
+	for _, line := range lines {
+		out = append(out, line)
+		if strings.TrimSpace(line) == "ARG TARGETARCH" {
+			foundTargetArch = true
+			break
+		}
+	}
+	if foundTargetArch {
+		return strings.Join(out, "\n")
+	}
+	return `# syntax=docker/dockerfile:1.23.0
+ARG REPOSITORY
+ARG TAG
+FROM ${REPOSITORY}/drupal:${TAG}
+
+ARG TARGETARCH`
+}
+
+func writeGitRootDockerignore(path string) error {
+	contents := strings.Join([]string{
+		".git",
+		".cache",
+		"certs",
+		"secrets",
+		"vendor",
+		"web/core",
+		"web/modules/contrib",
+		"web/themes/contrib",
+		"drupal/rootfs/var/www/drupal",
+		"",
+	}, "\n")
+	return writeFilePreserveMode(path, []byte(contents))
+}
+
+func rewriteCodebaseComposePaths(path string) error {
+	replacements := map[string]string{
+		"context: ./drupal":     "context: .",
+		"- ./drupal:/drupal:rw": "- .:/drupal:rw",
+	}
+	return replaceInFile(path, replacements)
+}
+
+func rewriteCodebaseDevComposePaths(path string) error {
+	return replaceInFile(path, map[string]string{
+		"./drupal/rootfs/var/www/drupal/": "./",
+	})
+}
+
+func replaceInFile(path string, replacements map[string]string) error {
+	data, err := os.ReadFile(path) // #nosec G304 -- file path is scoped to the selected project.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	updated := string(data)
+	for old, replacement := range replacements {
+		updated = strings.ReplaceAll(updated, old, replacement)
+	}
+	if updated == string(data) {
+		return nil
+	}
+	return writeFilePreserveMode(path, []byte(updated))
+}
+
+func writeFilePreserveMode(path string, data []byte) error {
+	mode := fs.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	return os.WriteFile(path, data, mode) // #nosec G306 -- generated project files are non-secret.
 }
 
 func applyFcrepoOff(projectDir, drupalRootfs, targetScheme string) error {

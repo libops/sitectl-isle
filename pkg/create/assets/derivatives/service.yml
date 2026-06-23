@@ -1,3 +1,3 @@
   {{SERVICE_NAME}}:
-{{COMMON_MERGE}}    image: islandora/{{SERVICE_NAME}}:${ISLANDORA_TAG}
+{{COMMON_MERGE}}    image: {{IMAGE_REF}}
 {{JWT_SECRETS}}

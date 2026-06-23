@@ -23,6 +23,7 @@ var derivativeAssets embed.FS
 // when it runs locally or through the managed LibOps endpoint.
 type DerivativeServiceSpec struct {
 	Name        string
+	ImageRef    string
 	AlpacaEnv   string
 	ExternalURL string
 	LocalURL    string
@@ -32,11 +33,13 @@ type DerivativeServiceSpec struct {
 var derivativeServiceSpecs = []DerivativeServiceSpec{
 	{
 		Name:        "fits",
+		ImageRef:    "libops/fits@sha256:f945c3aa9b1011261a038d6a2a1ddc7557d1d0c59e00add9a82a47334e78b76f",
 		LocalURL:    localFITSWebserviceURL,
 		ExternalURL: externalFITSWebserviceURL,
 	},
 	{
 		Name:        "crayfits",
+		ImageRef:    "libops/crayfits@sha256:4e0d27cd95c9776ccf0d682804aa34a79d1c815304b1521c0d120c7470e2341c",
 		AlpacaEnv:   "ALPACA_DERIVATIVE_FITS_URL",
 		LocalURL:    "http://crayfits:8080/",
 		ExternalURL: microservicesBaseURL + "/crayfits",
@@ -44,6 +47,7 @@ var derivativeServiceSpecs = []DerivativeServiceSpec{
 	},
 	{
 		Name:        "homarus",
+		ImageRef:    "libops/homarus@sha256:6668319f8a796af81857afb1bd415589d771f731a98668d7f7441ed264591ded",
 		AlpacaEnv:   "ALPACA_DERIVATIVE_HOMARUS_URL",
 		LocalURL:    "http://homarus:8080/",
 		ExternalURL: microservicesBaseURL + "/homarus",
@@ -51,6 +55,7 @@ var derivativeServiceSpecs = []DerivativeServiceSpec{
 	},
 	{
 		Name:        "houdini",
+		ImageRef:    "libops/houdini@sha256:dfac6017c31660b28fdc0d441ab053297450aba5b1a3016e0943353b5d0cd33b",
 		AlpacaEnv:   "ALPACA_DERIVATIVE_HOUDINI_URL",
 		LocalURL:    "http://houdini:8080/",
 		ExternalURL: microservicesBaseURL + "/houdini",
@@ -58,6 +63,7 @@ var derivativeServiceSpecs = []DerivativeServiceSpec{
 	},
 	{
 		Name:        "hypercube",
+		ImageRef:    "libops/hypercube@sha256:3909994ca3849eacfa4974d63517e9bf4ca91a8519461618bbb87f6a8c01cb35",
 		AlpacaEnv:   "ALPACA_DERIVATIVE_OCR_URL",
 		LocalURL:    "http://hypercube:8080/",
 		ExternalURL: microservicesBaseURL + "/hypercube",
@@ -65,6 +71,7 @@ var derivativeServiceSpecs = []DerivativeServiceSpec{
 	},
 	{
 		Name:        "mergepdf",
+		ImageRef:    "islandora/mergepdf:main@sha256:19ed2d048abbe548f9bad07712547678b06dc33f7a066bc14358bdef3b9c93f7",
 		AlpacaEnv:   "ALPACA_DERIVATIVE_MERGEPDF_URL",
 		LocalURL:    "http://mergepdf:8080/",
 		ExternalURL: microservicesBaseURL + "/mergepdf",
@@ -245,6 +252,7 @@ func derivativeServiceBlock(composePath string, spec DerivativeServiceSpec) (str
 	}
 	return renderDerivativeAsset("service.yml", map[string]string{
 		"COMMON_MERGE": commonMergeLine(composePath),
+		"IMAGE_REF":    spec.ImageRef,
 		"JWT_SECRETS":  jwtSecrets,
 		"SERVICE_NAME": spec.Name,
 	})

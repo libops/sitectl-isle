@@ -166,6 +166,33 @@ func TestExternalCantaloupeDefinition(t *testing.T) {
 	}
 }
 
+func TestCodebaseDefinition(t *testing.T) {
+	t.Parallel()
+
+	definition := Codebase()
+
+	if definition.Name != "codebase" {
+		t.Fatalf("expected name codebase, got %q", definition.Name)
+	}
+	if definition.DefaultDisposition != corecomponent.DispositionNested {
+		t.Fatalf("expected default disposition nested, got %q", definition.DefaultDisposition)
+	}
+	if len(definition.AllowedDispositions) != 2 || definition.AllowedDispositions[0] != corecomponent.DispositionNested || definition.AllowedDispositions[1] != corecomponent.DispositionGitRoot {
+		t.Fatalf("expected nested/git-root dispositions, got %#v", definition.AllowedDispositions)
+	}
+	if definition.PromptOnCreate {
+		t.Fatal("expected codebase not to prompt during create")
+	}
+	if !definition.Gates.LocalOnly {
+		t.Fatal("expected codebase to be local-only")
+	}
+	if !definition.Behavior.Idempotent {
+		t.Fatal("expected codebase to be marked idempotent")
+	}
+	assertHasRule(t, definition.On.Compose.Rules, OpSet, ".services.drupal.build.context")
+	assertHasRule(t, definition.Off.Compose.Rules, OpSet, ".services.drupal.build.context")
+}
+
 func TestDerivativeServiceDefinition(t *testing.T) {
 	t.Parallel()
 
