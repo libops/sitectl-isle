@@ -485,7 +485,8 @@ func bootstrapCheckout(out io.Writer, projectDir string) error {
 	fmt.Fprintln(out)
 
 	return runWithSpinner(out, "Creating initial git commit", func() error {
-		if err := createRunProjectCommand(projectDir, io.Discard, io.Discard, "git", "add", "."); err != nil {
+		safeDirectory := "safe.directory=" + projectDir
+		if err := createRunProjectCommand(projectDir, io.Discard, io.Discard, "git", "-c", safeDirectory, "add", "."); err != nil {
 			return fmt.Errorf("stage initial checkout: %w", err)
 		}
 		if err := createRunProjectCommand(
@@ -493,6 +494,7 @@ func bootstrapCheckout(out io.Writer, projectDir string) error {
 			io.Discard,
 			io.Discard,
 			"git",
+			"-c", safeDirectory,
 			"-c", "user.name=sitectl-isle",
 			"-c", "user.email=sitectl-isle@localhost",
 			"commit",

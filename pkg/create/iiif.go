@@ -90,6 +90,7 @@ func normalizeIIIFOptions(opts Options) Options {
 	if opts.DrupalRootfs == "" {
 		opts.DrupalRootfs = DefaultDrupalRootfs
 	}
+	opts.DrupalRootfs = resolveProjectDrupalRootfs(opts.Path, opts.DrupalRootfs)
 	if opts.IIIF == "" {
 		opts.IIIF = IIIFCantaloupe
 	}
@@ -532,7 +533,8 @@ func writeProjectFile(projectDir, rel, contents string) error {
 }
 
 func updateRobotsIIIF(projectDir, drupalRootfs string, enabled bool) error {
-	path := filepath.Join(projectDir, drupalRootfs, "web", "robots.txt")
+	layout := corecomponent.ResolveDrupalLayout(projectDir, resolveProjectDrupalRootfs(projectDir, drupalRootfs))
+	path := filepath.Join(layout.Root, "web", "robots.txt")
 	data, err := os.ReadFile(path) // #nosec G304 -- robots path is resolved inside the selected project.
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -90,6 +90,7 @@ func Apply(opts Options) error {
 	if opts.DrupalRootfs == "" {
 		opts.DrupalRootfs = DefaultDrupalRootfs
 	}
+	opts.DrupalRootfs = resolveProjectDrupalRootfs(opts.Path, opts.DrupalRootfs)
 	if opts.Fcrepo == "" {
 		opts.Fcrepo = FcrepoStateOn
 	}
@@ -183,6 +184,42 @@ func Apply(opts Options) error {
 	}
 
 	return nil
+}
+
+func resolveProjectDrupalRootfs(projectDir, drupalRootfs string) string {
+	root := strings.TrimSpace(drupalRootfs)
+	if root == "" {
+		root = DefaultDrupalRootfs
+	}
+	if filepath.IsAbs(root) || root != DefaultDrupalRootfs {
+		return root
+	}
+	if drupalLayoutExists(projectDir, root) {
+		return root
+	}
+	for _, candidate := range []string{"drupal", corecomponent.DefaultDrupalRootfs} {
+		if candidate == root {
+			continue
+		}
+		if drupalLayoutExists(projectDir, candidate) {
+			return candidate
+		}
+	}
+	return root
+}
+
+func drupalLayoutExists(projectDir, drupalRootfs string) bool {
+	layout := corecomponent.ResolveDrupalLayout(projectDir, drupalRootfs)
+	for _, path := range []string{
+		layout.ConfigSyncDir(),
+		layout.ComposerJSONPath(),
+		filepath.Join(layout.Root, "web", "robots.txt"),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func isleBotMitigationOptions() coretraefik.BotMitigationOptions {

@@ -127,6 +127,102 @@ volumes:
 	}
 }
 
+func TestApplyFcrepoOffTripletDetectsCurrentDrupalLayout(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, "drupal", "config", "sync")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(config) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, "drupal", "web"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(web) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+services:
+  alpaca:
+    environment:
+      ALPACA_FCREPO_INDEXER_ENABLED: "true"
+      ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
+  blazegraph:
+    image: islandora/blazegraph
+  cantaloupe:
+    image: islandora/cantaloupe
+  drupal:
+    environment:
+      DRUPAL_DEFAULT_CANTALOUPE_URL: ${URI_SCHEME}://${DOMAIN}/cantaloupe/iiif/2
+      DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
+      DRUPAL_DEFAULT_FCREPO_PORT: 8080
+      DRUPAL_DEFAULT_FCREPO_URL: ${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/
+      DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
+  fcrepo:
+    image: islandora/fcrepo6
+  traefik:
+    environment: {}
+  triplet:
+    image: ghcr.io/libops/triplet:v1.1.0
+    depends_on:
+      fcrepo:
+        condition: service_healthy
+    volumes:
+      - type: volume
+        source: fcrepo-data
+        target: /fcrepo
+volumes:
+  blazegraph-data: {}
+  cantaloupe-data: {}
+  fcrepo-data: {}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "field.storage.media.field_media_file.yml"), []byte("settings:\n  uri_scheme: fedora\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(media field) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "drupal", "web", "robots.txt"), []byte("User-agent: *\nDisallow: /cantaloupe/*\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(robots) error = %v", err)
+	}
+
+	if err := Apply(Options{
+		Path:              projectDir,
+		Fcrepo:            FcrepoStateOff,
+		Blazegraph:        FcrepoStateOff,
+		IIIF:              IIIFTriplet,
+		ISLEFileSystemURI: PrivateISLEFileSystemURI,
+	}); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(compose) error = %v", err)
+	}
+	compose := string(composeData)
+	if !strings.Contains(compose, "\n  triplet:\n") {
+		t.Fatalf("expected triplet service, got:\n%s", compose)
+	}
+	for _, absent := range []string{"\n  fcrepo:\n", "\n  blazegraph:\n", "fcrepo-data", "blazegraph-data", "condition: service_healthy", "source: fcrepo-data"} {
+		if strings.Contains(compose, absent) {
+			t.Fatalf("expected %q removed, got:\n%s", absent, compose)
+		}
+	}
+
+	mediaField, err := os.ReadFile(filepath.Join(configDir, "field.storage.media.field_media_file.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(media field) error = %v", err)
+	}
+	if !strings.Contains(string(mediaField), "uri_scheme: private") && !strings.Contains(string(mediaField), `uri_scheme: "private"`) {
+		t.Fatalf("expected private uri_scheme, got:\n%s", string(mediaField))
+	}
+
+	robots, err := os.ReadFile(filepath.Join(projectDir, "drupal", "web", "robots.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile(robots) error = %v", err)
+	}
+	if !strings.Contains(string(robots), "Disallow: /iiif/*") {
+		t.Fatalf("expected IIIF robots rule, got:\n%s", string(robots))
+	}
+}
+
 func TestApplyBlazegraphOff(t *testing.T) {
 	t.Parallel()
 
