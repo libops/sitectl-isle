@@ -82,7 +82,7 @@ func (r *isleDebugRunner) BindFlags(cmd *cobra.Command) {
 }
 
 func (r *isleDebugRunner) Render(cmd *cobra.Command, ctx *config.Context) (string, error) {
-	rootfs, err := resolveCodebaseRootfsFlag(cmd, r.codebaseRootfs, r.drupalRootfs)
+	rootfs, err := resolveCodebaseRootfsForContext(cmd, ctx, r.codebaseRootfs, r.drupalRootfs)
 	if err != nil {
 		return "", err
 	}

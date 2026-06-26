@@ -831,10 +831,10 @@ func TestBootstrapCheckoutRunsGitAddAndInitialCommit(t *testing.T) {
 	if len(commands) != 2 {
 		t.Fatalf("expected 2 git commands, got %#v", commands)
 	}
-	if got := strings.Join(commands[0], " "); got != "git add ." {
+	if got, want := strings.Join(commands[0], " "), fmt.Sprintf("git -c safe.directory=%s add .", projectDir); got != want {
 		t.Fatalf("expected first command `git add .`, got %q", got)
 	}
-	if got := strings.Join(commands[1], " "); got != "git -c user.name=sitectl-isle -c user.email=sitectl-isle@localhost commit -m initial commit." {
+	if got, want := strings.Join(commands[1], " "), fmt.Sprintf("git -c safe.directory=%s -c user.name=sitectl-isle -c user.email=sitectl-isle@localhost commit -m initial commit.", projectDir); got != want {
 		t.Fatalf("unexpected commit command %q", got)
 	}
 }

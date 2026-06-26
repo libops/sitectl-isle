@@ -90,6 +90,7 @@ func Apply(opts Options) error {
 	if opts.DrupalRootfs == "" {
 		opts.DrupalRootfs = DefaultDrupalRootfs
 	}
+	opts.DrupalRootfs = resolveProjectDrupalRootfs(opts.Path, opts.DrupalRootfs)
 	if opts.Fcrepo == "" {
 		opts.Fcrepo = FcrepoStateOn
 	}
@@ -185,6 +186,42 @@ func Apply(opts Options) error {
 	return nil
 }
 
+func resolveProjectDrupalRootfs(projectDir, drupalRootfs string) string {
+	root := strings.TrimSpace(drupalRootfs)
+	if root == "" {
+		root = DefaultDrupalRootfs
+	}
+	if filepath.IsAbs(root) || root != DefaultDrupalRootfs {
+		return root
+	}
+	if drupalLayoutExists(projectDir, root) {
+		return root
+	}
+	for _, candidate := range []string{"drupal", corecomponent.DefaultDrupalRootfs} {
+		if candidate == root {
+			continue
+		}
+		if drupalLayoutExists(projectDir, candidate) {
+			return candidate
+		}
+	}
+	return root
+}
+
+func drupalLayoutExists(projectDir, drupalRootfs string) bool {
+	layout := corecomponent.ResolveDrupalLayout(projectDir, drupalRootfs)
+	for _, path := range []string{
+		layout.ConfigSyncDir(),
+		layout.ComposerJSONPath(),
+		filepath.Join(layout.Root, "web", "robots.txt"),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func isleBotMitigationOptions() coretraefik.BotMitigationOptions {
 	return coretraefik.BotMitigationOptions{
 		RouterName:       "drupal",
@@ -198,6 +235,9 @@ func applyCodebaseGitRoot(projectDir string) error {
 		return err
 	}
 	if err := moveIfExists(filepath.Join(projectDir, "drupal", ".dockerignore"), filepath.Join(projectDir, ".dockerignore")); err != nil {
+		return err
+	}
+	if err := moveDrupalCodebaseContents(filepath.Join(projectDir, "drupal"), projectDir); err != nil {
 		return err
 	}
 	if err := moveDirectoryContents(filepath.Join(projectDir, "drupal", "rootfs", "var", "www", "drupal"), projectDir, false); err != nil {
@@ -214,6 +254,28 @@ func applyCodebaseGitRoot(projectDir string) error {
 	}
 	if err := rewriteCodebaseDevComposePaths(filepath.Join(projectDir, "docker-compose.dev.yml")); err != nil {
 		return err
+	}
+	return nil
+}
+
+func moveDrupalCodebaseContents(sourceDir, targetDir string) error {
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s: %w", sourceDir, err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || name == "Dockerfile" || name == "README.md" || name == "rootfs" {
+			continue
+		}
+		source := filepath.Join(sourceDir, name)
+		target := filepath.Join(targetDir, name)
+		if err := os.Rename(source, target); err != nil {
+			return fmt.Errorf("move %s to %s: %w", source, target, err)
+		}
 	}
 	return nil
 }

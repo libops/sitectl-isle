@@ -64,7 +64,7 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	if ctx.DockerHostType != config.ContextLocal {
 		return fmt.Errorf("component changes are local-only; context %q is %q", ctx.Name, ctx.DockerHostType)
 	}
-	rootfs, err := resolveCodebaseRootfsFlag(cmd, opts.CodebaseRootfs, opts.DrupalRootfs)
+	rootfs, err := resolveCodebaseRootfsForContext(cmd, ctx, opts.CodebaseRootfs, opts.DrupalRootfs)
 	if err != nil {
 		return err
 	}
@@ -200,11 +200,15 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	}
 
 	if applyOpts.Fcrepo == createpkg.FcrepoStateOff {
-		scheme, err := resolveCurrentFileSystemURI(ctx.ProjectDir, rootfs)
-		if err != nil {
-			return err
+		if scheme := selectedFcrepoFileSystemURI(cmd, followUps, opts); scheme != "" {
+			applyOpts.ISLEFileSystemURI = scheme
+		} else {
+			scheme, err := resolveCurrentFileSystemURI(ctx.ProjectDir, rootfs)
+			if err != nil {
+				return err
+			}
+			applyOpts.ISLEFileSystemURI = scheme
 		}
-		applyOpts.ISLEFileSystemURI = scheme
 	}
 
 	if err := componentApplyOptions(applyOpts); err != nil {
@@ -660,18 +664,14 @@ func (r *isleSetRunner) BindFlags(cmd *cobra.Command) {
 }
 
 func (r *isleSetRunner) Run(cmd *cobra.Command, args []string, ctx *config.Context) error {
-	rootfs, err := resolveCodebaseRootfsFlag(cmd, r.codebaseRootfs, r.drupalRootfs)
-	if err != nil {
-		return err
-	}
 	stateValue, err := resolveComponentSetStateValueFrom(cmd, args, r.state, r.disposition)
 	if err != nil {
 		return err
 	}
 	return runComponentSetWithOptions(cmd, args[0], stateValue, componentSetOptions{
 		Path:           r.path,
-		CodebaseRootfs: rootfs,
-		DrupalRootfs:   rootfs,
+		CodebaseRootfs: r.codebaseRootfs,
+		DrupalRootfs:   r.drupalRootfs,
 		State:          r.state,
 		Disposition:    r.disposition,
 		Yolo:           r.yolo,
@@ -695,6 +695,20 @@ func resolveCurrentFileSystemURI(projectDir, drupalRootfs string) (string, error
 		}
 	}
 	return createpkg.DefaultISLEFileSystemURI, nil
+}
+
+func selectedFcrepoFileSystemURI(cmd *cobra.Command, followUps map[string]string, opts componentSetOptions) string {
+	scheme := strings.TrimSpace(followUps["isle-file-system-uri"])
+	if scheme == "" {
+		return ""
+	}
+	if !opts.Yolo {
+		return scheme
+	}
+	if cmd == nil || cmd.Flags().Lookup("isle-file-system-uri") == nil || !cmd.Flags().Changed("isle-file-system-uri") {
+		return ""
+	}
+	return scheme
 }
 
 func addComponentSetFollowUpFlags(cmd *cobra.Command, defs []corecomponent.Definition) {
