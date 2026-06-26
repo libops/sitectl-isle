@@ -50,7 +50,7 @@ func runComponentDescribe(cmd *cobra.Command, opts componentDescribeOptions) err
 	if err != nil {
 		return err
 	}
-	rootfs, err := resolveCodebaseRootfsFlag(cmd, opts.CodebaseRootfs, opts.DrupalRootfs)
+	rootfs, err := resolveCodebaseRootfsForContext(cmd, ctx, opts.CodebaseRootfs, opts.DrupalRootfs)
 	if err != nil {
 		return err
 	}

@@ -127,6 +127,49 @@ func TestRunComponentSetUsesCurrentFilesystemURIWhenTurningFcrepoOff(t *testing.
 	}
 }
 
+func TestRunComponentSetUsesExplicitFilesystemURIWhenTurningFcrepoOff(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	fieldPath := filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "config", "sync", "field.storage.media.field_media_file.yml")
+	writeFileForTest(t, fieldPath, "settings:\n  uri_scheme: \"archive\"\n")
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldApply := componentApplyOptions
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentApplyOptions = oldApply
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	var got createpkg.Options
+	componentApplyOptions = func(opts createpkg.Options) error {
+		got = opts
+		return nil
+	}
+
+	cmd := newComponentSetTestCommand()
+	if err := cmd.Flags().Set("isle-file-system-uri", "private"); err != nil {
+		t.Fatalf("Flags().Set(isle-file-system-uri) error = %v", err)
+	}
+
+	if err := runComponentSet(cmd, "fcrepo", "off"); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+	if got.ISLEFileSystemURI != "private" {
+		t.Fatalf("expected explicit private filesystem uri, got %q", got.ISLEFileSystemURI)
+	}
+}
+
 func TestRunComponentSetSwitchesDefaultCodebaseToGitRoot(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
@@ -246,6 +289,89 @@ func TestRunComponentSetSwitchesDefaultCodebaseToGitRoot(t *testing.T) {
 		}
 	}
 	t.Fatal("expected codebase component status after switch")
+}
+
+func TestRunComponentSetUsesContextRootfsAfterCodebaseGitRoot(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+	writeISLEDefaultCodebaseFixture(t, projectDir)
+
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	if err := config.SaveContext(&config.Context{
+		Name:           "isle-local",
+		Site:           "isle-local",
+		Plugin:         "isle",
+		DockerHostType: config.ContextLocal,
+		DockerSocket:   "/var/run/docker.sock",
+		ProjectDir:     projectDir,
+		DrupalRootfs:   createpkg.DefaultDrupalRootfs,
+	}, true); err != nil {
+		t.Fatalf("SaveContext() error = %v", err)
+	}
+
+	oldSDK := commandSDK
+	oldStatusPath := statusPath
+	oldStatusCodebaseRootfs := statusCodebaseRootfs
+	oldStatusDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldApply := componentApplyOptions
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		commandSDK = oldSDK
+		statusPath = oldStatusPath
+		statusCodebaseRootfs = oldStatusCodebaseRootfs
+		statusDrupalRootfs = oldStatusDrupalRootfs
+		componentSetYolo = oldYolo
+		componentApplyOptions = oldApply
+		componentPromptChoice = oldPromptChoice
+	})
+
+	commandSDK = plugin.NewSDK(plugin.Metadata{
+		Name:        "isle",
+		Version:     "test",
+		Description: "test",
+	})
+	commandSDK.Config.Context = "isle-local"
+	statusPath = ""
+	statusCodebaseRootfs = createpkg.DefaultDrupalRootfs
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+	componentApplyOptions = createpkg.Apply
+
+	if err := runComponentSet(newComponentSetTestCommand(), "codebase", "git-root"); err != nil {
+		t.Fatalf("runComponentSet(codebase) error = %v", err)
+	}
+	stored, err := config.GetContext("isle-local")
+	if err != nil {
+		t.Fatalf("GetContext() error = %v", err)
+	}
+	if stored.DrupalRootfs != corecomponent.DefaultDrupalRootfs {
+		t.Fatalf("expected stored rootfs %q, got %q", corecomponent.DefaultDrupalRootfs, stored.DrupalRootfs)
+	}
+
+	fcrepoCmd := newComponentSetTestCommand()
+	if err := fcrepoCmd.Flags().Set("isle-file-system-uri", "private"); err != nil {
+		t.Fatalf("Flags().Set(isle-file-system-uri) error = %v", err)
+	}
+	if err := runComponentSet(fcrepoCmd, "fcrepo", "superceded"); err != nil {
+		t.Fatalf("runComponentSet(fcrepo) error = %v", err)
+	}
+	if err := runComponentSet(newComponentSetTestCommand(), "blazegraph", "disabled"); err != nil {
+		t.Fatalf("runComponentSet(blazegraph) error = %v", err)
+	}
+
+	compose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	for _, absent := range []string{"\n  fcrepo:\n", "\n  blazegraph:\n", "fcrepo-data", "blazegraph-data"} {
+		if strings.Contains(compose, absent) {
+			t.Fatalf("expected %q removed after component sequence, got:\n%s", absent, compose)
+		}
+	}
+	field := readFileForTest(t, filepath.Join(projectDir, "config", "sync", "field.storage.media.field_media_file.yml"))
+	if !strings.Contains(field, `uri_scheme: "private"`) && !strings.Contains(field, "uri_scheme: private") {
+		t.Fatalf("expected fcrepo replacement to use private files, got:\n%s", field)
+	}
 }
 
 func TestIsleSetRunnerPropagatesCodebaseRootfsAliases(t *testing.T) {

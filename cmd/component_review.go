@@ -69,7 +69,7 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 	if ctx.DockerHostType != config.ContextLocal {
 		return fmt.Errorf("component review is local-only; context %q is %q", ctx.Name, ctx.DockerHostType)
 	}
-	rootfs, err := resolveCodebaseRootfsFlag(cmd, opts.CodebaseRootfs, opts.DrupalRootfs)
+	rootfs, err := resolveCodebaseRootfsForContext(cmd, ctx, opts.CodebaseRootfs, opts.DrupalRootfs)
 	if err != nil {
 		return err
 	}
