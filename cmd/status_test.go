@@ -11,6 +11,7 @@ import (
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
+	sitevalidate "github.com/libops/sitectl/pkg/validate"
 	"github.com/spf13/cobra"
 )
 
@@ -432,6 +433,43 @@ services:
 	}
 	if !strings.Contains(rendered, "TLS mode: http") {
 		t.Fatalf("expected dev tls follow-up, got:\n%s", rendered)
+	}
+}
+
+func TestRunIsleValidationAcceptsTripletIIIFConfig(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	if err := createpkg.ApplyIIIF(createpkg.Options{
+		Path:         projectDir,
+		DrupalRootfs: createpkg.DefaultDrupalRootfs,
+		IIIF:         createpkg.IIIFTriplet,
+	}); err != nil {
+		t.Fatalf("ApplyIIIF() error = %v", err)
+	}
+
+	results, err := runIsleValidation(&config.Context{
+		Name:           "isle-local",
+		Site:           "isle-local",
+		Plugin:         "isle",
+		DockerHostType: config.ContextLocal,
+		ProjectDir:     projectDir,
+	}, createpkg.DefaultDrupalRootfs)
+	if err != nil {
+		t.Fatalf("runIsleValidation() error = %v", err)
+	}
+
+	byName := map[string]sitevalidate.Result{}
+	for _, result := range results {
+		byName[result.Name] = result
+	}
+	for _, name := range []string{"component:iiif", "component:bot-mitigation", "traefik-triplet-config", "triplet-config"} {
+		if byName[name].Status != sitevalidate.StatusOK {
+			t.Fatalf("expected %s ok, got %+v", name, byName[name])
+		}
+	}
+	if result, ok := byName["traefik-cantaloupe-config"]; ok && result.Status == sitevalidate.StatusFailed {
+		t.Fatalf("did not expect Cantaloupe config failure for Triplet, got %+v", result)
 	}
 }
 

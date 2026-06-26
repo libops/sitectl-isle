@@ -11,6 +11,7 @@ import (
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
+	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
 )
 
@@ -118,11 +119,13 @@ func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string
 
 	views := make([]componentView, 0, len(sdkStatuses)+2)
 	for i := range sdkStatuses {
+		state := sdkStatuses[i].State
+		sdkStatus := &sdkStatuses[i]
 		followUps := map[string]string{}
-		disposition := dispositionFromDetectedState(sdkStatuses[i].State)
+		disposition := dispositionFromDetectedState(state)
 		switch sdkStatuses[i].Name {
 		case "fcrepo":
-			if sdkStatuses[i].State != corecomponent.DetectedState(corecomponent.StateOff) {
+			if state != corecomponent.DetectedState(corecomponent.StateOff) {
 				break
 			}
 			disposition = corecomponent.DispositionSuperseded
@@ -141,18 +144,27 @@ func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string
 				followUps["upstream-url"] = strings.TrimSpace(upstream)
 			}
 		case "codebase":
-			disposition = codebaseDisposition(sdkStatuses[i].State)
+			disposition = codebaseDisposition(state)
+		case coretraefik.BotMitigationName:
+			if enabled, known := localBotMitigationConfigured(siteCtx.ProjectDir); known {
+				state = corecomponent.DetectedState(corecomponent.StateOff)
+				if enabled {
+					state = corecomponent.DetectedState(corecomponent.StateOn)
+				}
+				disposition = dispositionFromDetectedState(state)
+				sdkStatus = nil
+			}
 		default:
 			if createpkg.IsDerivativeService(sdkStatuses[i].Name) {
-				disposition = derivativeServiceDisposition(sdkStatuses[i].State)
+				disposition = derivativeServiceDisposition(state)
 			}
 		}
 		views = append(views, componentView{
 			Definition:     definitions[sdkStatuses[i].Name],
 			Name:           sdkStatuses[i].Name,
-			State:          sdkStatuses[i].State,
+			State:          state,
 			Disposition:    disposition,
-			SDKStatus:      &sdkStatuses[i],
+			SDKStatus:      sdkStatus,
 			FollowUpValues: followUps,
 		})
 	}

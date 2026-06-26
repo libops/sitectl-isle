@@ -24,7 +24,7 @@ func (r *isleValidateRunner) BindFlags(cmd *cobra.Command) {
 }
 
 func (r *isleValidateRunner) Run(cmd *cobra.Command, ctx *config.Context) ([]sitevalidate.Result, error) {
-	rootfs, err := resolveCodebaseRootfsFlag(cmd, r.codebaseRootfs, r.drupalRootfs)
+	rootfs, err := resolveCodebaseRootfsForContext(cmd, ctx, r.codebaseRootfs, r.drupalRootfs)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,9 @@ func runIsleValidation(ctx *config.Context, drupalRootfs string) ([]sitevalidate
 	if err != nil {
 		return nil, err
 	}
+	statusByName := map[string]componentView{}
 	for _, status := range statuses {
+		statusByName[status.Name] = status
 		result := sitevalidate.Result{
 			Name:   "component:" + status.Name,
 			Status: sitevalidate.StatusOK,
@@ -95,27 +97,39 @@ func runIsleValidation(ctx *config.Context, drupalRootfs string) ([]sitevalidate
 		results = append(results, result)
 	}
 
-	traefikPath := filepath.Join(ctx.ProjectDir, "conf", "traefik", "cantaloupe.yml")
-	if exists, err := ctx.FileExists(traefikPath); err != nil {
-		results = append(results, sitevalidate.Result{
-			Name:   "traefik-cantaloupe-config",
-			Status: sitevalidate.StatusFailed,
-			Detail: err.Error(),
-		})
-	} else if !exists {
-		results = append(results, sitevalidate.Result{
-			Name:    "traefik-cantaloupe-config",
-			Status:  sitevalidate.StatusFailed,
-			Detail:  fmt.Sprintf("%s not found", traefikPath),
-			FixHint: "ensure this is an ISLE checkout with the expected Traefik config",
-		})
+	if statusByName["iiif"].Disposition == corecomponent.DispositionTriplet {
+		results = append(results,
+			validateProjectFile(ctx, "traefik-triplet-config", filepath.Join("conf", "traefik", "triplet.yml")),
+			validateProjectFile(ctx, "triplet-config", filepath.Join("conf", "triplet", "config.yaml")),
+		)
 	} else {
-		results = append(results, sitevalidate.Result{
-			Name:   "traefik-cantaloupe-config",
-			Status: sitevalidate.StatusOK,
-			Detail: traefikPath,
-		})
+		results = append(results,
+			validateProjectFile(ctx, "traefik-cantaloupe-config", filepath.Join("conf", "traefik", "cantaloupe.yml")),
+		)
 	}
 
 	return results, nil
+}
+
+func validateProjectFile(ctx *config.Context, name, relPath string) sitevalidate.Result {
+	path := filepath.Join(ctx.ProjectDir, relPath)
+	if exists, err := ctx.FileExists(path); err != nil {
+		return sitevalidate.Result{
+			Name:   name,
+			Status: sitevalidate.StatusFailed,
+			Detail: err.Error(),
+		}
+	} else if !exists {
+		return sitevalidate.Result{
+			Name:    name,
+			Status:  sitevalidate.StatusFailed,
+			Detail:  fmt.Sprintf("%s not found", path),
+			FixHint: "ensure this is an ISLE checkout with the expected config",
+		}
+	}
+	return sitevalidate.Result{
+		Name:   name,
+		Status: sitevalidate.StatusOK,
+		Detail: path,
+	}
 }

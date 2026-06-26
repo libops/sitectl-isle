@@ -237,6 +237,9 @@ func applyCodebaseGitRoot(projectDir string) error {
 	if err := moveIfExists(filepath.Join(projectDir, "drupal", ".dockerignore"), filepath.Join(projectDir, ".dockerignore")); err != nil {
 		return err
 	}
+	if err := moveDrupalCodebaseContents(filepath.Join(projectDir, "drupal"), projectDir); err != nil {
+		return err
+	}
 	if err := moveDirectoryContents(filepath.Join(projectDir, "drupal", "rootfs", "var", "www", "drupal"), projectDir, false); err != nil {
 		return err
 	}
@@ -251,6 +254,28 @@ func applyCodebaseGitRoot(projectDir string) error {
 	}
 	if err := rewriteCodebaseDevComposePaths(filepath.Join(projectDir, "docker-compose.dev.yml")); err != nil {
 		return err
+	}
+	return nil
+}
+
+func moveDrupalCodebaseContents(sourceDir, targetDir string) error {
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s: %w", sourceDir, err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || name == "Dockerfile" || name == "README.md" || name == "rootfs" {
+			continue
+		}
+		source := filepath.Join(sourceDir, name)
+		target := filepath.Join(targetDir, name)
+		if err := os.Rename(source, target); err != nil {
+			return fmt.Errorf("move %s to %s: %w", source, target, err)
+		}
 	}
 	return nil
 }

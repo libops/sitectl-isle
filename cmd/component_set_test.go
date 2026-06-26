@@ -1310,6 +1310,50 @@ func TestResolveCodebaseRootfsFlagRejectsConflictingAliases(t *testing.T) {
 	}
 }
 
+func TestResolveCodebaseRootfsForContextUsesSavedContextRootfs(t *testing.T) {
+	var codebaseRootfs string
+	var drupalRootfs string
+	cmd := &cobra.Command{Use: "test"}
+	addCodebaseRootfsFlags(cmd, &codebaseRootfs, &drupalRootfs, createpkg.DefaultDrupalRootfs)
+
+	got, err := resolveCodebaseRootfsForContext(cmd, &config.Context{
+		ProjectDir:   t.TempDir(),
+		DrupalRootfs: corecomponent.DefaultDrupalRootfs,
+	}, codebaseRootfs, drupalRootfs)
+	if err != nil {
+		t.Fatalf("resolveCodebaseRootfsForContext() error = %v", err)
+	}
+	if got != corecomponent.DefaultDrupalRootfs {
+		t.Fatalf("expected saved context rootfs %q, got %q", corecomponent.DefaultDrupalRootfs, got)
+	}
+}
+
+func TestResolveCodebaseRootfsForContextDetectsCurrentDrupalLayout(t *testing.T) {
+	projectDir := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(projectDir, "drupal", "config", "sync"),
+		filepath.Join(projectDir, "drupal", "web"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", dir, err)
+		}
+	}
+	writeFileForTest(t, filepath.Join(projectDir, "drupal", "composer.json"), "{}\n")
+
+	var codebaseRootfs string
+	var drupalRootfs string
+	cmd := &cobra.Command{Use: "test"}
+	addCodebaseRootfsFlags(cmd, &codebaseRootfs, &drupalRootfs, createpkg.DefaultDrupalRootfs)
+
+	got, err := resolveCodebaseRootfsForContext(cmd, &config.Context{ProjectDir: projectDir}, codebaseRootfs, drupalRootfs)
+	if err != nil {
+		t.Fatalf("resolveCodebaseRootfsForContext() error = %v", err)
+	}
+	if got != "drupal" {
+		t.Fatalf("expected detected current Drupal layout %q, got %q", "drupal", got)
+	}
+}
+
 func writeFileForTest(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {

@@ -487,6 +487,98 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 	}
 }
 
+func TestApplyCodebaseGitRootFromCurrentDrupalLayout(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	drupalRoot := filepath.Join(projectDir, "drupal")
+	for _, dir := range []string{
+		filepath.Join(drupalRoot, "assets"),
+		filepath.Join(drupalRoot, "config", "sync"),
+		filepath.Join(drupalRoot, "web", "modules", "custom"),
+		filepath.Join(drupalRoot, "web", "themes", "custom"),
+		filepath.Join(drupalRoot, "rootfs", "etc", "s6-overlay", "scripts"),
+		filepath.Join(drupalRoot, "rootfs", "opt", "solr"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", dir, err)
+		}
+	}
+
+	writeTestFile(t, filepath.Join(projectDir, "README.md"), "project readme\n")
+	writeTestFile(t, filepath.Join(drupalRoot, "README.md"), "drupal readme\n")
+	writeTestFile(t, filepath.Join(drupalRoot, "Dockerfile"), `# syntax=docker/dockerfile:1.23.0
+ARG BASE_IMAGE=libops/islandora:php84
+FROM ${BASE_IMAGE}
+
+ARG TARGETARCH
+
+COPY --link composer.json composer.lock /var/www/drupal/
+COPY --link assets/ /var/www/drupal/assets/
+COPY --link rootfs/opt/ /opt/
+`)
+	writeTestFile(t, filepath.Join(drupalRoot, ".dockerignore"), "README.md\n")
+	writeTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `services:
+  init:
+    volumes:
+      - ./drupal:/drupal:rw
+  drupal:
+    build:
+      context: ./drupal
+`)
+	for _, rel := range []string{
+		"assets/default_settings.txt",
+		"composer.json",
+		"composer.lock",
+		"config/sync/system.site.yml",
+		"web/modules/custom/.gitkeep",
+		"web/themes/custom/.gitkeep",
+	} {
+		writeTestFile(t, filepath.Join(drupalRoot, rel), rel+"\n")
+	}
+
+	if err := applyCodebaseGitRoot(projectDir); err != nil {
+		t.Fatalf("applyCodebaseGitRoot() error = %v", err)
+	}
+
+	for _, rel := range []string{"Dockerfile", ".dockerignore", "composer.json", "composer.lock", "assets/default_settings.txt", "config/sync/system.site.yml", "web/modules/custom/.gitkeep"} {
+		if _, err := os.Stat(filepath.Join(projectDir, rel)); err != nil {
+			t.Fatalf("expected %s at git root: %v", rel, err)
+		}
+		if _, err := os.Stat(filepath.Join(drupalRoot, rel)); !os.IsNotExist(err) {
+			t.Fatalf("expected drupal/%s moved to git root, stat err = %v", rel, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(drupalRoot, "rootfs", "etc", "s6-overlay", "scripts")); err != nil {
+		t.Fatalf("expected drupal/rootfs overlays preserved: %v", err)
+	}
+	if got := readTestFile(t, filepath.Join(projectDir, "README.md")); got != "project readme\n" {
+		t.Fatalf("expected project README preserved, got %q", got)
+	}
+	if got := readTestFile(t, filepath.Join(drupalRoot, "README.md")); got != "drupal readme\n" {
+		t.Fatalf("expected drupal README left in place, got %q", got)
+	}
+
+	dockerfile := readTestFile(t, filepath.Join(projectDir, "Dockerfile"))
+	for _, want := range []string{
+		"COPY --link composer.json composer.lock /var/www/drupal/",
+		"COPY --link drupal/rootfs/etc/ /etc/",
+		"COPY --link drupal/rootfs/opt/ /opt/",
+	} {
+		if !strings.Contains(dockerfile, want) {
+			t.Fatalf("expected Dockerfile to contain %q, got:\n%s", want, dockerfile)
+		}
+	}
+
+	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	if !strings.Contains(compose, "context: .") || strings.Contains(compose, "context: ./drupal") {
+		t.Fatalf("expected drupal build context to be git root, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, "- .:/drupal:rw") || strings.Contains(compose, "- ./drupal:/drupal:rw") {
+		t.Fatalf("expected init volume to mount git root, got:\n%s", compose)
+	}
+}
+
 func TestApplyCreateMatrix(t *testing.T) {
 	cases := []struct {
 		name     string
