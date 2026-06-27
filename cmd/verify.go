@@ -218,10 +218,17 @@ func verifyBotMitigation(ctx context.Context, verifyCtx *config.Context, project
 	case coretraefik.BotMitigationStateOff:
 		return []sitevalidate.Result{okVerifyResult("verify:bot-mitigation", "expected off")}
 	case coretraefik.BotMitigationStateOn:
+		if !botMitigationForwardedHeaderProbeEnabled(verifyCtx) {
+			return []sitevalidate.Result{okVerifyResult("verify:bot-mitigation", "configured; skipped X-Forwarded-For challenge probe because reverse-proxy trusted IPs are not configured")}
+		}
 		return []sitevalidate.Result{checkBotMitigationChallenge(ctx, verifyCtx)}
 	default:
 		return []sitevalidate.Result{failedVerifyResult("verify:bot-mitigation:expected", fmt.Sprintf("invalid expected state %q", expected), "use auto, on, or off")}
 	}
+}
+
+func botMitigationForwardedHeaderProbeEnabled(verifyCtx *config.Context) bool {
+	return strings.TrimSpace(currentReverseProxyTrustedIPs(verifyCtx)) != ""
 }
 
 func localBotMitigationConfigured(projectDir string) (bool, bool) {
