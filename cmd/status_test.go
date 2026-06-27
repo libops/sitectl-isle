@@ -388,9 +388,9 @@ services:
   drupal:
     environment:
       DRUPAL_ENABLE_HTTPS: "false"
-      DRUPAL_DEFAULT_CANTALOUPE_URL: http://${DOMAIN}/cantaloupe/iiif/2
+      DRUPAL_DEFAULT_CANTALOUPE_URL: ${SITE_URL:-http://${DOMAIN}}/cantaloupe/iiif/2
       DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.${DOMAIN}/fcrepo/rest/
-      DRUSH_OPTIONS_URI: http://${DOMAIN}
+      DRUSH_OPTIONS_URI: ${SITE_URL:-http://${DOMAIN}}
   fcrepo:
     environment:
       FCREPO_ALLOW_EXTERNAL_DRUPAL: http://${DOMAIN}/
@@ -493,7 +493,7 @@ services:
     image: islandora/blazegraph
   drupal:
     environment:
-      DRUPAL_DEFAULT_CANTALOUPE_URL: http://${DOMAIN}/cantaloupe/iiif/2
+      DRUPAL_DEFAULT_CANTALOUPE_URL: ${SITE_URL:-http://${DOMAIN}}/cantaloupe/iiif/2
       DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.example/fcrepo/rest/
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
       DRUPAL_ENABLE_HTTPS: "false"

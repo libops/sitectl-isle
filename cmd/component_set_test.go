@@ -1039,7 +1039,7 @@ func TestRunComponentSetDistributesCantaloupeIIIF(t *testing.T) {
 	if !strings.Contains(string(devComposeText), "IIIF_UPSTREAM_URL: \"http://cantaloupe:8182\"") {
 		t.Fatalf("expected dev compose to reset IIIF upstream, got:\n%s", string(devComposeText))
 	}
-	if !strings.Contains(string(devComposeText), "DRUPAL_DEFAULT_CANTALOUPE_URL: \"${URI_SCHEME}://${DOMAIN}/cantaloupe/iiif/2\"") {
+	if !strings.Contains(string(devComposeText), "DRUPAL_DEFAULT_CANTALOUPE_URL: \"${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/cantaloupe/iiif/2\"") {
 		t.Fatalf("expected dev compose to reset Drupal IIIF URL, got:\n%s", string(devComposeText))
 	}
 	if !strings.Contains(out.String(), "iiif-topology: distributed (http://cantaloupe.example:8182)") {

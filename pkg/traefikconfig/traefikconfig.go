@@ -300,7 +300,7 @@ func ApplyOverride(projectDir, overridePath string, enabled bool, mode string) e
 		drupalEnv["DRUPAL_DEFAULT_CANTALOUPE_URL"] = devIIIFURL(projectDir, scheme)
 		drupalEnv["DRUPAL_DEFAULT_FCREPO_URL"] = fmt.Sprintf("%s://fcrepo.${DOMAIN}/fcrepo/rest/", scheme)
 		drupalEnv["DRUPAL_ENABLE_HTTPS"] = ternary(scheme == "https", "true", "false")
-		drupalEnv["DRUSH_OPTIONS_URI"] = fmt.Sprintf("%s://${DOMAIN}", scheme)
+		drupalEnv["DRUSH_OPTIONS_URI"] = publicSiteURL(scheme)
 
 		fcrepoEnv := ensureMap(fcrepo, "environment")
 		fcrepoEnv["FCREPO_ALLOW_EXTERNAL_DRUPAL"] = fmt.Sprintf("%s://${DOMAIN}/", scheme)
@@ -339,13 +339,17 @@ func ApplyOverride(projectDir, overridePath string, enabled bool, mode string) e
 func devIIIFURL(projectDir, scheme string) string {
 	compose, err := corecomponent.LoadComposeFile(filepath.Join(projectDir, "docker-compose.yml"))
 	if err != nil {
-		return fmt.Sprintf("%s://${DOMAIN}/cantaloupe/iiif/2", scheme)
+		return publicSiteURL(scheme) + "/cantaloupe/iiif/2"
 	}
 	value, ok := composeServiceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_CANTALOUPE_URL")
 	if ok && strings.Contains(value, "/iiif/3") {
-		return fmt.Sprintf("%s://${DOMAIN}/iiif/3", scheme)
+		return publicSiteURL(scheme) + "/iiif/3"
 	}
-	return fmt.Sprintf("%s://${DOMAIN}/cantaloupe/iiif/2", scheme)
+	return publicSiteURL(scheme) + "/cantaloupe/iiif/2"
+}
+
+func publicSiteURL(scheme string) string {
+	return fmt.Sprintf("${SITE_URL:-%s://${DOMAIN}}", scheme)
 }
 
 func validateMode(mode string, allowHTTP bool) error {

@@ -179,7 +179,7 @@ func verifyIIIF(ctx context.Context, checker *healthcheck.DockerChecker, project
 		results = append(results, verifyBool("verify:iiif:triplet-service", tripletExists, "triplet service is present", "triplet service is absent", "re-run sitectl create with --iiif triplet"))
 		results = append(results, verifyBool("verify:iiif:cantaloupe-service", !cantaloupeExists, "cantaloupe service is absent", "cantaloupe service is present", "re-run sitectl create with --iiif triplet"))
 		if expectedTopology == verifyIIIFLocal {
-			results = append(results, verifyProjectFileContains(projectDir, "docker-compose.yml", `DRUPAL_DEFAULT_CANTALOUPE_URL: "${URI_SCHEME}://${DOMAIN}/iiif/3"`, "verify:iiif:drupal-url"))
+			results = append(results, verifyProjectFileContains(projectDir, "docker-compose.yml", `DRUPAL_DEFAULT_CANTALOUPE_URL: "${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/iiif/3"`, "verify:iiif:drupal-url"))
 			results = append(results, verifyProjectFileExists(projectDir, filepath.Join("conf", "triplet", "config.yaml"), "verify:iiif:triplet-config"))
 		}
 	case createpkg.IIIFCantaloupe:
@@ -310,7 +310,7 @@ func verifyNoFedoraManagedFiles(ctx context.Context, projectDir string) sitevali
 	if strings.TrimSpace(projectDir) == "" {
 		return warningVerifyResult("verify:fcrepo:file-managed", "skipped because the context does not define a local project directory")
 	}
-	out, err := runLocalProjectOutput(ctx, projectDir, "docker", "compose", "exec", "-T", "drupal", "sh", "-lc", `drush --root=/var/www/drupal sql:query --extra=--skip-column-names "SELECT COUNT(*) FROM file_managed WHERE uri LIKE 'fedora%';"`)
+	out, err := runLocalProjectOutput(ctx, projectDir, "docker", "compose", "exec", "-T", "drupal", "bash", "-lc", `drush --root=/var/www/drupal sql:query --extra=--skip-column-names "SELECT COUNT(*) FROM file_managed WHERE uri LIKE 'fedora%';"`)
 	if err != nil {
 		return failedVerifyResult("verify:fcrepo:file-managed", err.Error(), "")
 	}
@@ -365,7 +365,7 @@ func demoObjectAssertTarget(fcrepoExpected, fileSystemURI string) (string, strin
 }
 
 func countContainerFiles(ctx context.Context, projectDir, service, target string) (int, error) {
-	out, err := runLocalProjectOutput(ctx, projectDir, "docker", "compose", "exec", "-T", service, "sh", "-lc", "find "+strconv.Quote(target)+" -type f 2>/dev/null | wc -l")
+	out, err := runLocalProjectOutput(ctx, projectDir, "docker", "compose", "exec", "-T", service, "bash", "-lc", "find "+strconv.Quote(target)+" -type f 2>/dev/null | wc -l")
 	if err != nil {
 		return 0, err
 	}

@@ -255,7 +255,7 @@ services:
     image: islandora/cantaloupe
   drupal:
     environment:
-      DRUPAL_DEFAULT_CANTALOUPE_URL: ${URI_SCHEME}://${DOMAIN}/cantaloupe/iiif/2
+      DRUPAL_DEFAULT_CANTALOUPE_URL: ${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/cantaloupe/iiif/2
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
       DRUPAL_DEFAULT_FCREPO_URL: ${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/
@@ -742,7 +742,7 @@ func TestApplyCreateMatrix(t *testing.T) {
 				if !strings.Contains(compose, "\n  triplet:\n") || strings.Contains(compose, "\n  cantaloupe:\n") {
 					t.Fatalf("expected triplet to replace cantaloupe, got:\n%s", compose)
 				}
-				if !strings.Contains(compose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "${URI_SCHEME}://${DOMAIN}/iiif/3"`) {
+				if !strings.Contains(compose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/iiif/3"`) {
 					t.Fatalf("expected Drupal IIIF URL to use /iiif/3, got:\n%s", compose)
 				}
 			},
@@ -1184,7 +1184,7 @@ func writeApplyMatrixProject(t *testing.T, projectDir string) {
     build:
       context: ./drupal
     environment:
-      DRUPAL_DEFAULT_CANTALOUPE_URL: ${URI_SCHEME}://${DOMAIN}/cantaloupe/iiif/2
+      DRUPAL_DEFAULT_CANTALOUPE_URL: ${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/cantaloupe/iiif/2
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
       DRUPAL_DEFAULT_FCREPO_URL: ${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/

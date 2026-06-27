@@ -90,10 +90,16 @@ func createDefinition() plugin.CreateSpec {
 		MinDiskSpace:        "30 GiB",
 		DockerComposeRepo:   defaultTemplateRepo,
 		DockerComposeBranch: defaultTemplateBranch,
-		DockerComposeBuild:  []string{"if [ -f Makefile ]; then make build; else docker compose build; fi"},
-		DockerComposeInit:   []string{"if [ -f Makefile ]; then make init; fi"},
-		DockerComposeUp:     []string{"if [ -f Makefile ]; then make up; else docker compose up --remove-orphans -d; fi"},
-		DockerComposeDown:   []string{"if [ -f Makefile ]; then make down; else docker compose down; fi"},
+		DockerComposeBuild: []string{
+			"mkdir -p ./certs",
+			"id -u > ./certs/UID",
+			"if [ -d drupal/rootfs ]; then find drupal/rootfs -type d -exec chmod 755 {} \\; ; fi",
+			"docker compose pull --ignore-buildable --ignore-pull-failures",
+			"docker compose build --pull",
+		},
+		DockerComposeInit: []string{"if [ -x ./scripts/init.sh ]; then ./scripts/init.sh; fi"},
+		DockerComposeUp:   []string{"docker compose up --remove-orphans -d"},
+		DockerComposeDown: []string{"docker compose down"},
 		DockerComposeRollout: []string{
 			"docker compose pull --ignore-buildable --quiet || true",
 			"docker compose up --remove-orphans --wait --pull missing --quiet-pull -d",
@@ -636,9 +642,6 @@ func runCheckCommand(name string, args ...string) error {
 }
 
 func startupCommand() (string, string, []string) {
-	if _, err := createLookPath("make"); err == nil {
-		return "make up", "make", []string{"up"}
-	}
 	return "bash ./scripts/up.sh", "bash", []string{"./scripts/up.sh"}
 }
 

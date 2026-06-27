@@ -347,9 +347,9 @@ func mergeDevProdService(name string, dev, prod interface{}) map[string]interfac
 		// Update environment for unified format
 		if env, ok := result["environment"].(map[string]interface{}); ok {
 			env["DEVELOPMENT_ENVIRONMENT"] = "${DEVELOPMENT_ENVIRONMENT:-false}"
-			env["DRUPAL_DEFAULT_CANTALOUPE_URL"] = "${URI_SCHEME}://${DOMAIN}/cantaloupe/iiif/2"
+			env["DRUPAL_DEFAULT_CANTALOUPE_URL"] = "${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/cantaloupe/iiif/2"
 			env["DRUPAL_DEFAULT_FCREPO_URL"] = "${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/"
-			env["DRUSH_OPTIONS_URI"] = "${URI_SCHEME}://${DOMAIN}"
+			env["DRUSH_OPTIONS_URI"] = "${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}"
 			env["DRUPAL_ENABLE_HTTPS"] = "false"
 		}
 	case "milliner":
