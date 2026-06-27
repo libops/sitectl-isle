@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
@@ -154,6 +155,10 @@ func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string
 				disposition = dispositionFromDetectedState(state)
 				sdkStatus = nil
 			}
+		case coretraefik.ReverseProxyName:
+			if trustedIPs := currentReverseProxyTrustedIPs(siteCtx); trustedIPs != "" {
+				followUps["trusted-ip"] = trustedIPs
+			}
 		default:
 			if createpkg.IsDerivativeService(sdkStatuses[i].Name) {
 				disposition = derivativeServiceDisposition(state)
@@ -205,6 +210,33 @@ func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string
 	})
 
 	return views, nil
+}
+
+func currentReverseProxyTrustedIPs(siteCtx *config.Context) string {
+	inspection, err := coretraefik.InspectReverseProxy(siteCtx)
+	if err != nil {
+		return ""
+	}
+	entrypoints := make([]string, 0, len(inspection.Traefik))
+	for entrypoint := range inspection.Traefik {
+		entrypoints = append(entrypoints, entrypoint)
+	}
+	sort.Strings(entrypoints)
+	current := ""
+	for _, entrypoint := range entrypoints {
+		value := corecomponent.JoinFollowUpValues(inspection.Traefik[entrypoint])
+		if value == "" {
+			continue
+		}
+		if current == "" {
+			current = value
+			continue
+		}
+		if value != current {
+			return ""
+		}
+	}
+	return current
 }
 
 func dispositionFromDetectedState(state corecomponent.DetectedState) corecomponent.Disposition {

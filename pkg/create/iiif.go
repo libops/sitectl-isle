@@ -18,6 +18,7 @@ const (
 	localTripletUpstream     = "http://triplet:8080"
 	cantaloupeDataVolumeName = "cantaloupe-data"
 	tripletCacheVolumeName   = "triplet-cache"
+	publicSiteURLExpr        = "${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}"
 )
 
 //go:embed assets/iiif/*
@@ -135,7 +136,7 @@ func applyTripletIIIF(composePath, overridePath, topology, upstreamURL string) (
 	if err := compose.DeleteVolume(cantaloupeDataVolumeName); err != nil {
 		return false, err
 	}
-	drupalIIIFURL := "${URI_SCHEME}://${DOMAIN}/iiif/3"
+	drupalIIIFURL := publicSiteURLExpr + "/iiif/3"
 	if topology == IIIFTopologyExternal {
 		drupalIIIFURL = strings.TrimSpace(upstreamURL)
 	}
@@ -164,7 +165,7 @@ func applyTripletIIIF(composePath, overridePath, topology, upstreamURL string) (
 		if err := ensureExternalOverride(overridePath, "triplet", tripletBlock, tripletCacheVolumeName, "  triplet-cache: {}", localTripletUpstream, []string{"8080:8080"}); err != nil {
 			return false, err
 		}
-		if err := ensureDevIIIFOverride(filepath.Dir(composePath), "triplet", tripletBlock, tripletCacheVolumeName, "  triplet-cache: {}", localTripletUpstream, []string{"8080:8080"}, "${URI_SCHEME}://${DOMAIN}/iiif/3"); err != nil {
+		if err := ensureDevIIIFOverride(filepath.Dir(composePath), "triplet", tripletBlock, tripletCacheVolumeName, "  triplet-cache: {}", localTripletUpstream, []string{"8080:8080"}, publicSiteURLExpr+"/iiif/3"); err != nil {
 			return false, err
 		}
 		if err := compose.DeleteService("triplet"); err != nil {
@@ -221,7 +222,7 @@ func applyCantaloupeIIIF(composePath, overridePath, topology, upstreamURL string
 	if err := compose.DeleteVolume(tripletCacheVolumeName); err != nil {
 		return err
 	}
-	drupalIIIFURL := "${URI_SCHEME}://${DOMAIN}/cantaloupe/iiif/2"
+	drupalIIIFURL := publicSiteURLExpr + "/cantaloupe/iiif/2"
 	if topology == IIIFTopologyExternal {
 		drupalIIIFURL = strings.TrimSpace(upstreamURL)
 	}
@@ -250,7 +251,7 @@ func applyCantaloupeIIIF(composePath, overridePath, topology, upstreamURL string
 		if err := ensureExternalOverride(overridePath, "cantaloupe", cantaloupeBlock, cantaloupeDataVolumeName, "  cantaloupe-data: {}", localCantaloupeUpstream, []string{"8182:8182"}); err != nil {
 			return err
 		}
-		if err := ensureDevIIIFOverride(filepath.Dir(composePath), "cantaloupe", cantaloupeBlock, cantaloupeDataVolumeName, "  cantaloupe-data: {}", localCantaloupeUpstream, []string{"8182:8182"}, "${URI_SCHEME}://${DOMAIN}/cantaloupe/iiif/2"); err != nil {
+		if err := ensureDevIIIFOverride(filepath.Dir(composePath), "cantaloupe", cantaloupeBlock, cantaloupeDataVolumeName, "  cantaloupe-data: {}", localCantaloupeUpstream, []string{"8182:8182"}, publicSiteURLExpr+"/cantaloupe/iiif/2"); err != nil {
 			return err
 		}
 		if err := compose.DeleteService("cantaloupe"); err != nil {

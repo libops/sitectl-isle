@@ -60,6 +60,9 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 		"blazegraph":        corecomponent.StateOn,
 		"iiif":              corecomponent.StateOff,
 		"iiif-topology":     corecomponent.StateOn,
+		"reverse-proxy":     corecomponent.StateOff,
+		"upload-limits":     corecomponent.StateOff,
+		"dev-mode":          corecomponent.StateOff,
 		"isle-tls":          corecomponent.StateOn,
 		"isle-tls-override": corecomponent.StateOn,
 	}
@@ -180,6 +183,12 @@ func TestRunComponentReviewUsesDetectedTLSModeAsPromptDefault(t *testing.T) {
 		case "isle-tls", "isle-tls-override":
 			return corecomponent.StateOn, nil
 		case "iiif-topology":
+			return corecomponent.StateOff, nil
+		case "reverse-proxy":
+			return corecomponent.StateOff, nil
+		case "upload-limits":
+			return corecomponent.StateOff, nil
+		case "dev-mode":
 			return corecomponent.StateOff, nil
 		default:
 			return corecomponent.StateOn, nil

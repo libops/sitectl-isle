@@ -62,7 +62,7 @@ count_files() {
 	local target="$2"
 	(
 		cd "${SITE_DIR}" &&
-			docker compose exec -T "${service}" sh -lc "find ${target} -type f 2>/dev/null | wc -l"
+			docker compose exec -T "${service}" bash -lc "find ${target} -type f 2>/dev/null | wc -l"
 	)
 }
 
@@ -86,7 +86,7 @@ drupal_sql_query() {
 	local query="$1"
 	(
 		cd "${SITE_DIR}" &&
-			docker compose exec -T drupal sh -lc "drush --root=/var/www/drupal sql:query --extra=--skip-column-names \"${query}\""
+			docker compose exec -T drupal bash -lc "drush --root=/var/www/drupal sql:query --extra=--skip-column-names \"${query}\""
 	)
 }
 
@@ -129,8 +129,7 @@ create_site() {
 		--iiif-topology "${IIIF_TOPOLOGY}" \
 		--codebase "${CODEBASE_LAYOUT}" \
 		--bot-mitigation "${BOT_MITIGATION_STATE}" \
-		--isle-file-system-uri "${ISLE_FILE_SYSTEM_URI}" \
-		--setup-only
+		--isle-file-system-uri "${ISLE_FILE_SYSTEM_URI}"
 }
 
 verify_codebase_layout() {
@@ -184,17 +183,6 @@ set_assert_target() {
 		exit 1
 		;;
 	esac
-}
-
-run_make_target() {
-	local target="$1"
-	if ! (
-		cd "${SITE_DIR}" &&
-			make "${target}"
-	); then
-		run_compose_diagnostics
-		exit 1
-	fi
 }
 
 run_healthcheck() {
@@ -264,7 +252,7 @@ verify_iiif_implementation() {
 			echo "cantaloupe service still present after create --iiif triplet" >&2
 			exit 1
 		fi
-		if ! grep -Fq "DRUPAL_DEFAULT_CANTALOUPE_URL: \"\${URI_SCHEME}://\${DOMAIN}/iiif/3\"" "${SITE_DIR}/docker-compose.yml"; then
+		if ! grep -Fq "DRUPAL_DEFAULT_CANTALOUPE_URL: \"\${SITE_URL:-\${URI_SCHEME:-http}://\${DOMAIN}}/iiif/3\"" "${SITE_DIR}/docker-compose.yml"; then
 			echo "Drupal IIIF URL was not updated to /iiif/3 for triplet" >&2
 			exit 1
 		fi
@@ -338,8 +326,6 @@ main() {
 	verify_codebase_layout
 	verify_iiif_implementation
 	set_assert_target
-	run_make_target init
-	run_make_target up
 	run_healthcheck
 	verify_bot_mitigation_challenge
 	verify_demo_objects_created

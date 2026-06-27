@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/helpers"
 	"github.com/libops/sitectl/pkg/plugin"
+	coredevmode "github.com/libops/sitectl/pkg/services/devmode"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
 )
@@ -50,7 +52,13 @@ const (
 
 type createRequest struct {
 	plugin.ComposeCreateRequest
-	Apply createpkg.Options
+	Apply                  createpkg.Options
+	ReverseProxyState      corecomponent.State
+	ReverseProxyTrustedIPs string
+	UploadLimitsState      corecomponent.State
+	MaxUploadSize          string
+	UploadTimeout          string
+	DevModeState           corecomponent.State
 }
 
 type createRunner struct{}
@@ -82,10 +90,16 @@ func createDefinition() plugin.CreateSpec {
 		MinDiskSpace:        "30 GiB",
 		DockerComposeRepo:   defaultTemplateRepo,
 		DockerComposeBranch: defaultTemplateBranch,
-		DockerComposeBuild:  []string{"if [ -f Makefile ]; then make build; else docker compose build; fi"},
-		DockerComposeInit:   []string{"if [ -f Makefile ]; then make init; fi"},
-		DockerComposeUp:     []string{"if [ -f Makefile ]; then make up; else docker compose up --remove-orphans -d; fi"},
-		DockerComposeDown:   []string{"if [ -f Makefile ]; then make down; else docker compose down; fi"},
+		DockerComposeBuild: []string{
+			"mkdir -p ./certs",
+			"id -u > ./certs/UID",
+			"if [ -d drupal/rootfs ]; then find drupal/rootfs -type d -exec chmod 755 {} \\; ; fi",
+			"docker compose pull --ignore-buildable --ignore-pull-failures",
+			"docker compose build --pull",
+		},
+		DockerComposeInit: []string{"if [ -x ./scripts/init.sh ]; then ./scripts/init.sh; fi"},
+		DockerComposeUp:   []string{"docker compose up --remove-orphans -d"},
+		DockerComposeDown: []string{"docker compose down"},
 		DockerComposeRollout: []string{
 			"docker compose pull --ignore-buildable --quiet || true",
 			"docker compose up --remove-orphans --wait --pull missing --quiet-pull -d",
@@ -153,6 +167,24 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 	if decision, ok := resolved.Decisions["bot-mitigation"]; ok {
 		opts.BotMitigation = string(decision.State)
 	}
+	var reverseProxyState corecomponent.State
+	var reverseProxyTrustedIPs string
+	if decision, ok := resolved.Decisions[coretraefik.ReverseProxyName]; ok {
+		reverseProxyState = decision.State
+		reverseProxyTrustedIPs = strings.TrimSpace(decision.Options["trusted-ip"])
+	}
+	var uploadLimitsState corecomponent.State
+	var maxUploadSize string
+	var uploadTimeout string
+	if decision, ok := resolved.Decisions[coretraefik.UploadLimitsName]; ok {
+		uploadLimitsState = decision.State
+		maxUploadSize = strings.TrimSpace(decision.Options["max-upload-size"])
+		uploadTimeout = strings.TrimSpace(decision.Options["upload-timeout"])
+	}
+	var devModeState corecomponent.State
+	if decision, ok := resolved.Decisions[coredevmode.Name]; ok {
+		devModeState = decision.State
+	}
 	if decision, ok := resolved.Decisions["codebase"]; ok {
 		opts.Codebase = createCodebaseValue(decision.Disposition)
 	}
@@ -174,8 +206,14 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 		opts.DrupalRootfs = corecomponent.DefaultDrupalRootfs
 	}
 	return createRequest{
-		ComposeCreateRequest: resolved,
-		Apply:                opts,
+		ComposeCreateRequest:   resolved,
+		Apply:                  opts,
+		ReverseProxyState:      reverseProxyState,
+		ReverseProxyTrustedIPs: reverseProxyTrustedIPs,
+		UploadLimitsState:      uploadLimitsState,
+		MaxUploadSize:          maxUploadSize,
+		UploadTimeout:          uploadTimeout,
+		DevModeState:           devModeState,
 	}, nil
 }
 
@@ -241,6 +279,18 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		printCreateFailureSummary(summary, req)
 		return err
 	}
+	if err := applyCreateReverseProxy(ctx, req); err != nil {
+		printCreateFailureSummary(summary, req)
+		return err
+	}
+	if err := applyCreateUploadLimits(ctx, req); err != nil {
+		printCreateFailureSummary(summary, req)
+		return err
+	}
+	if err := applyCreateDevMode(ctx, req); err != nil {
+		printCreateFailureSummary(summary, req)
+		return err
+	}
 	if !req.ImageOverrides.Empty() {
 		if err := plugin.ApplyComposeImageOverrides(ctx.ProjectDir, req.ImageOverrides); err != nil {
 			printCreateFailureSummary(summary, req)
@@ -260,6 +310,71 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 
 	printCreateSummary(summary, req)
 	return nil
+}
+
+func applyCreateUploadLimits(ctx *config.Context, req createRequest) error {
+	if req.UploadLimitsState == "" {
+		return nil
+	}
+	component, err := isleUploadLimitsComponent()
+	if err != nil {
+		return err
+	}
+	manager := corecomponent.NewManager(ctx)
+	spec := component.SpecForWithOptions(req.UploadLimitsState, map[string]string{
+		"max-upload-size": strings.TrimSpace(req.MaxUploadSize),
+		"upload-timeout":  strings.TrimSpace(req.UploadTimeout),
+	})
+	switch req.UploadLimitsState {
+	case corecomponent.StateOn:
+		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+	case corecomponent.StateOff:
+		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+	default:
+		return fmt.Errorf("unsupported upload limits state %q", req.UploadLimitsState)
+	}
+}
+
+func applyCreateDevMode(ctx *config.Context, req createRequest) error {
+	if req.DevModeState == "" {
+		return nil
+	}
+	component, err := isleDevModeComponent()
+	if err != nil {
+		return err
+	}
+	manager := corecomponent.NewManager(ctx)
+	spec := component.SpecForWithOptions(req.DevModeState, nil)
+	switch req.DevModeState {
+	case corecomponent.StateOn:
+		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+	case corecomponent.StateOff:
+		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+	default:
+		return fmt.Errorf("unsupported dev mode state %q", req.DevModeState)
+	}
+}
+
+func applyCreateReverseProxy(ctx *config.Context, req createRequest) error {
+	if req.ReverseProxyState == "" {
+		return nil
+	}
+	component, err := isleReverseProxyComponent()
+	if err != nil {
+		return err
+	}
+	manager := corecomponent.NewManager(ctx)
+	spec := component.SpecForWithOptions(req.ReverseProxyState, map[string]string{
+		"trusted-ip": strings.TrimSpace(req.ReverseProxyTrustedIPs),
+	})
+	switch req.ReverseProxyState {
+	case corecomponent.StateOn:
+		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+	case corecomponent.StateOff:
+		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+	default:
+		return fmt.Errorf("unsupported reverse proxy state %q", req.ReverseProxyState)
+	}
 }
 
 func createProgressOutput(cmd *cobra.Command) io.Writer {
@@ -527,9 +642,6 @@ func runCheckCommand(name string, args ...string) error {
 }
 
 func startupCommand() (string, string, []string) {
-	if _, err := createLookPath("make"); err == nil {
-		return "make up", "make", []string{"up"}
-	}
 	return "bash ./scripts/up.sh", "bash", []string{"./scripts/up.sh"}
 }
 
@@ -667,11 +779,25 @@ func buildRecreateCommand(req createRequest) string {
 		`--iiif=` + iiifDispositionFlagValue(req.Apply.IIIF),
 		`--iiif-topology=` + iiifTopologyDispositionFlagValue(req.Apply.IIIFTopology),
 		`--codebase=` + codebaseDispositionFlagValue(req.Apply.Codebase),
+		`--reverse-proxy=` + string(corecomponent.StateToDisposition(req.ReverseProxyState)),
+		`--upload-limits=` + string(corecomponent.StateToDisposition(req.UploadLimitsState)),
+		`--dev-mode=` + string(corecomponent.StateToDisposition(req.DevModeState)),
 		`--bot-mitigation=` + req.Apply.BotMitigation,
 		`--isle-file-system-uri=` + shellDoubleQuote(req.Apply.ISLEFileSystemURI),
 	}
 	if req.Apply.IIIFTopology == createpkg.IIIFTopologyExternal {
 		args = append(args, `--iiif-upstream-url=`+shellDoubleQuote(req.Apply.IIIFUpstreamURL))
+	}
+	if req.ReverseProxyState == corecomponent.StateOn {
+		for _, trustedIP := range corecomponent.SplitFollowUpValues(req.ReverseProxyTrustedIPs) {
+			args = append(args, `--trusted-ip=`+shellDoubleQuote(trustedIP))
+		}
+	}
+	if req.UploadLimitsState == corecomponent.StateOn {
+		args = append(args,
+			`--max-upload-size=`+shellDoubleQuote(uploadLimitValue(map[string]string{"max-upload-size": req.MaxUploadSize}, "max-upload-size")),
+			`--upload-timeout=`+shellDoubleQuote(uploadLimitValue(map[string]string{"upload-timeout": req.UploadTimeout}, "upload-timeout")),
+		)
 	}
 	for _, name := range createpkg.DerivativeServiceNames() {
 		topology, ok := req.Apply.DerivativeServices[name]

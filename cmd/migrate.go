@@ -215,7 +215,7 @@ func mergeDevProdService(name string, dev, prod interface{}) map[string]interfac
 	// Special case for init service
 	if name == "init" {
 		return map[string]interface{}{
-			"image":   "libops/base@sha256:4a8d3997ac565981cd91ca36fd5a2b64955bac8d78a3632abd5a7137609be631",
+			"image":   "libops/base:3.2.2.0",
 			"restart": "no",
 			"networks": map[string]interface{}{
 				"default": interface{}(nil),
@@ -347,9 +347,9 @@ func mergeDevProdService(name string, dev, prod interface{}) map[string]interfac
 		// Update environment for unified format
 		if env, ok := result["environment"].(map[string]interface{}); ok {
 			env["DEVELOPMENT_ENVIRONMENT"] = "${DEVELOPMENT_ENVIRONMENT:-false}"
-			env["DRUPAL_DEFAULT_CANTALOUPE_URL"] = "${URI_SCHEME}://${DOMAIN}/cantaloupe/iiif/2"
+			env["DRUPAL_DEFAULT_CANTALOUPE_URL"] = "${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/cantaloupe/iiif/2"
 			env["DRUPAL_DEFAULT_FCREPO_URL"] = "${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/"
-			env["DRUSH_OPTIONS_URI"] = "${URI_SCHEME}://${DOMAIN}"
+			env["DRUSH_OPTIONS_URI"] = "${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}"
 			env["DRUPAL_ENABLE_HTTPS"] = "false"
 		}
 	case "milliner":

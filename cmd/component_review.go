@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -8,6 +9,8 @@ import (
 	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
+	coredevmode "github.com/libops/sitectl/pkg/services/devmode"
+	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
 )
 
@@ -29,6 +32,9 @@ type componentReviewDecision struct {
 	TLSMode       string
 	FileSystemURI string
 	UpstreamURL   string
+	TrustedIPs    string
+	MaxUploadSize string
+	UploadTimeout string
 }
 
 type promptReviewDecision = corecomponent.ReviewDecision
@@ -129,6 +135,10 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 			fmt.Fprintf(cmd.OutOrStdout(), " (%s)", decision.TLSMode)
 		} else if strings.TrimSpace(decision.UpstreamURL) != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), " (%s)", decision.UpstreamURL)
+		} else if strings.TrimSpace(decision.TrustedIPs) != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), " (%s)", decision.TrustedIPs)
+		} else if strings.TrimSpace(decision.MaxUploadSize) != "" || strings.TrimSpace(decision.UploadTimeout) != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), " (%s, %s)", uploadLimitValue(map[string]string{"max-upload-size": decision.MaxUploadSize}, "max-upload-size"), uploadLimitValue(map[string]string{"upload-timeout": decision.UploadTimeout}, "upload-timeout"))
 		}
 		fmt.Fprintln(cmd.OutOrStdout())
 	}
@@ -156,6 +166,9 @@ func mergeCurrentComponentReviewDecisions(ctx *config.Context, drupalRootfs stri
 			TLSMode:       strings.TrimSpace(status.FollowUpValues["tls-mode"]),
 			FileSystemURI: strings.TrimSpace(status.FollowUpValues["isle-file-system-uri"]),
 			UpstreamURL:   strings.TrimSpace(status.FollowUpValues["upstream-url"]),
+			TrustedIPs:    strings.TrimSpace(status.FollowUpValues["trusted-ip"]),
+			MaxUploadSize: strings.TrimSpace(status.FollowUpValues["max-upload-size"]),
+			UploadTimeout: strings.TrimSpace(status.FollowUpValues["upload-timeout"]),
 		}
 		if decision.State == "" {
 			switch status.State {
@@ -200,6 +213,9 @@ func convertComponentReviewDecisions(raw map[string]promptReviewDecision) map[st
 			TLSMode:       strings.TrimSpace(decision.Options["tls-mode"]),
 			FileSystemURI: strings.TrimSpace(decision.Options["isle-file-system-uri"]),
 			UpstreamURL:   strings.TrimSpace(decision.Options["upstream-url"]),
+			TrustedIPs:    strings.TrimSpace(decision.Options["trusted-ip"]),
+			MaxUploadSize: strings.TrimSpace(decision.Options["max-upload-size"]),
+			UploadTimeout: strings.TrimSpace(decision.Options["upload-timeout"]),
 		}
 	}
 	return decisions
@@ -254,10 +270,84 @@ func applyComponentReview(ctx *config.Context, drupalRootfs, pathOverride string
 	if err := traefikconfig.ApplyOverride(ctx.ProjectDir, resolveEnvironmentOverridePath(ctx), decisions["isle-tls-override"].State == corecomponent.StateOn, reviewResolvedTLSMode("isle-tls-override", decisions["isle-tls-override"])); err != nil {
 		return err
 	}
+	if err := applyReverseProxyReviewDecision(ctx, decisions[coretraefik.ReverseProxyName]); err != nil {
+		return err
+	}
+	if err := applyUploadLimitsReviewDecision(ctx, decisions[coretraefik.UploadLimitsName]); err != nil {
+		return err
+	}
+	if err := applyDevModeReviewDecision(ctx, decisions[coredevmode.Name]); err != nil {
+		return err
+	}
 	if err := updateContextRootfsForCodebase(ctx, pathOverride, "codebase", opts.Codebase); err != nil {
 		return err
 	}
 	return ctx.EnsureTrackedComposeOverrideSymlink()
+}
+
+func applyUploadLimitsReviewDecision(ctx *config.Context, decision componentReviewDecision) error {
+	if decision.State == "" {
+		return nil
+	}
+	component, err := isleUploadLimitsComponent()
+	if err != nil {
+		return err
+	}
+	manager := corecomponent.NewManager(ctx)
+	spec := component.SpecForWithOptions(decision.State, map[string]string{
+		"max-upload-size": strings.TrimSpace(decision.MaxUploadSize),
+		"upload-timeout":  strings.TrimSpace(decision.UploadTimeout),
+	})
+	switch decision.State {
+	case corecomponent.StateOn:
+		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+	case corecomponent.StateOff:
+		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+	default:
+		return fmt.Errorf("unsupported upload limits state %q", decision.State)
+	}
+}
+
+func applyDevModeReviewDecision(ctx *config.Context, decision componentReviewDecision) error {
+	if decision.State == "" {
+		return nil
+	}
+	component, err := isleDevModeComponent()
+	if err != nil {
+		return err
+	}
+	manager := corecomponent.NewManager(ctx)
+	spec := component.SpecForWithOptions(decision.State, nil)
+	switch decision.State {
+	case corecomponent.StateOn:
+		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+	case corecomponent.StateOff:
+		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+	default:
+		return fmt.Errorf("unsupported dev mode state %q", decision.State)
+	}
+}
+
+func applyReverseProxyReviewDecision(ctx *config.Context, decision componentReviewDecision) error {
+	if decision.State == "" {
+		return nil
+	}
+	component, err := isleReverseProxyComponent()
+	if err != nil {
+		return err
+	}
+	manager := corecomponent.NewManager(ctx)
+	spec := component.SpecForWithOptions(decision.State, map[string]string{
+		"trusted-ip": strings.TrimSpace(decision.TrustedIPs),
+	})
+	switch decision.State {
+	case corecomponent.StateOn:
+		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+	case corecomponent.StateOff:
+		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+	default:
+		return fmt.Errorf("unsupported reverse proxy state %q", decision.State)
+	}
 }
 
 func reviewIIIFCreateValue(decision componentReviewDecision) string {
