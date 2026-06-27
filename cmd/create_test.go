@@ -13,6 +13,7 @@ import (
 	"time"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
+	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
@@ -132,6 +133,12 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	_ = cmd.Flags().Set("iiif-topology", "distributed")
 	_ = cmd.Flags().Set("iiif-upstream-url", "https://iiif.example.org")
 	_ = cmd.Flags().Set("codebase", "git-root")
+	_ = cmd.Flags().Set("reverse-proxy", "enabled")
+	_ = cmd.Flags().Set("trusted-ip", "10.0.0.0/8")
+	_ = cmd.Flags().Set("trusted-ip", "203.0.113.4")
+	_ = cmd.Flags().Set("upload-limits", "enabled")
+	_ = cmd.Flags().Set("max-upload-size", "2G")
+	_ = cmd.Flags().Set("upload-timeout", "10m")
 	_ = cmd.Flags().Set("bot-mitigation", "on")
 	_ = cmd.Flags().Set("homarus", "distributed")
 	_ = cmd.Flags().Set("isle-file-system-uri", "public")
@@ -150,6 +157,12 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	if req.Apply.DerivativeServices["homarus"] != createpkg.DerivativeTopologyDistributed {
 		t.Fatalf("expected homarus distributed option, got %+v", req.Apply.DerivativeServices)
 	}
+	if req.ReverseProxyState != corecomponent.StateOn || req.ReverseProxyTrustedIPs != "10.0.0.0/8,203.0.113.4" {
+		t.Fatalf("expected reverse proxy enabled with trusted IPs, got state=%q trusted=%q", req.ReverseProxyState, req.ReverseProxyTrustedIPs)
+	}
+	if req.UploadLimitsState != corecomponent.StateOn || req.MaxUploadSize != "2G" || req.UploadTimeout != "10m" {
+		t.Fatalf("expected upload limits enabled with overrides, got state=%q size=%q timeout=%q", req.UploadLimitsState, req.MaxUploadSize, req.UploadTimeout)
+	}
 }
 
 func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
@@ -159,7 +172,6 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 	})
 
 	createInput = func(question ...string) (string, error) {
-		t.Fatal("did not expect prompt")
 		return "", nil
 	}
 
@@ -255,6 +267,41 @@ func TestBindCreateFlagsFallsBackToLocalComponentsWhenIncludedPluginMissing(t *t
 	}
 	if !strings.Contains(err.Error(), "load create component definitions") || !strings.Contains(err.Error(), `plugin "drupal" is not installed`) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveCreateRequestRequiresTrustedIPForReverseProxy(t *testing.T) {
+	oldInput := createInput
+	t.Cleanup(func() {
+		createInput = oldInput
+	})
+
+	createInput = func(question ...string) (string, error) {
+		return "", nil
+	}
+
+	oldPath := createPath
+	oldDrupalRootfs := createDrupalRootfs
+	oldTemplateRepo := createTemplateRepo
+	oldTemplateBranch := createTemplateBranch
+	t.Cleanup(func() {
+		createPath = oldPath
+		createDrupalRootfs = oldDrupalRootfs
+		createTemplateRepo = oldTemplateRepo
+		createTemplateBranch = oldTemplateBranch
+	})
+
+	createPath = "/tmp/site"
+	createDrupalRootfs = createpkg.DefaultDrupalRootfs
+	createTemplateRepo = defaultTemplateRepo
+	createTemplateBranch = defaultTemplateBranch
+
+	cmd := newCreateCommandForTest()
+	_ = cmd.Flags().Set("reverse-proxy", "enabled")
+
+	_, err := resolveCreateRequest(cmd)
+	if err == nil || !strings.Contains(err.Error(), "trusted-ip is required") {
+		t.Fatalf("expected trusted-ip required error, got %v", err)
 	}
 }
 

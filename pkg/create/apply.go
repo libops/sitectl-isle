@@ -147,8 +147,8 @@ func Apply(opts Options) error {
 
 	composePath := filepath.Join(opts.Path, "docker-compose.yml")
 	if opts.Fcrepo == FcrepoStateOn {
-		if err := setComposeEnv(composePath, "alpaca", "ALPACA_FCREPO_INDEXER_ENABLED", "true"); err != nil {
-			return err
+		if err := applyFcrepoOn(opts.Path); err != nil {
+			return fmt.Errorf("apply fcrepo=on: %w", err)
 		}
 	} else {
 		if err := applyFcrepoOff(opts.Path, opts.DrupalRootfs, opts.ISLEFileSystemURI); err != nil {
@@ -427,6 +427,151 @@ func writeFilePreserveMode(path string, data []byte) error {
 	return os.WriteFile(path, data, mode) // #nosec G306 -- generated project files are non-secret.
 }
 
+func applyFcrepoOn(projectDir string) error {
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	compose, err := corecomponent.LoadComposeFile(composePath)
+	if err != nil {
+		return err
+	}
+	images := inferFcrepoRestoreImages(compose)
+	if !compose.HasVolume("fcrepo-data") {
+		if err := compose.AddVolumeBlock("fcrepo-data", "  fcrepo-data: {}"); err != nil {
+			return err
+		}
+	}
+	if !compose.HasService("fcrepo") {
+		if err := compose.AddServiceBlock("fcrepo", fcrepoRestoreServiceBlock(images.Fcrepo)); err != nil {
+			return err
+		}
+	}
+	if !compose.HasService("milliner") {
+		if err := compose.AddServiceBlock("milliner", millinerRestoreServiceBlock(images.Milliner)); err != nil {
+			return err
+		}
+	}
+	for key, value := range map[string]string{
+		"DRUPAL_DEFAULT_FCREPO_HOST": "fcrepo",
+		"DRUPAL_DEFAULT_FCREPO_PORT": "8080",
+		"DRUPAL_DEFAULT_FCREPO_URL":  "${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/",
+	} {
+		if err := compose.SetServiceEnv("drupal", key, value); err != nil {
+			return err
+		}
+	}
+	if err := compose.SetServiceEnv("alpaca", "ALPACA_FCREPO_INDEXER_ENABLED", "true"); err != nil {
+		return err
+	}
+	return compose.Save()
+}
+
+type fcrepoRestoreImages struct {
+	Fcrepo   string
+	Milliner string
+}
+
+func inferFcrepoRestoreImages(compose *corecomponent.ComposeFile) fcrepoRestoreImages {
+	repository, tag := inferIslandoraStackImageConvention(compose)
+	fcrepoName := "fcrepo6"
+	if repository == "libops" {
+		fcrepoName = "fcrepo"
+	}
+	return fcrepoRestoreImages{
+		Fcrepo:   repository + "/" + fcrepoName + ":" + tag,
+		Milliner: "islandora/milliner:" + tag,
+	}
+}
+
+func inferIslandoraStackImageConvention(compose *corecomponent.ComposeFile) (string, string) {
+	repository := "islandora"
+	tag := "${ISLANDORA_TAG}"
+	for _, service := range []string{"fcrepo", "activemq", "alpaca", "init", "fits", "solr", "mariadb", "milliner"} {
+		block, ok := compose.ServiceBlock(service)
+		if !ok {
+			continue
+		}
+		ref, ok := composeImageRef(block)
+		if !ok {
+			continue
+		}
+		if repo := imageRepository(ref); repo == "libops" || repo == "islandora" {
+			repository = repo
+		}
+		if value := imageTag(ref); value != "" {
+			tag = value
+		}
+		return repository, tag
+	}
+	return repository, tag
+}
+
+func composeImageRef(serviceBlock string) (string, bool) {
+	for _, line := range strings.Split(serviceBlock, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "image:") {
+			continue
+		}
+		ref := strings.TrimSpace(strings.TrimPrefix(trimmed, "image:"))
+		ref = strings.Trim(ref, `"'`)
+		if ref != "" {
+			return ref, true
+		}
+	}
+	return "", false
+}
+
+func imageRepository(ref string) string {
+	left, _, ok := strings.Cut(ref, "/")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(left)
+}
+
+func imageTag(ref string) string {
+	beforeDigest, _, _ := strings.Cut(strings.TrimSpace(ref), "@")
+	slash := strings.LastIndex(beforeDigest, "/")
+	colon := strings.LastIndex(beforeDigest, ":")
+	if colon <= slash || colon == len(beforeDigest)-1 {
+		return ""
+	}
+	return beforeDigest[colon+1:]
+}
+
+func fcrepoRestoreServiceBlock(image string) string {
+	return `  fcrepo:
+    <<: *common
+    depends_on:
+      activemq:
+        condition: service_healthy
+    environment:
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      FCREPO_ALLOW_EXTERNAL_DEFAULT: http://default/
+      FCREPO_ALLOW_EXTERNAL_DRUPAL: ${URI_SCHEME}://${DOMAIN}/
+      FCREPO_PERSISTENCE_TYPE: mysql
+    image: ` + image + `
+    secrets:
+      - source: DB_ROOT_PASSWORD
+      - source: FCREPO_DB_PASSWORD
+      - source: JWT_ADMIN_TOKEN
+      - source: JWT_PUBLIC_KEY
+    volumes:
+      - fcrepo-data:/data:rw`
+}
+
+func millinerRestoreServiceBlock(image string) string {
+	return `  milliner:
+    <<: *common
+    environment:
+      MILLINER_FEDORA6: true
+    image: ` + image + `
+    secrets:
+      - source: CERT_PUBLIC_KEY
+      - source: CERT_AUTHORITY
+      - source: JWT_ADMIN_TOKEN
+      - source: JWT_PUBLIC_KEY`
+}
+
 func applyFcrepoOff(projectDir, drupalRootfs, targetScheme string) error {
 	if err := updateComposeForFcrepoOff(filepath.Join(projectDir, "docker-compose.yml")); err != nil {
 		return err
@@ -459,6 +604,9 @@ func updateComposeForFcrepoOff(composePath string) error {
 		return err
 	}
 	if err := compose.DeleteService("fcrepo"); err != nil {
+		return err
+	}
+	if err := compose.DeleteService("milliner"); err != nil {
 		return err
 	}
 	for _, key := range []string{

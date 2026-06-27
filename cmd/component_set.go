@@ -12,6 +12,7 @@ import (
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
+	coredevmode "github.com/libops/sitectl/pkg/services/devmode"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
 )
@@ -169,6 +170,15 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	if createpkg.IsDerivativeService(name) {
 		return runDerivativeServiceComponentSet(cmd, ctx, name, disposition)
 	}
+	if name == coretraefik.ReverseProxyName {
+		return runReverseProxyComponentSet(cmd, ctx, disposition, state, followUps)
+	}
+	if name == coretraefik.UploadLimitsName {
+		return runUploadLimitsComponentSet(cmd, ctx, disposition, state, followUps)
+	}
+	if name == coredevmode.Name {
+		return runDevModeComponentSet(cmd, ctx, disposition, state)
+	}
 	if name == coretraefik.BotMitigationName {
 		return runBotMitigationComponentSet(cmd, ctx, disposition, state)
 	}
@@ -239,12 +249,19 @@ func componentDefinitions() map[string]corecomponent.Definition {
 }
 
 func orderedComponentDefinitions() []corecomponent.Definition {
+	reverseProxy, err := isleReverseProxyComponent()
+	if err != nil {
+		panic(err)
+	}
 	defs := []corecomponent.Definition{
 		components.Fcrepo(components.TemplateSource{}),
 		components.Blazegraph(components.TemplateSource{}),
 		components.IIIF(components.TemplateSource{}),
 		components.IIIFTopology(),
 		components.Codebase(),
+		reverseProxy.Definition(),
+		isleUploadLimitsDefinition(),
+		isleDevModeDefinition(),
 		coretraefik.BotMitigation(isleBotMitigationOptions()),
 	}
 	defs = append(defs, components.DerivativeServices()...)
@@ -277,11 +294,11 @@ func blocksComponentSetOnDrift(targetName, driftedName string) bool {
 		return false
 	}
 	switch targetName {
-	case "iiif", "iiif-topology", "codebase", "isle-tls", "isle-tls-override", coretraefik.BotMitigationName:
+	case "iiif", "iiif-topology", "codebase", "isle-tls", "isle-tls-override", coredevmode.Name, coretraefik.ReverseProxyName, coretraefik.UploadLimitsName, coretraefik.BotMitigationName:
 		return false
 	}
 	switch driftedName {
-	case "iiif", "iiif-topology", "codebase", "isle-tls", "isle-tls-override", coretraefik.BotMitigationName:
+	case "iiif", "iiif-topology", "codebase", "isle-tls", "isle-tls-override", coredevmode.Name, coretraefik.ReverseProxyName, coretraefik.UploadLimitsName, coretraefik.BotMitigationName:
 		return false
 	default:
 		return !createpkg.IsDerivativeService(driftedName)
@@ -348,6 +365,143 @@ func runBotMitigationComponentSet(cmd *cobra.Command, ctx *config.Context, dispo
 		fmt.Fprintln(cmd.OutOrStdout(), botMitigationTurnstileWarning)
 	}
 	return nil
+}
+
+func runReverseProxyComponentSet(cmd *cobra.Command, ctx *config.Context, disposition corecomponent.Disposition, state corecomponent.State, followUps map[string]string) error {
+	component, err := isleReverseProxyComponent()
+	if err != nil {
+		return err
+	}
+	manager := corecomponent.NewManager(ctx)
+	spec := component.SpecForWithOptions(state, followUps)
+	switch state {
+	case corecomponent.StateOn:
+		if err := manager.EnableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+	case corecomponent.StateOff:
+		if err := manager.DisableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported reverse proxy state %q", state)
+	}
+	if err := ctx.EnsureTrackedComposeOverrideSymlink(); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", coretraefik.ReverseProxyName, disposition)
+	if value := strings.TrimSpace(followUps["trusted-ip"]); value != "" && state == corecomponent.StateOn {
+		fmt.Fprintf(cmd.OutOrStdout(), " (%s)", value)
+	}
+	fmt.Fprintln(cmd.OutOrStdout())
+	return nil
+}
+
+func isleReverseProxyComponent() (corecomponent.ComposeServiceComponent, error) {
+	return coretraefik.ReverseProxy(coretraefik.ReverseProxyOptions{
+		AppService: "drupal",
+	})
+}
+
+func runUploadLimitsComponentSet(cmd *cobra.Command, ctx *config.Context, disposition corecomponent.Disposition, state corecomponent.State, followUps map[string]string) error {
+	component, err := isleUploadLimitsComponent()
+	if err != nil {
+		return err
+	}
+	manager := corecomponent.NewManager(ctx)
+	spec := component.SpecForWithOptions(state, followUps)
+	switch state {
+	case corecomponent.StateOn:
+		if err := manager.EnableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+	case corecomponent.StateOff:
+		if err := manager.DisableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported upload limits state %q", state)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", coretraefik.UploadLimitsName, disposition)
+	if state == corecomponent.StateOn {
+		fmt.Fprintf(cmd.OutOrStdout(), " (%s, %s)", uploadLimitValue(followUps, "max-upload-size"), uploadLimitValue(followUps, "upload-timeout"))
+	}
+	fmt.Fprintln(cmd.OutOrStdout())
+	return nil
+}
+
+func isleUploadLimitsDefinition() corecomponent.Definition {
+	component, err := isleUploadLimitsComponent()
+	if err != nil {
+		panic(err)
+	}
+	return component.Definition()
+}
+
+func isleUploadLimitsComponent() (corecomponent.ComposeServiceComponent, error) {
+	return coretraefik.UploadLimits(coretraefik.UploadLimitsOptions{
+		AppService: "drupal",
+	})
+}
+
+func uploadLimitValue(values map[string]string, key string) string {
+	value := strings.TrimSpace(values[key])
+	if value != "" {
+		return value
+	}
+	switch key {
+	case "max-upload-size":
+		return coretraefik.DefaultMaxUploadSize
+	case "upload-timeout":
+		return coretraefik.DefaultUploadTimeout
+	default:
+		return ""
+	}
+}
+
+func runDevModeComponentSet(cmd *cobra.Command, ctx *config.Context, disposition corecomponent.Disposition, state corecomponent.State) error {
+	component, err := isleDevModeComponent()
+	if err != nil {
+		return err
+	}
+	manager := corecomponent.NewManager(ctx)
+	spec := component.SpecForWithOptions(state, nil)
+	switch state {
+	case corecomponent.StateOn:
+		if err := manager.EnableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+	case corecomponent.StateOff:
+		if err := manager.DisableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported dev mode state %q", state)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", coredevmode.Name, disposition)
+	return nil
+}
+
+func isleDevModeDefinition() corecomponent.Definition {
+	component, err := isleDevModeComponent()
+	if err != nil {
+		panic(err)
+	}
+	return component.Definition()
+}
+
+func isleDevModeComponent() (corecomponent.ComposeServiceComponent, error) {
+	return coredevmode.Component(coredevmode.Options{
+		AppService: "drupal",
+		Volumes: []string{
+			"./assets:/var/www/drupal/assets:z,rw",
+			"./composer.json:/var/www/drupal/composer.json:z,rw",
+			"./composer.lock:/var/www/drupal/composer.lock:z,rw",
+			"./config:/var/www/drupal/config:z,rw",
+			"./web/modules/custom:/var/www/drupal/web/modules/custom:z,rw",
+			"./web/themes/custom:/var/www/drupal/web/themes/custom:z,rw",
+		},
+	})
 }
 
 func runDerivativeServiceComponentSet(cmd *cobra.Command, ctx *config.Context, name string, disposition corecomponent.Disposition) error {
@@ -729,7 +883,11 @@ func addComponentSetFollowUpFlags(cmd *cobra.Command, defs []corecomponent.Defin
 				}
 				usage = fmt.Sprintf("%s for %s", label, def.Name)
 			}
-			cmd.Flags().String(flagName, strings.TrimSpace(followUp.DefaultValue), usage)
+			if followUp.MultiValue {
+				cmd.Flags().StringArray(flagName, corecomponent.SplitFollowUpValues(followUp.DefaultValue), usage)
+			} else {
+				cmd.Flags().String(flagName, strings.TrimSpace(followUp.DefaultValue), usage)
+			}
 		}
 	}
 }
@@ -758,17 +916,29 @@ func resolveComponentSetFollowUps(cmd *cobra.Command, def corecomponent.Definiti
 		case spec.Name == "tls-mode" && strings.TrimSpace(opts.TLSMode) != "":
 			options[spec.Name] = strings.TrimSpace(opts.TLSMode)
 		case cmd != nil && cmd.Flags().Lookup(flagName) != nil && cmd.Flags().Changed(flagName):
-			value, err := cmd.Flags().GetString(flagName)
-			if err != nil {
-				return nil, err
+			if spec.MultiValue {
+				values, err := cmd.Flags().GetStringArray(flagName)
+				if err != nil {
+					return nil, err
+				}
+				options[spec.Name] = corecomponent.JoinFollowUpValues(values)
+			} else {
+				value, err := cmd.Flags().GetString(flagName)
+				if err != nil {
+					return nil, err
+				}
+				options[spec.Name] = strings.TrimSpace(value)
 			}
-			options[spec.Name] = strings.TrimSpace(value)
 		case opts.Yolo:
 			defaultValue := strings.TrimSpace(view.FollowUpValues[spec.Name])
 			if defaultValue == "" {
 				defaultValue = strings.TrimSpace(spec.DefaultValue)
 			}
-			options[spec.Name] = defaultValue
+			if spec.MultiValue {
+				options[spec.Name] = corecomponent.NormalizeFollowUpValue(defaultValue)
+			} else {
+				options[spec.Name] = defaultValue
+			}
 		default:
 			defaultValue := strings.TrimSpace(view.FollowUpValues[spec.Name])
 			if defaultValue == "" {
@@ -778,7 +948,18 @@ func resolveComponentSetFollowUps(cmd *cobra.Command, def corecomponent.Definiti
 			if err != nil {
 				return nil, err
 			}
-			options[spec.Name] = strings.TrimSpace(value)
+			if spec.MultiValue {
+				options[spec.Name] = corecomponent.NormalizeFollowUpValue(value)
+			} else {
+				options[spec.Name] = strings.TrimSpace(value)
+			}
+		}
+		if spec.Required && !corecomponent.FollowUpValuePresent(options[spec.Name]) {
+			flagName := componentSetFollowUpSpecFlagName(def.Name, spec)
+			if flagName != "" {
+				return nil, fmt.Errorf("--%s is required when enabling component %q", flagName, def.Name)
+			}
+			return nil, fmt.Errorf("%s is required when enabling component %q", spec.Name, def.Name)
 		}
 	}
 	return options, nil

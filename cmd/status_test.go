@@ -370,6 +370,8 @@ services:
       DRUPAL_ENABLE_HTTPS: "true"
   fcrepo:
     image: islandora/fcrepo6
+  milliner:
+    image: islandora/milliner
   traefik:
     command: >-
       --ping=true

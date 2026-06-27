@@ -63,6 +63,8 @@ func TestFcrepoDefinition(t *testing.T) {
 
 	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.fcrepo")
 	assertHasRule(t, definition.On.Compose.Rules, OpRestore, ".services.fcrepo")
+	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.milliner")
+	assertHasRule(t, definition.On.Compose.Rules, OpRestore, ".services.milliner")
 	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_URL")
 	assertHasRule(t, definition.On.Compose.Rules, OpRestore, ".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_URL")
 	assertHasRule(t, definition.Off.Compose.Rules, OpSet, ".services.alpaca.environment.ALPACA_FCREPO_INDEXER_ENABLED")

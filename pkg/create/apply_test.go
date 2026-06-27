@@ -32,6 +32,8 @@ services:
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: temporary
   fcrepo:
     image: islandora/fcrepo6
+  milliner:
+    image: islandora/milliner
 volumes:
   blazegraph-data: {}
   fcrepo-data: {}
@@ -70,6 +72,9 @@ volumes:
 	compose := string(composeData)
 	if strings.Contains(compose, "fcrepo:") {
 		t.Fatalf("expected fcrepo service removed, got:\n%s", compose)
+	}
+	if strings.Contains(compose, "milliner:") {
+		t.Fatalf("expected milliner service removed, got:\n%s", compose)
 	}
 	if strings.Contains(compose, "DRUPAL_DEFAULT_FCREPO_URL") {
 		t.Fatalf("expected fcrepo env removed, got:\n%s", compose)
@@ -127,6 +132,106 @@ volumes:
 	}
 }
 
+func TestApplyFcrepoOnRestoresFcrepoAndMilliner(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(config) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+x-common: &common
+  restart: unless-stopped
+services:
+  activemq:
+    <<: *common
+    image: libops/activemq:${ISLANDORA_TAG}
+  alpaca:
+    <<: *common
+    environment:
+      ALPACA_FCREPO_INDEXER_ENABLED: "false"
+  drupal:
+    <<: *common
+    environment: {}
+volumes: {}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+
+	if err := Apply(Options{
+		Path:       projectDir,
+		Fcrepo:     FcrepoStateOn,
+		Blazegraph: FcrepoStateOff,
+	}); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(compose) error = %v", err)
+	}
+	compose := string(composeData)
+	for _, want := range []string{
+		"\n  fcrepo:\n",
+		"\n  milliner:\n",
+		"  fcrepo-data: {}",
+		"image: libops/fcrepo:${ISLANDORA_TAG}",
+		"image: islandora/milliner:${ISLANDORA_TAG}",
+		`ALPACA_FCREPO_INDEXER_ENABLED: "true"`,
+		`DRUPAL_DEFAULT_FCREPO_URL: "${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected restored compose to contain %q, got:\n%s", want, compose)
+		}
+	}
+}
+
+func TestApplyFcrepoOnPrefersLibopsServicesOverExistingMilliner(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(configDir) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+services:
+  activemq:
+    image: libops/activemq:nginx-1.30.3-php84
+  alpaca:
+    environment:
+      ALPACA_FCREPO_INDEXER_ENABLED: "false"
+  drupal:
+    environment: {}
+  milliner:
+    image: islandora/milliner:6
+volumes: {}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+
+	if err := Apply(Options{
+		Path:       projectDir,
+		Fcrepo:     FcrepoStateOn,
+		Blazegraph: FcrepoStateOff,
+	}); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(compose) error = %v", err)
+	}
+	compose := string(composeData)
+	if !strings.Contains(compose, "image: libops/fcrepo:nginx-1.30.3-php84") {
+		t.Fatalf("expected fcrepo to use libops tag inferred from activemq, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, "image: islandora/milliner:6") {
+		t.Fatalf("expected existing milliner image left in place, got:\n%s", compose)
+	}
+}
+
 func TestApplyFcrepoOffTripletDetectsCurrentDrupalLayout(t *testing.T) {
 	t.Parallel()
 
@@ -157,6 +262,8 @@ services:
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
   fcrepo:
     image: islandora/fcrepo6
+  milliner:
+    image: islandora/milliner
   traefik:
     environment: {}
   triplet:
@@ -200,7 +307,7 @@ volumes:
 	if !strings.Contains(compose, "\n  triplet:\n") {
 		t.Fatalf("expected triplet service, got:\n%s", compose)
 	}
-	for _, absent := range []string{"\n  fcrepo:\n", "\n  blazegraph:\n", "fcrepo-data", "blazegraph-data", "condition: service_healthy", "source: fcrepo-data"} {
+	for _, absent := range []string{"\n  fcrepo:\n", "\n  milliner:\n", "\n  blazegraph:\n", "fcrepo-data", "blazegraph-data", "condition: service_healthy", "source: fcrepo-data"} {
 		if strings.Contains(compose, absent) {
 			t.Fatalf("expected %q removed, got:\n%s", absent, compose)
 		}
@@ -724,6 +831,9 @@ services:
     image: libops/fcrepo@sha256:611b9b15bf205c369aa664d119126429785da28d255635d8aeeb29ddf4ce03f0
     volumes:
       - fcrepo-data:/data:rw
+  milliner:
+    <<: *common
+    image: islandora/milliner:6
   traefik:
     <<: *common
     command: >-
@@ -781,6 +891,9 @@ services:
 	}
 	if strings.Contains(rendered, "\n  fcrepo:\n") {
 		t.Fatalf("expected fcrepo removed, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "\n  milliner:\n") {
+		t.Fatalf("expected milliner removed, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, `ALPACA_FCREPO_INDEXER_ENABLED: "false"`) {
 		t.Fatalf("expected fcrepo indexer disabled, got:\n%s", rendered)

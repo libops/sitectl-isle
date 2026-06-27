@@ -363,7 +363,7 @@ func TestRunComponentSetUsesContextRootfsAfterCodebaseGitRoot(t *testing.T) {
 	}
 
 	compose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
-	for _, absent := range []string{"\n  fcrepo:\n", "\n  blazegraph:\n", "fcrepo-data", "blazegraph-data"} {
+	for _, absent := range []string{"\n  fcrepo:\n", "\n  milliner:\n", "\n  blazegraph:\n", "fcrepo-data", "blazegraph-data"} {
 		if strings.Contains(compose, absent) {
 			t.Fatalf("expected %q removed after component sequence, got:\n%s", absent, compose)
 		}
@@ -725,6 +725,235 @@ func TestRunComponentSetDisablesBotMitigation(t *testing.T) {
 	}
 	if strings.Contains(string(traefikText), "captcha-protect") {
 		t.Fatalf("expected drupal traefik config to remove captcha-protect, got:\n%s", string(traefikText))
+	}
+}
+
+func TestRunComponentSetEnablesReverseProxy(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+	addReverseProxyTestEntrypoints(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	var out bytes.Buffer
+	cmd := newComponentSetTestCommand()
+	cmd.SetOut(&out)
+	if err := cmd.Flags().Set("trusted-ip", "10.0.0.0/8"); err != nil {
+		t.Fatalf("Flags().Set(trusted-ip) error = %v", err)
+	}
+	if err := cmd.Flags().Set("trusted-ip", "203.0.113.4"); err != nil {
+		t.Fatalf("Flags().Set(trusted-ip second) error = %v", err)
+	}
+
+	if err := runComponentSet(cmd, "reverse-proxy", "enabled"); err != nil {
+		t.Fatalf("runComponentSet() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "reverse-proxy: enabled (10.0.0.0/8,203.0.113.4)") {
+		t.Fatalf("expected component output, got:\n%s", out.String())
+	}
+
+	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
+	}
+	compose := string(composeText)
+	for _, want := range []string{
+		"--entryPoints.http.forwardedHeaders.trustedIPs=10.0.0.0/8,203.0.113.4",
+		`NGINX_SET_REAL_IP_FROM: "10.0.0.0/8"`,
+		`NGINX_SET_REAL_IP_FROM2: "203.0.113.4"`,
+		`NGINX_REAL_IP_RECURSIVE: "on"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		}
+	}
+}
+
+func TestRunComponentSetDisablesReverseProxy(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+	addReverseProxyTestEntrypoints(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	cmd := newComponentSetTestCommand()
+	if err := cmd.Flags().Set("trusted-ip", "10.0.0.0/8"); err != nil {
+		t.Fatalf("Flags().Set(trusted-ip) error = %v", err)
+	}
+	if err := runComponentSet(cmd, "reverse-proxy", "enabled"); err != nil {
+		t.Fatalf("runComponentSet(enabled) error = %v", err)
+	}
+	if err := runComponentSet(newComponentSetTestCommand(), "reverse-proxy", "disabled"); err != nil {
+		t.Fatalf("runComponentSet(disabled) error = %v", err)
+	}
+
+	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
+	}
+	compose := string(composeText)
+	for _, removed := range []string{"forwardedHeaders.trustedIPs", "NGINX_SET_REAL_IP_FROM", "NGINX_REAL_IP_RECURSIVE"} {
+		if strings.Contains(compose, removed) {
+			t.Fatalf("expected compose to remove %q, got:\n%s", removed, compose)
+		}
+	}
+}
+
+func TestRunComponentSetTogglesUploadLimits(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+	addReverseProxyTestEntrypoints(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	var out bytes.Buffer
+	cmd := newComponentSetTestCommand()
+	cmd.SetOut(&out)
+	if err := cmd.Flags().Set("max-upload-size", "2G"); err != nil {
+		t.Fatalf("Flags().Set(max-upload-size) error = %v", err)
+	}
+	if err := cmd.Flags().Set("upload-timeout", "10m"); err != nil {
+		t.Fatalf("Flags().Set(upload-timeout) error = %v", err)
+	}
+	if err := runComponentSet(cmd, "upload-limits", "enabled"); err != nil {
+		t.Fatalf("runComponentSet(enabled) error = %v", err)
+	}
+	if !strings.Contains(out.String(), "upload-limits: enabled (2G, 10m)") {
+		t.Fatalf("expected component output, got:\n%s", out.String())
+	}
+
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	compose := readFileForTest(t, composePath)
+	for _, want := range []string{
+		`PHP_UPLOAD_MAX_FILESIZE: "2G"`,
+		`PHP_POST_MAX_SIZE: "2G"`,
+		`NGINX_CLIENT_MAX_BODY_SIZE: "2G"`,
+		`NGINX_FASTCGI_READ_TIMEOUT: "10m"`,
+		"--entryPoints.http.transport.respondingTimeouts.readTimeout=10m",
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		}
+	}
+
+	if err := runComponentSet(newComponentSetTestCommand(), "upload-limits", "disabled"); err != nil {
+		t.Fatalf("runComponentSet(disabled) error = %v", err)
+	}
+	compose = readFileForTest(t, composePath)
+	for _, removed := range []string{"PHP_UPLOAD_MAX_FILESIZE", "PHP_POST_MAX_SIZE", "NGINX_CLIENT_MAX_BODY_SIZE", "NGINX_FASTCGI_READ_TIMEOUT"} {
+		if strings.Contains(compose, removed) {
+			t.Fatalf("expected compose to remove %q, got:\n%s", removed, compose)
+		}
+	}
+	if !strings.Contains(compose, "--entryPoints.http.transport.respondingTimeouts.readTimeout=300s") {
+		t.Fatalf("expected default readTimeout restored, got:\n%s", compose)
+	}
+}
+
+func TestRunComponentSetReverseProxyRequiresTrustedIP(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+	addReverseProxyTestEntrypoints(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	err := runComponentSet(newComponentSetTestCommand(), "reverse-proxy", "enabled")
+	if err == nil || !strings.Contains(err.Error(), "--trusted-ip is required") {
+		t.Fatalf("expected required trusted-ip error, got %v", err)
+	}
+}
+
+func TestRunComponentSetTogglesDevMode(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	if err := runComponentSet(newComponentSetTestCommand(), "dev-mode", "enabled"); err != nil {
+		t.Fatalf("runComponentSet(enabled) error = %v", err)
+	}
+	overridePath := filepath.Join(projectDir, "docker-compose.override.yml")
+	override := readFileForTest(t, overridePath)
+	for _, want := range []string{
+		"UID: ${UID:-1000}",
+		"./assets:/var/www/drupal/assets:z,rw",
+		"./web/modules/custom:/var/www/drupal/web/modules/custom:z,rw",
+	} {
+		if !strings.Contains(override, want) {
+			t.Fatalf("expected override to contain %q, got:\n%s", want, override)
+		}
+	}
+
+	if err := runComponentSet(newComponentSetTestCommand(), "dev-mode", "disabled"); err != nil {
+		t.Fatalf("runComponentSet(disabled) error = %v", err)
+	}
+	if _, err := os.Stat(overridePath); !os.IsNotExist(err) {
+		t.Fatalf("expected dev override removed, stat error = %v", err)
 	}
 }
 
@@ -1280,7 +1509,7 @@ func TestRunComponentSetPromptsForStateAndTLSModeWhenMissing(t *testing.T) {
 }
 
 func TestComponentExtensionSetRegistersFollowUpFlags(t *testing.T) {
-	for _, name := range []string{"codebase-rootfs", "drupal-rootfs", "isle-file-system-uri", "iiif-upstream-url", "tls-mode"} {
+	for _, name := range []string{"codebase-rootfs", "drupal-rootfs", "isle-file-system-uri", "iiif-upstream-url", "trusted-ip", "tls-mode"} {
 		if componentExtensionSetCmd.Flags().Lookup(name) == nil {
 			t.Fatalf("expected component set handler to register --%s", name)
 		}
@@ -1427,6 +1656,18 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 	compose = strings.Replace(compose, "  drupal:\n    environment:\n", "  drupal:\n    build:\n      context: ./drupal\n    environment:\n", 1)
 	compose = strings.Replace(compose, "  traefik:\n", "  init:\n    volumes:\n      - ./drupal:/drupal:rw\n  traefik:\n", 1)
 	writeFileForTest(t, composePath, compose)
+}
+
+func addReverseProxyTestEntrypoints(t *testing.T, projectDir string) {
+	t.Helper()
+
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	compose := readFileForTest(t, composePath)
+	updated := strings.Replace(compose, "  traefik:\n    environment:\n", "  traefik:\n    command:\n      - --entrypoints.http.address=:80\n    environment:\n", 1)
+	if updated == compose {
+		t.Fatal("failed to add reverse proxy test entrypoint")
+	}
+	writeFileForTest(t, composePath, updated)
 }
 
 func addDerivativeServiceFixture(t *testing.T, projectDir, service string) {
