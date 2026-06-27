@@ -91,13 +91,38 @@ func createDefinition() plugin.CreateSpec {
 		DockerComposeRepo:   defaultTemplateRepo,
 		DockerComposeBranch: defaultTemplateBranch,
 		DockerComposeBuild: []string{
-			"mkdir -p ./certs",
-			"id -u > ./certs/UID",
 			"if [ -d drupal/rootfs ]; then find drupal/rootfs -type d -exec chmod 755 {} \\; ; fi",
 			"docker compose pull --ignore-buildable --ignore-pull-failures",
 			"docker compose build --pull",
 		},
-		DockerComposeInit: []string{"if [ -x ./scripts/init.sh ]; then ./scripts/init.sh; fi"},
+		Images: []plugin.ComposeImageSpec{
+			{Service: "drupal", Image: "islandora.io/isle-site-template:local", BuildPolicy: plugin.BuildPolicyIfNotPresent},
+		},
+		DockerComposeInit: []string{
+			"if [ ! -f .env ]; then cp sample.env .env; fi",
+			"mkdir -p ./certs",
+			"docker compose run --rm init",
+			"chown -R \"$(id -u):$(id -g)\" ./certs ./secrets > /dev/null 2>&1 || sudo chown -R \"$(id -u):$(id -g)\" ./certs ./secrets",
+			"id -u > ./certs/UID",
+		},
+		InitArtifacts: []plugin.InitArtifact{
+			{Path: ".env"},
+			{Path: "certs/cert.pem"},
+			{Path: "certs/privkey.pem"},
+			{Path: "certs/rootCA.pem"},
+			{Path: "certs/rootCA-key.pem"},
+			{Path: "certs/UID", ValueFrom: plugin.InitArtifactValueFromHostUID},
+			{Path: "secrets/ACTIVEMQ_PASSWORD"},
+			{Path: "secrets/ACTIVEMQ_WEB_ADMIN_PASSWORD"},
+			{Path: "secrets/DB_ROOT_PASSWORD"},
+			{Path: "secrets/DRUPAL_DEFAULT_ACCOUNT_PASSWORD"},
+			{Path: "secrets/DRUPAL_DEFAULT_DB_PASSWORD"},
+			{Path: "secrets/DRUPAL_DEFAULT_SALT"},
+			{Path: "secrets/FCREPO_DB_PASSWORD"},
+			{Path: "secrets/JWT_ADMIN_TOKEN"},
+			{Path: "secrets/JWT_PUBLIC_KEY"},
+			{Path: "secrets/JWT_PRIVATE_KEY"},
+		},
 		DockerComposeUp:   []string{"docker compose up --remove-orphans -d"},
 		DockerComposeDown: []string{"docker compose down"},
 		DockerComposeRollout: []string{
@@ -413,7 +438,6 @@ func ensureCreateContext(sdk *plugin.SDK, req createRequest) (*config.Context, e
 }
 
 func runStartup(out io.Writer, ctx *config.Context) error {
-	commandLabel, commandName, commandArgs := startupCommand()
 	cleanupLabel, _, _ := cleanupCommand()
 	logPath, err := startupLogPath(ctx.Name)
 	if err != nil {
@@ -431,7 +455,7 @@ func runStartup(out io.Writer, ctx *config.Context) error {
 
 	fmt.Fprintln(out, corecomponent.RenderSection(
 		"Islandora install is now running",
-		fmt.Sprintf(`ISLE will now run %s from the checked out template.
+		fmt.Sprintf(`ISLE will now run the plugin-owned init and up commands from the checked out template.
 While this runs, Docker will pull images over the network and build the Drupal container locally before Docker Compose starts the stack.
 
 Once docker compose brings the containers up, the Islandora Drupal site will install automatically and be configured using the Islandora starter site.
@@ -443,12 +467,24 @@ If you need to cancel, press Ctrl+C, then run:
   cd %s
   %s
 
-This will completely stop and destroy the setup.`, commandLabel, shellPath(ctx.ProjectDir), cleanupLabel),
+This will completely stop and destroy the setup.`, shellPath(ctx.ProjectDir), cleanupLabel),
 	))
 	fmt.Fprintln(out)
 
 	if err := runWithSpinner(out, "Starting the Islandora stack", func() error {
-		return createRunProjectCommand(ctx.ProjectDir, logFile, logFile, commandName, commandArgs...)
+		for _, commandText := range startupCommands() {
+			commandText = strings.TrimSpace(commandText)
+			if commandText == "" {
+				continue
+			}
+			if _, err := fmt.Fprintf(logFile, "Running %s\n", commandText); err != nil {
+				return err
+			}
+			if err := createRunProjectCommand(ctx.ProjectDir, logFile, logFile, "bash", "-lc", commandText); err != nil {
+				return fmt.Errorf("run %s: %w", commandText, err)
+			}
+		}
+		return nil
 	}); err != nil {
 		tail, tailErr := tailLines(logPath, 20)
 		fmt.Fprintln(out)
@@ -459,7 +495,7 @@ This will completely stop and destroy the setup.`, commandLabel, shellPath(ctx.P
 		if tailErr == nil && strings.TrimSpace(tail) != "" {
 			fmt.Fprintln(out, tail)
 		}
-		return fmt.Errorf("run %s: %w", commandLabel, err)
+		return fmt.Errorf("run ISLE startup commands: %w", err)
 	}
 
 	fmt.Fprintln(out)
@@ -538,15 +574,6 @@ func checkPrereqs(out io.Writer) error {
 			return fmt.Errorf("prerequisite check failed for %s: %w", check.label, err)
 		}
 		fmt.Fprintln(out, corecomponent.RenderChecklistItem(check.label, "ok", ""))
-	}
-	if _, err := createLookPath("make"); err != nil {
-		fmt.Fprintln(out, corecomponent.RenderChecklistItem(
-			"make is installed",
-			"fallback",
-			"missing, so create will run bash ./scripts/up.sh instead",
-		))
-	} else {
-		fmt.Fprintln(out, corecomponent.RenderChecklistItem("make is installed", "ok", ""))
 	}
 	fmt.Fprintln(out)
 	return nil
@@ -642,7 +669,15 @@ func runCheckCommand(name string, args ...string) error {
 }
 
 func startupCommand() (string, string, []string) {
-	return "bash ./scripts/up.sh", "bash", []string{"./scripts/up.sh"}
+	return "ISLE startup commands", "bash", []string{"-lc", strings.Join(startupCommands(), " && ")}
+}
+
+func startupCommands() []string {
+	spec := createDefinition()
+	commands := append([]string{}, spec.DockerComposeInit...)
+	commands = append(commands, spec.DockerComposeBuild...)
+	commands = append(commands, spec.DockerComposeUp...)
+	return commands
 }
 
 func cleanupCommand() (string, string, []string) {

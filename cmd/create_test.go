@@ -382,15 +382,15 @@ func TestCheckPrereqsSuccess(t *testing.T) {
 	if !strings.Contains(rendered, "bash is installed") {
 		t.Fatalf("expected bash checklist item, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "make is installed") {
-		t.Fatalf("expected make checklist item, got:\n%s", rendered)
+	if strings.Contains(rendered, "make is installed") {
+		t.Fatalf("did not expect make prerequisite, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "docker buildx is available: ok") {
 		t.Fatalf("expected buildx checklist item, got:\n%s", rendered)
 	}
 }
 
-func TestCheckPrereqsAllowsMissingMake(t *testing.T) {
+func TestCheckPrereqsDoesNotRequireMake(t *testing.T) {
 	oldLookPath := createLookPath
 	oldRunCheck := createRunCheckCommand
 	t.Cleanup(func() {
@@ -411,8 +411,8 @@ func TestCheckPrereqsAllowsMissingMake(t *testing.T) {
 		t.Fatalf("checkPrereqs() error = %v", err)
 	}
 	rendered := stripANSI(out.String())
-	if !strings.Contains(rendered, "missing, so create will run bash ./scripts/up.sh instead") {
-		t.Fatalf("expected make fallback guidance, got:\n%s", rendered)
+	if strings.Contains(rendered, "make is installed") || strings.Contains(rendered, "scripts/up.sh") {
+		t.Fatalf("did not expect make fallback guidance, got:\n%s", rendered)
 	}
 }
 
@@ -446,28 +446,25 @@ func TestCheckPrereqsFailsEarly(t *testing.T) {
 	}
 }
 
-func TestStartupCommandFallsBackToBash(t *testing.T) {
-	oldLookPath := createLookPath
-	t.Cleanup(func() {
-		createLookPath = oldLookPath
-	})
-
-	createLookPath = func(file string) (string, error) {
-		if file == "make" {
-			return "", errors.New("missing")
-		}
-		return "/usr/bin/" + file, nil
-	}
-
+func TestStartupCommandUsesCreateDefinitionLifecycle(t *testing.T) {
 	label, name, args := startupCommand()
-	if label != "bash ./scripts/up.sh" {
-		t.Fatalf("expected bash label, got %q", label)
+	if label != "ISLE startup commands" {
+		t.Fatalf("expected ISLE startup label, got %q", label)
 	}
 	if name != "bash" {
 		t.Fatalf("expected bash command, got %q", name)
 	}
-	if len(args) != 1 || args[0] != "./scripts/up.sh" {
-		t.Fatalf("expected bash up script args, got %#v", args)
+	if len(args) != 2 || args[0] != "-lc" {
+		t.Fatalf("expected bash lifecycle args, got %#v", args)
+	}
+	for _, want := range []string{
+		"docker compose pull --ignore-buildable",
+		"docker compose build --pull",
+		"docker compose up --remove-orphans -d",
+	} {
+		if !strings.Contains(args[1], want) {
+			t.Fatalf("expected startup command to contain %q, got %q", want, args[1])
+		}
 	}
 }
 
