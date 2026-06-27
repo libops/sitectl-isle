@@ -501,6 +501,8 @@ services:
     image: islandora/cantaloupe
   fcrepo:
     image: islandora/fcrepo6
+  milliner:
+    image: islandora/milliner
   traefik:
     environment:
       CANTALOUPE_UPSTREAM_URL: http://cantaloupe:8182

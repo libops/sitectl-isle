@@ -434,18 +434,19 @@ func applyFcrepoOn(projectDir string) error {
 		return err
 	}
 	images := inferFcrepoRestoreImages(compose)
+	commonMerge := commonMergeLine(composePath)
 	if !compose.HasVolume("fcrepo-data") {
 		if err := compose.AddVolumeBlock("fcrepo-data", "  fcrepo-data: {}"); err != nil {
 			return err
 		}
 	}
 	if !compose.HasService("fcrepo") {
-		if err := compose.AddServiceBlock("fcrepo", fcrepoRestoreServiceBlock(images.Fcrepo)); err != nil {
+		if err := compose.AddServiceBlock("fcrepo", fcrepoRestoreServiceBlock(images.Fcrepo, commonMerge)); err != nil {
 			return err
 		}
 	}
 	if !compose.HasService("milliner") {
-		if err := compose.AddServiceBlock("milliner", millinerRestoreServiceBlock(images.Milliner)); err != nil {
+		if err := compose.AddServiceBlock("milliner", millinerRestoreServiceBlock(images.Milliner, commonMerge)); err != nil {
 			return err
 		}
 	}
@@ -537,10 +538,9 @@ func imageTag(ref string) string {
 	return beforeDigest[colon+1:]
 }
 
-func fcrepoRestoreServiceBlock(image string) string {
+func fcrepoRestoreServiceBlock(image, commonMerge string) string {
 	return `  fcrepo:
-    <<: *common
-    depends_on:
+` + commonMerge + `    depends_on:
       activemq:
         condition: service_healthy
     environment:
@@ -559,10 +559,9 @@ func fcrepoRestoreServiceBlock(image string) string {
       - fcrepo-data:/data:rw`
 }
 
-func millinerRestoreServiceBlock(image string) string {
+func millinerRestoreServiceBlock(image, commonMerge string) string {
 	return `  milliner:
-    <<: *common
-    environment:
+` + commonMerge + `    environment:
       MILLINER_FEDORA6: true
     image: ` + image + `
     secrets:
