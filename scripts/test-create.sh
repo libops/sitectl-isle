@@ -189,6 +189,14 @@ run_healthcheck() {
 	HOME="${SITECTL_HOME}" sitectl healthcheck
 }
 
+set_traefik_http() {
+	(
+		cd "${SITE_DIR}" &&
+			HOME="${SITECTL_HOME}" sitectl traefik tls http &&
+			HOME="${SITECTL_HOME}" sitectl compose up
+	)
+}
+
 verify_demo_objects_created() {
 	local before_count
 	before_count="$(count_files "${ASSERT_SERVICE}" "${ASSERT_PATH}" | tr -d '[:space:]')"
@@ -326,6 +334,7 @@ main() {
 	verify_codebase_layout
 	verify_iiif_implementation
 	set_assert_target
+	set_traefik_http
 	run_healthcheck
 	verify_bot_mitigation_challenge
 	verify_demo_objects_created

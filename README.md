@@ -1,6 +1,6 @@
 # sitectl-isle
 
-`sitectl-isle` adds Islandora create metadata, component changes, Fedora and Blazegraph topology options, derivative service controls, cache helpers, sync and migration tools, validation, and health checks to [`sitectl`](https://sitectl.libops.io). It works with the [LibOps ISLE template](https://github.com/libops/isle).
+`sitectl-isle` simplifies the creation and operation of repositories created using the [ISLE Site Template](https://github.com/Islandora-Devops/isle-site-template). It uses sitectl components to make features like Traefik bot mitigation, Triplet IIIF, and Islandora filesystem storage easy to enable and customize.
 
 Documentation: https://sitectl.libops.io/plugins/isle
 
