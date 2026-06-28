@@ -380,8 +380,8 @@ func buildTraefikService() map[string]interface{} {
 			map[string]interface{}{"source": "CERT_PRIVATE_KEY"},
 		},
 		"ports": []interface{}{
-			"${HOST_INSECURE_PORT:-80}:80",
-			"${HOST_SECURE_PORT:-443}:443",
+			"80:80",
+			"443:443",
 		},
 		"security_opt": []interface{}{
 			"label=type:container_runtime_t",

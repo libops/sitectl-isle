@@ -331,7 +331,7 @@ COPY --link composer.json composer.lock /var/www/drupal/
 COPY --link assets/ /var/www/drupal/assets/
 
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
     cleanup.sh
 
 COPY --link config/ /var/www/drupal/config/
@@ -352,6 +352,9 @@ func dockerfileHeader(contents string) string {
 	out := []string{}
 	foundTargetArch := false
 	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "# syntax=") {
+			continue
+		}
 		out = append(out, line)
 		if strings.TrimSpace(line) == "ARG TARGETARCH" {
 			foundTargetArch = true
@@ -361,12 +364,16 @@ func dockerfileHeader(contents string) string {
 	if foundTargetArch {
 		return strings.Join(out, "\n")
 	}
-	return `# syntax=docker/dockerfile:1.23.0
-ARG REPOSITORY
-ARG TAG
+	return `ARG REPOSITORY=libops
+ARG TAG=1.30.3-php84
 FROM ${REPOSITORY}/drupal:${TAG}
 
-ARG TARGETARCH`
+ARG TARGETARCH
+
+ENV \
+    COMPOSER_ALLOW_SUPERUSER=1 \
+    COMPOSER_MEMORY_LIMIT=-1
+WORKDIR /var/www/drupal`
 }
 
 func writeGitRootDockerignore(path string) error {

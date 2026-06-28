@@ -500,8 +500,7 @@ func TestApplyCodebaseGitRoot(t *testing.T) {
 		}
 	}
 
-	writeTestFile(t, filepath.Join(projectDir, "drupal", "Dockerfile"), `# syntax=docker/dockerfile:1.23.0
-ARG REPOSITORY
+	writeTestFile(t, filepath.Join(projectDir, "drupal", "Dockerfile"), `ARG REPOSITORY
 ARG TAG
 FROM ${REPOSITORY}/drupal:${TAG}
 
@@ -510,7 +509,7 @@ ARG TARGETARCH
 COPY --link rootfs /
 
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
     chown -R nginx:nginx /var/www/drupal && \
     cleanup.sh
 `)
@@ -614,8 +613,7 @@ func TestApplyCodebaseGitRootFromCurrentDrupalLayout(t *testing.T) {
 
 	writeTestFile(t, filepath.Join(projectDir, "README.md"), "project readme\n")
 	writeTestFile(t, filepath.Join(drupalRoot, "README.md"), "drupal readme\n")
-	writeTestFile(t, filepath.Join(drupalRoot, "Dockerfile"), `# syntax=docker/dockerfile:1.23.0
-ARG BASE_IMAGE=libops/islandora:php84
+	writeTestFile(t, filepath.Join(drupalRoot, "Dockerfile"), `ARG BASE_IMAGE=libops/islandora:php84
 FROM ${BASE_IMAGE}
 
 ARG TARGETARCH
@@ -1211,8 +1209,7 @@ volumes:
       - ./drupal/rootfs/var/www/drupal/web/themes/custom:/var/www/drupal/web/themes/custom:z,rw,${CONSISTENCY}
 `)
 	writeTestFile(t, filepath.Join(projectDir, "conf", "traefik", "cantaloupe.yml"), "http: {}\n")
-	writeTestFile(t, filepath.Join(projectDir, "drupal", "Dockerfile"), `# syntax=docker/dockerfile:1.23.0
-ARG REPOSITORY
+	writeTestFile(t, filepath.Join(projectDir, "drupal", "Dockerfile"), `ARG REPOSITORY
 ARG TAG
 FROM ${REPOSITORY}/drupal:${TAG}
 
@@ -1221,7 +1218,7 @@ ARG TARGETARCH
 COPY --link rootfs /
 
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
     chown -R nginx:nginx /var/www/drupal && \
     cleanup.sh
 `)

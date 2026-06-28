@@ -1616,8 +1616,7 @@ func writeISLEDefaultCodebaseFixture(t *testing.T, projectDir string) {
 		}
 	}
 
-	writeFileForTest(t, filepath.Join(projectDir, "drupal", "Dockerfile"), `# syntax=docker/dockerfile:1.23.0
-ARG REPOSITORY
+	writeFileForTest(t, filepath.Join(projectDir, "drupal", "Dockerfile"), `ARG REPOSITORY
 ARG TAG
 FROM ${REPOSITORY}/drupal:${TAG}
 
@@ -1626,7 +1625,7 @@ ARG TARGETARCH
 COPY --link rootfs /
 
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
     chown -R nginx:nginx /var/www/drupal && \
     cleanup.sh
 `)
