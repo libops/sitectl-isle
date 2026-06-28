@@ -495,7 +495,11 @@ func TestEnsureClonedCheckoutClonesEmptyDirectory(t *testing.T) {
 		return os.MkdirAll(opts.ProjectDir, 0o755)
 	}
 
-	cloned, err := ensureClonedCheckout(io.Discard, defaultTemplateRepo, defaultTemplateBranch, projectDir)
+	cloned, err := ensureClonedCheckout(io.Discard, createRequest{ComposeCreateRequest: plugin.ComposeCreateRequest{
+		TemplateRepo:   defaultTemplateRepo,
+		TemplateBranch: defaultTemplateBranch,
+		Path:           projectDir,
+	}})
 	if err != nil {
 		t.Fatalf("ensureClonedCheckout() error = %v", err)
 	}
@@ -527,7 +531,11 @@ func TestEnsureClonedCheckoutSkipsNonEmptyDirectory(t *testing.T) {
 		return nil
 	}
 
-	cloned, err := ensureClonedCheckout(io.Discard, defaultTemplateRepo, defaultTemplateBranch, projectDir)
+	cloned, err := ensureClonedCheckout(io.Discard, createRequest{ComposeCreateRequest: plugin.ComposeCreateRequest{
+		TemplateRepo:   defaultTemplateRepo,
+		TemplateBranch: defaultTemplateBranch,
+		Path:           projectDir,
+	}})
 	if err != nil {
 		t.Fatalf("ensureClonedCheckout() error = %v", err)
 	}

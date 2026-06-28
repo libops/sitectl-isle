@@ -283,13 +283,13 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		return err
 	}
 	fmt.Fprintln(progress)
-	cloned, err := ensureClonedCheckout(progress, req.TemplateRepo, req.TemplateBranch, ctx.ProjectDir)
-	if err != nil {
-		return err
-	}
 	req.ContextName = ctx.Name
 	req.Path = ctx.ProjectDir
 	req.Apply.Path = ctx.ProjectDir
+	cloned, err := ensureClonedCheckout(progress, req)
+	if err != nil {
+		return err
+	}
 	if cloned {
 		if err := createBootstrapCheckout(progress, ctx.ProjectDir); err != nil {
 			return err
@@ -579,7 +579,10 @@ func checkPrereqs(out io.Writer) error {
 	return nil
 }
 
-func ensureClonedCheckout(out io.Writer, repoURL, branch, projectDir string) (bool, error) {
+func ensureClonedCheckout(out io.Writer, req createRequest) (bool, error) {
+	repoURL := strings.TrimSpace(req.TemplateRepo)
+	branch := strings.TrimSpace(req.TemplateBranch)
+	projectDir := strings.TrimSpace(req.Path)
 	if repoURL == "" {
 		return false, fmt.Errorf("template repo cannot be empty")
 	}

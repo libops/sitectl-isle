@@ -558,7 +558,6 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 	dockerfile := readTestFile(t, filepath.Join(projectDir, "Dockerfile"))
 	for _, want := range []string{
 		"COPY --link composer.json composer.lock /var/www/drupal/",
-		"COPY --link drupal/rootfs/etc/ /etc/",
 		"COPY --link drupal/rootfs/opt/ /opt/",
 	} {
 		if !strings.Contains(dockerfile, want) {
@@ -567,6 +566,9 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 	}
 	if strings.Contains(dockerfile, "COPY --link rootfs /") {
 		t.Fatalf("expected nested rootfs copy removed, got:\n%s", dockerfile)
+	}
+	if strings.Contains(dockerfile, "COPY --link drupal/rootfs/etc/ /etc/") {
+		t.Fatalf("expected Drupal /etc overlay copy removed, got:\n%s", dockerfile)
 	}
 
 	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
@@ -654,9 +656,6 @@ COPY --link rootfs/opt/ /opt/
 			t.Fatalf("expected drupal/%s moved to git root, stat err = %v", rel, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(drupalRoot, "rootfs", "etc", "s6-overlay", "scripts")); err != nil {
-		t.Fatalf("expected drupal/rootfs overlays preserved: %v", err)
-	}
 	if got := readTestFile(t, filepath.Join(projectDir, "README.md")); got != "project readme\n" {
 		t.Fatalf("expected project README preserved, got %q", got)
 	}
@@ -667,12 +666,14 @@ COPY --link rootfs/opt/ /opt/
 	dockerfile := readTestFile(t, filepath.Join(projectDir, "Dockerfile"))
 	for _, want := range []string{
 		"COPY --link composer.json composer.lock /var/www/drupal/",
-		"COPY --link drupal/rootfs/etc/ /etc/",
 		"COPY --link drupal/rootfs/opt/ /opt/",
 	} {
 		if !strings.Contains(dockerfile, want) {
 			t.Fatalf("expected Dockerfile to contain %q, got:\n%s", want, dockerfile)
 		}
+	}
+	if strings.Contains(dockerfile, "COPY --link drupal/rootfs/etc/ /etc/") {
+		t.Fatalf("expected Drupal /etc overlay copy removed, got:\n%s", dockerfile)
 	}
 
 	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
