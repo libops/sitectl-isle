@@ -93,7 +93,7 @@ func createDefinition() plugin.CreateSpec {
 		DockerComposeBuild: []string{
 			"if [ -d drupal/rootfs ]; then find drupal/rootfs -type d -exec chmod 755 {} \\; ; fi",
 			"docker compose pull --ignore-buildable --ignore-pull-failures",
-			"docker compose build --pull",
+			"docker compose build",
 		},
 		Images: []plugin.ComposeImageSpec{
 			{Service: "drupal", Image: "islandora.io/isle-site-template:local", BuildPolicy: plugin.BuildPolicyIfNotPresent},
@@ -102,7 +102,7 @@ func createDefinition() plugin.CreateSpec {
 			"if [ ! -f .env ]; then cp sample.env .env; fi",
 			"mkdir -p ./certs",
 			"docker compose run --rm init",
-			"chown -R \"$(id -u):$(id -g)\" ./certs ./secrets > /dev/null 2>&1 || sudo chown -R \"$(id -u):$(id -g)\" ./certs ./secrets",
+			"chown -R \"$(id -u):$(id -g)\" ./certs ./secrets > /dev/null 2>&1 || sudo chown -R \"$(id -u):$(id -g)\" ./certs ./secrets > /dev/null 2>&1 || true",
 			"id -u > ./certs/UID",
 		},
 		InitArtifacts: []plugin.InitArtifact{

@@ -459,7 +459,7 @@ func TestStartupCommandUsesCreateDefinitionLifecycle(t *testing.T) {
 	}
 	for _, want := range []string{
 		"docker compose pull --ignore-buildable",
-		"docker compose build --pull",
+		"docker compose build",
 		"docker compose up --remove-orphans -d",
 	} {
 		if !strings.Contains(args[1], want) {

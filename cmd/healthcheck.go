@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"net/url"
+	"strings"
 
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/healthcheck"
@@ -15,15 +17,21 @@ type isleHealthcheckRunner struct{}
 func (isleHealthcheckRunner) BindFlags(cmd *cobra.Command) {}
 
 func (isleHealthcheckRunner) Run(cmd *cobra.Command, ctx *config.Context) ([]sitevalidate.Result, error) {
-	results := []sitevalidate.Result{
-		healthcheck.CheckHTTP(cmd.Context(), "http:drupal", healthcheck.PublicURLFromEnv(ctx, "http", "islandora.io")),
-	}
-
 	checker, err := healthcheck.NewDockerChecker(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = checker.Close() }()
+
+	results := []sitevalidate.Result{
+		checker.CheckHTTPFromContainerWithHostHeader(
+			cmd.Context(),
+			"http:drupal",
+			"drupal",
+			"http://127.0.0.1/",
+			publicURLHost(healthcheck.PublicURLFromEnv(ctx, "http", "islandora.io")),
+		),
+	}
 
 	results = append(results,
 		checker.CheckMariaDB(cmd.Context(), "mariadb"),
@@ -70,4 +78,15 @@ func optionalHTTPServiceReady(ctx context.Context, checker *healthcheck.DockerCh
 		}
 	}
 	return len(results) > 0, nil
+}
+
+func publicURLHost(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "islandora.io"
+	}
+	if host := parsed.Hostname(); host != "" {
+		return host
+	}
+	return "islandora.io"
 }
