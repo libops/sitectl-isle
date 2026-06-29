@@ -40,6 +40,7 @@ jobs:
     with:
       plugin: isle
       create-definition: default
+      template-repo: https://github.com/libops/isle
       create-args: >-
         --fcrepo ${{ matrix.fcrepo_state }}
         --blazegraph ${{ matrix.blazegraph_state }}
