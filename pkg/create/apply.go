@@ -459,7 +459,7 @@ func applyFcrepoOn(projectDir string) error {
 	for key, value := range map[string]string{
 		"DRUPAL_DEFAULT_FCREPO_HOST": "fcrepo",
 		"DRUPAL_DEFAULT_FCREPO_PORT": "8080",
-		"DRUPAL_DEFAULT_FCREPO_URL":  "${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/",
+		"DRUPAL_DEFAULT_FCREPO_URL":  "http://fcrepo.localhost/fcrepo/rest/",
 	} {
 		if err := compose.SetServiceEnv("drupal", key, value); err != nil {
 			return err
@@ -478,19 +478,19 @@ type fcrepoRestoreImages struct {
 
 func inferFcrepoRestoreImages(compose *corecomponent.ComposeFile) fcrepoRestoreImages {
 	repository, tag := inferIslandoraStackImageConvention(compose)
-	fcrepoName := "fcrepo6"
+	fcrepoImage := repository + "/fcrepo6:" + tag
 	if repository == "libops" {
-		fcrepoName = "fcrepo"
+		fcrepoImage = "libops/fcrepo:7"
 	}
 	return fcrepoRestoreImages{
-		Fcrepo:   repository + "/" + fcrepoName + ":" + tag,
-		Milliner: "islandora/milliner:" + tag,
+		Fcrepo:   fcrepoImage,
+		Milliner: "islandora/milliner:main",
 	}
 }
 
 func inferIslandoraStackImageConvention(compose *corecomponent.ComposeFile) (string, string) {
 	repository := "islandora"
-	tag := "${ISLANDORA_TAG}"
+	tag := "main"
 	for _, service := range []string{"fcrepo", "activemq", "alpaca", "init", "fits", "solr", "mariadb", "milliner"} {
 		block, ok := compose.ServiceBlock(service)
 		if !ok {
@@ -553,7 +553,7 @@ func fcrepoRestoreServiceBlock(image, commonMerge string) string {
       DB_HOST: mariadb
       DB_PORT: 3306
       FCREPO_ALLOW_EXTERNAL_DEFAULT: http://default/
-      FCREPO_ALLOW_EXTERNAL_DRUPAL: ${URI_SCHEME}://${DOMAIN}/
+      FCREPO_ALLOW_EXTERNAL_DRUPAL: http://localhost/
       FCREPO_PERSISTENCE_TYPE: mysql
     image: ` + image + `
     secrets:

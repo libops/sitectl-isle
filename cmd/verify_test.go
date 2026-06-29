@@ -11,7 +11,7 @@ import (
 	sitevalidate "github.com/libops/sitectl/pkg/validate"
 )
 
-func TestVerifyBotMitigationSkipsForwardedHeaderProbeWhenReverseProxyOff(t *testing.T) {
+func TestVerifyBotMitigationSkipsForwardedHeaderProbeWhenIngressTrustedIPsUnset(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
@@ -36,7 +36,7 @@ func TestVerifyBotMitigationSkipsForwardedHeaderProbeWhenReverseProxyOff(t *test
 	}
 }
 
-func TestBotMitigationForwardedHeaderProbeEnabledDetectsReverseProxy(t *testing.T) {
+func TestBotMitigationForwardedHeaderProbeEnabledDetectsIngressTrustedIPs(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
@@ -48,7 +48,7 @@ func TestBotMitigationForwardedHeaderProbeEnabledDetectsReverseProxy(t *testing.
 `)
 
 	if !botMitigationForwardedHeaderProbeEnabled(verifyTestContext(projectDir)) {
-		t.Fatal("expected forwarded-header probe to be enabled when reverse-proxy trusted IPs are configured")
+		t.Fatal("expected forwarded-header probe to be enabled when ingress trusted IPs are configured")
 	}
 }
 

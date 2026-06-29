@@ -6,6 +6,5 @@ http:
           - url: {{UPSTREAM_URL}}
   routers:
     triplet:
-      rule: Host(`{{ env "DOMAIN" }}`) && PathPrefix(`/iiif`)
+      rule: Host(`localhost`) && PathPrefix(`/iiif`)
       service: triplet
-      tls: {}

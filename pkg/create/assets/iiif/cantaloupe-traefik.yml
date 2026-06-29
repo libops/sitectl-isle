@@ -21,7 +21,7 @@ http:
           - url: {{UPSTREAM_URL}}
   routers:
     cantaloupe:
-      rule: Host(`{{ env "DOMAIN" }}`) && PathPrefix(`/cantaloupe`)
+      rule: Host(`localhost`) && PathPrefix(`/cantaloupe`)
       middlewares:
         - cantaloupe
       service: cantaloupe

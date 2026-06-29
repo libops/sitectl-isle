@@ -52,13 +52,15 @@ const (
 
 type createRequest struct {
 	plugin.ComposeCreateRequest
-	Apply                  createpkg.Options
-	ReverseProxyState      corecomponent.State
-	ReverseProxyTrustedIPs string
-	UploadLimitsState      corecomponent.State
-	MaxUploadSize          string
-	UploadTimeout          string
-	DevModeState           corecomponent.State
+	Apply             createpkg.Options
+	IngressState      corecomponent.State
+	IngressMode       string
+	IngressDomain     string
+	IngressACMEEmail  string
+	IngressTrustedIPs string
+	MaxUploadSize     string
+	UploadTimeout     string
+	DevModeState      corecomponent.State
 }
 
 type createRunner struct{}
@@ -99,14 +101,12 @@ func createDefinition() plugin.CreateSpec {
 			{Service: "drupal", Image: "islandora.io/isle-site-template:local", BuildPolicy: plugin.BuildPolicyIfNotPresent},
 		},
 		DockerComposeInit: []string{
-			"if [ ! -f .env ]; then cp sample.env .env; fi",
 			"mkdir -p ./certs",
 			"docker compose run --rm init",
 			"chown -R \"$(id -u):$(id -g)\" ./certs ./secrets > /dev/null 2>&1 || sudo chown -R \"$(id -u):$(id -g)\" ./certs ./secrets > /dev/null 2>&1 || true",
 			"id -u > ./certs/UID",
 		},
 		InitArtifacts: []plugin.InitArtifact{
-			{Path: ".env"},
 			{Path: "certs/cert.pem"},
 			{Path: "certs/privkey.pem"},
 			{Path: "certs/rootCA.pem"},
@@ -192,17 +192,19 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 	if decision, ok := resolved.Decisions["bot-mitigation"]; ok {
 		opts.BotMitigation = string(decision.State)
 	}
-	var reverseProxyState corecomponent.State
-	var reverseProxyTrustedIPs string
-	if decision, ok := resolved.Decisions[coretraefik.ReverseProxyName]; ok {
-		reverseProxyState = decision.State
-		reverseProxyTrustedIPs = strings.TrimSpace(decision.Options["trusted-ip"])
-	}
-	var uploadLimitsState corecomponent.State
+	var ingressState corecomponent.State
+	var ingressMode string
+	var ingressDomain string
+	var ingressACMEEmail string
+	var ingressTrustedIPs string
 	var maxUploadSize string
 	var uploadTimeout string
-	if decision, ok := resolved.Decisions[coretraefik.UploadLimitsName]; ok {
-		uploadLimitsState = decision.State
+	if decision, ok := resolved.Decisions[coretraefik.IngressName]; ok {
+		ingressState = decision.State
+		ingressMode = strings.TrimSpace(decision.Options["mode"])
+		ingressDomain = strings.TrimSpace(decision.Options["domain"])
+		ingressACMEEmail = strings.TrimSpace(decision.Options["acme-email"])
+		ingressTrustedIPs = strings.TrimSpace(decision.Options["trusted-ip"])
 		maxUploadSize = strings.TrimSpace(decision.Options["max-upload-size"])
 		uploadTimeout = strings.TrimSpace(decision.Options["upload-timeout"])
 	}
@@ -231,14 +233,16 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 		opts.DrupalRootfs = corecomponent.DefaultDrupalRootfs
 	}
 	return createRequest{
-		ComposeCreateRequest:   resolved,
-		Apply:                  opts,
-		ReverseProxyState:      reverseProxyState,
-		ReverseProxyTrustedIPs: reverseProxyTrustedIPs,
-		UploadLimitsState:      uploadLimitsState,
-		MaxUploadSize:          maxUploadSize,
-		UploadTimeout:          uploadTimeout,
-		DevModeState:           devModeState,
+		ComposeCreateRequest: resolved,
+		Apply:                opts,
+		IngressState:         ingressState,
+		IngressMode:          ingressMode,
+		IngressDomain:        ingressDomain,
+		IngressACMEEmail:     ingressACMEEmail,
+		IngressTrustedIPs:    ingressTrustedIPs,
+		MaxUploadSize:        maxUploadSize,
+		UploadTimeout:        uploadTimeout,
+		DevModeState:         devModeState,
 	}, nil
 }
 
@@ -304,11 +308,7 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		printCreateFailureSummary(summary, req)
 		return err
 	}
-	if err := applyCreateReverseProxy(ctx, req); err != nil {
-		printCreateFailureSummary(summary, req)
-		return err
-	}
-	if err := applyCreateUploadLimits(ctx, req); err != nil {
+	if err := applyCreateIngress(ctx, req); err != nil {
 		printCreateFailureSummary(summary, req)
 		return err
 	}
@@ -337,26 +337,32 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	return nil
 }
 
-func applyCreateUploadLimits(ctx *config.Context, req createRequest) error {
-	if req.UploadLimitsState == "" {
+func applyCreateIngress(ctx *config.Context, req createRequest) error {
+	if req.IngressState == "" {
 		return nil
 	}
-	component, err := isleUploadLimitsComponent()
+	component, err := isleIngressComponent()
 	if err != nil {
 		return err
 	}
 	manager := corecomponent.NewManager(ctx)
-	spec := component.SpecForWithOptions(req.UploadLimitsState, map[string]string{
+	values := map[string]string{
+		"mode":            strings.TrimSpace(req.IngressMode),
+		"domain":          strings.TrimSpace(req.IngressDomain),
+		"acme-email":      strings.TrimSpace(req.IngressACMEEmail),
+		"trusted-ip":      strings.TrimSpace(req.IngressTrustedIPs),
 		"max-upload-size": strings.TrimSpace(req.MaxUploadSize),
 		"upload-timeout":  strings.TrimSpace(req.UploadTimeout),
-	})
-	switch req.UploadLimitsState {
+	}
+	spec := component.SpecForWithOptions(req.IngressState, values)
+	switch req.IngressState {
 	case corecomponent.StateOn:
-		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
-	case corecomponent.StateOff:
-		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+		if err := manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+		return applyISLEIngressFiles(ctx, values)
 	default:
-		return fmt.Errorf("unsupported upload limits state %q", req.UploadLimitsState)
+		return fmt.Errorf("unsupported ingress state %q", req.IngressState)
 	}
 }
 
@@ -372,33 +378,17 @@ func applyCreateDevMode(ctx *config.Context, req createRequest) error {
 	spec := component.SpecForWithOptions(req.DevModeState, nil)
 	switch req.DevModeState {
 	case corecomponent.StateOn:
-		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+		if err := manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+		return applyISLEDevMode(ctx, true)
 	case corecomponent.StateOff:
-		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+		if err := manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+		return applyISLEDevMode(ctx, false)
 	default:
 		return fmt.Errorf("unsupported dev mode state %q", req.DevModeState)
-	}
-}
-
-func applyCreateReverseProxy(ctx *config.Context, req createRequest) error {
-	if req.ReverseProxyState == "" {
-		return nil
-	}
-	component, err := isleReverseProxyComponent()
-	if err != nil {
-		return err
-	}
-	manager := corecomponent.NewManager(ctx)
-	spec := component.SpecForWithOptions(req.ReverseProxyState, map[string]string{
-		"trusted-ip": strings.TrimSpace(req.ReverseProxyTrustedIPs),
-	})
-	switch req.ReverseProxyState {
-	case corecomponent.StateOn:
-		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
-	case corecomponent.StateOff:
-		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
-	default:
-		return fmt.Errorf("unsupported reverse proxy state %q", req.ReverseProxyState)
 	}
 }
 
@@ -817,8 +807,7 @@ func buildRecreateCommand(req createRequest) string {
 		`--iiif=` + iiifDispositionFlagValue(req.Apply.IIIF),
 		`--iiif-topology=` + iiifTopologyDispositionFlagValue(req.Apply.IIIFTopology),
 		`--codebase=` + codebaseDispositionFlagValue(req.Apply.Codebase),
-		`--reverse-proxy=` + string(corecomponent.StateToDisposition(req.ReverseProxyState)),
-		`--upload-limits=` + string(corecomponent.StateToDisposition(req.UploadLimitsState)),
+		`--ingress=` + string(corecomponent.StateToDisposition(req.IngressState)),
 		`--dev-mode=` + string(corecomponent.StateToDisposition(req.DevModeState)),
 		`--bot-mitigation=` + req.Apply.BotMitigation,
 		`--isle-file-system-uri=` + shellDoubleQuote(req.Apply.ISLEFileSystemURI),
@@ -826,12 +815,17 @@ func buildRecreateCommand(req createRequest) string {
 	if req.Apply.IIIFTopology == createpkg.IIIFTopologyExternal {
 		args = append(args, `--iiif-upstream-url=`+shellDoubleQuote(req.Apply.IIIFUpstreamURL))
 	}
-	if req.ReverseProxyState == corecomponent.StateOn {
-		for _, trustedIP := range corecomponent.SplitFollowUpValues(req.ReverseProxyTrustedIPs) {
+	if req.IngressState == corecomponent.StateOn {
+		args = append(args,
+			`--mode=`+shellDoubleQuote(helpers.FirstNonEmpty(req.IngressMode, coretraefik.IngressModeHTTP)),
+			`--domain=`+shellDoubleQuote(helpers.FirstNonEmpty(req.IngressDomain, coretraefik.DefaultIngressDomain)),
+		)
+		if strings.TrimSpace(req.IngressACMEEmail) != "" {
+			args = append(args, `--acme-email=`+shellDoubleQuote(req.IngressACMEEmail))
+		}
+		for _, trustedIP := range corecomponent.SplitFollowUpValues(req.IngressTrustedIPs) {
 			args = append(args, `--trusted-ip=`+shellDoubleQuote(trustedIP))
 		}
-	}
-	if req.UploadLimitsState == corecomponent.StateOn {
 		args = append(args,
 			`--max-upload-size=`+shellDoubleQuote(uploadLimitValue(map[string]string{"max-upload-size": req.MaxUploadSize}, "max-upload-size")),
 			`--upload-timeout=`+shellDoubleQuote(uploadLimitValue(map[string]string{"upload-timeout": req.UploadTimeout}, "upload-timeout")),

@@ -26,6 +26,5 @@ func RegisterCommands(sdk *plugin.SDK) {
 	sdk.RegisterValidateRunner(&isleValidateRunner{})
 	sdk.RegisterHealthcheckRunner(isleHealthcheckRunner{})
 	sdk.RegisterVerifyRunner(&isleVerifyRunner{})
-	sdk.AddCommand(migrateCmd)
 	sdk.AddCommand(syncCmd)
 }

@@ -1,0 +1,10 @@
+http:
+  services:
+    blazegraph:
+      loadBalancer:
+        servers:
+          - url: http://blazegraph:8080
+  routers:
+    blazegraph:
+      rule: Host(`blazegraph.localhost`)
+      service: blazegraph

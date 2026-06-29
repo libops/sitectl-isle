@@ -8,10 +8,10 @@ import (
 	"testing"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
-	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
+	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +22,6 @@ func newComponentSetTestCommand() *cobra.Command {
 	var state string
 	var disposition string
 	var yolo bool
-	var tlsMode string
 
 	cmd := &cobra.Command{Use: "set <name> [disposition]"}
 	cmd.Flags().StringVar(&path, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
@@ -30,7 +29,6 @@ func newComponentSetTestCommand() *cobra.Command {
 	cmd.Flags().StringVar(&state, "state", "", "Component state to apply. Valid values are on or off. If omitted, the command prompts interactively.")
 	cmd.Flags().StringVar(&disposition, "disposition", "", "Component disposition to apply. Valid values depend on the component, commonly disabled, superceded, enabled, or distributed.")
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Apply the component change without confirmation")
-	cmd.Flags().StringVar(&tlsMode, "tls-mode", "", "TLS mode for the selected component. Valid values are http, self-managed, mkcert, or letsencrypt.")
 	addComponentSetFollowUpFlags(cmd, managedComponentDefinitions())
 	return cmd
 }
@@ -546,50 +544,6 @@ func TestRunComponentSetIIIFIgnoresOtherComponentDrift(t *testing.T) {
 	}
 }
 
-func TestRunComponentSetAppliesISLETLSOverrideHTTPOverride(t *testing.T) {
-	projectDir := t.TempDir()
-	writeISLEOnFixture(t, projectDir)
-
-	oldStatusPath := statusPath
-	oldDrupalRootfs := statusDrupalRootfs
-	oldYolo := componentSetYolo
-	oldTLSMode := componentSetTLSMode
-	oldPromptChoice := componentPromptChoice
-	t.Cleanup(func() {
-		statusPath = oldStatusPath
-		statusDrupalRootfs = oldDrupalRootfs
-		componentSetYolo = oldYolo
-		componentSetTLSMode = oldTLSMode
-		componentPromptChoice = oldPromptChoice
-	})
-
-	statusPath = projectDir
-	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
-	componentSetYolo = true
-	componentSetTLSMode = "http"
-
-	var out bytes.Buffer
-	cmd := newComponentSetTestCommand()
-	cmd.SetOut(&out)
-
-	if err := runComponentSet(cmd, "isle-tls-override", "on"); err != nil {
-		t.Fatalf("runComponentSet() error = %v", err)
-	}
-
-	rendered := out.String()
-	if !strings.Contains(rendered, "isle-tls-override: enabled") {
-		t.Fatalf("expected component output, got:\n%s", rendered)
-	}
-
-	devOverride, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.local.yml"))
-	if err != nil {
-		t.Fatalf("ReadFile(docker-compose.local.yml) error = %v", err)
-	}
-	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") {
-		t.Fatalf("expected dev http override, got:\n%s", string(devOverride))
-	}
-}
-
 func TestRunComponentSetEnablesBotMitigation(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
@@ -601,7 +555,7 @@ func TestRunComponentSetEnablesBotMitigation(t *testing.T) {
           - url: {{ env "DRUPAL_UPSTREAM_URL" }}
   routers:
     drupal:
-      rule: Host(`+"`"+`{{ env "DOMAIN" }}`+"`"+`)
+      rule: Host(`+"`"+`localhost`+"`"+`)
       service: drupal
 `)
 
@@ -728,10 +682,9 @@ func TestRunComponentSetDisablesBotMitigation(t *testing.T) {
 	}
 }
 
-func TestRunComponentSetEnablesReverseProxy(t *testing.T) {
+func TestRunComponentSetConfiguresIngressLetsEncrypt(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
-	addReverseProxyTestEntrypoints(t, projectDir)
 
 	oldStatusPath := statusPath
 	oldDrupalRootfs := statusDrupalRootfs
@@ -751,27 +704,51 @@ func TestRunComponentSetEnablesReverseProxy(t *testing.T) {
 	var out bytes.Buffer
 	cmd := newComponentSetTestCommand()
 	cmd.SetOut(&out)
+	if err := cmd.Flags().Set("mode", coretraefik.IngressModeHTTPSLetsEncrypt); err != nil {
+		t.Fatalf("Flags().Set(mode) error = %v", err)
+	}
+	if err := cmd.Flags().Set("domain", "repo.example.org"); err != nil {
+		t.Fatalf("Flags().Set(domain) error = %v", err)
+	}
+	if err := cmd.Flags().Set("acme-email", "admin@example.org"); err != nil {
+		t.Fatalf("Flags().Set(acme-email) error = %v", err)
+	}
 	if err := cmd.Flags().Set("trusted-ip", "10.0.0.0/8"); err != nil {
 		t.Fatalf("Flags().Set(trusted-ip) error = %v", err)
 	}
 	if err := cmd.Flags().Set("trusted-ip", "203.0.113.4"); err != nil {
 		t.Fatalf("Flags().Set(trusted-ip second) error = %v", err)
 	}
-
-	if err := runComponentSet(cmd, "reverse-proxy", "enabled"); err != nil {
+	if err := cmd.Flags().Set("max-upload-size", "2G"); err != nil {
+		t.Fatalf("Flags().Set(max-upload-size) error = %v", err)
+	}
+	if err := cmd.Flags().Set("upload-timeout", "10m"); err != nil {
+		t.Fatalf("Flags().Set(upload-timeout) error = %v", err)
+	}
+	if err := runComponentSet(cmd, coretraefik.IngressName, "enabled"); err != nil {
 		t.Fatalf("runComponentSet() error = %v", err)
 	}
-	if !strings.Contains(out.String(), "reverse-proxy: enabled (10.0.0.0/8,203.0.113.4)") {
+	if !strings.Contains(out.String(), "ingress: enabled (https-letsencrypt)") {
 		t.Fatalf("expected component output, got:\n%s", out.String())
 	}
 
-	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
-	if err != nil {
-		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
-	}
-	compose := string(composeText)
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	compose := readFileForTest(t, composePath)
 	for _, want := range []string{
+		`DRUPAL_ENABLE_HTTPS: "true"`,
+		`DRUPAL_DEFAULT_SITE_URL: "https://repo.example.org"`,
+		`DRUPAL_DEFAULT_FCREPO_URL: "https://fcrepo.repo.example.org/fcrepo/rest/"`,
+		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "https://repo.example.org/"`,
+		"--entryPoints.https.address=:443",
+		"--certificatesResolvers.letsencrypt.acme.email=admin@example.org",
+		`- "443:443"`,
+		"acme-data:/acme:rw",
 		"--entryPoints.http.forwardedHeaders.trustedIPs=10.0.0.0/8,203.0.113.4",
+		`PHP_UPLOAD_MAX_FILESIZE: "2G"`,
+		`PHP_POST_MAX_SIZE: "2G"`,
+		`NGINX_CLIENT_MAX_BODY_SIZE: "2G"`,
+		`NGINX_FASTCGI_READ_TIMEOUT: "10m"`,
+		"--entryPoints.http.transport.respondingTimeouts.readTimeout=10m",
 		`NGINX_SET_REAL_IP_FROM: "10.0.0.0/8"`,
 		`NGINX_SET_REAL_IP_FROM2: "203.0.113.4"`,
 		`NGINX_REAL_IP_RECURSIVE: "on"`,
@@ -780,119 +757,21 @@ func TestRunComponentSetEnablesReverseProxy(t *testing.T) {
 			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
 		}
 	}
-}
 
-func TestRunComponentSetDisablesReverseProxy(t *testing.T) {
-	projectDir := t.TempDir()
-	writeISLEOnFixture(t, projectDir)
-	addReverseProxyTestEntrypoints(t, projectDir)
-
-	oldStatusPath := statusPath
-	oldDrupalRootfs := statusDrupalRootfs
-	oldYolo := componentSetYolo
-	oldPromptChoice := componentPromptChoice
-	t.Cleanup(func() {
-		statusPath = oldStatusPath
-		statusDrupalRootfs = oldDrupalRootfs
-		componentSetYolo = oldYolo
-		componentPromptChoice = oldPromptChoice
-	})
-
-	statusPath = projectDir
-	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
-	componentSetYolo = true
-
-	cmd := newComponentSetTestCommand()
-	if err := cmd.Flags().Set("trusted-ip", "10.0.0.0/8"); err != nil {
-		t.Fatalf("Flags().Set(trusted-ip) error = %v", err)
-	}
-	if err := runComponentSet(cmd, "reverse-proxy", "enabled"); err != nil {
-		t.Fatalf("runComponentSet(enabled) error = %v", err)
-	}
-	if err := runComponentSet(newComponentSetTestCommand(), "reverse-proxy", "disabled"); err != nil {
-		t.Fatalf("runComponentSet(disabled) error = %v", err)
-	}
-
-	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
-	if err != nil {
-		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
-	}
-	compose := string(composeText)
-	for _, removed := range []string{"forwardedHeaders.trustedIPs", "NGINX_SET_REAL_IP_FROM", "NGINX_REAL_IP_RECURSIVE"} {
-		if strings.Contains(compose, removed) {
-			t.Fatalf("expected compose to remove %q, got:\n%s", removed, compose)
-		}
-	}
-}
-
-func TestRunComponentSetTogglesUploadLimits(t *testing.T) {
-	projectDir := t.TempDir()
-	writeISLEOnFixture(t, projectDir)
-	addReverseProxyTestEntrypoints(t, projectDir)
-
-	oldStatusPath := statusPath
-	oldDrupalRootfs := statusDrupalRootfs
-	oldYolo := componentSetYolo
-	oldPromptChoice := componentPromptChoice
-	t.Cleanup(func() {
-		statusPath = oldStatusPath
-		statusDrupalRootfs = oldDrupalRootfs
-		componentSetYolo = oldYolo
-		componentPromptChoice = oldPromptChoice
-	})
-
-	statusPath = projectDir
-	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
-	componentSetYolo = true
-
-	var out bytes.Buffer
-	cmd := newComponentSetTestCommand()
-	cmd.SetOut(&out)
-	if err := cmd.Flags().Set("max-upload-size", "2G"); err != nil {
-		t.Fatalf("Flags().Set(max-upload-size) error = %v", err)
-	}
-	if err := cmd.Flags().Set("upload-timeout", "10m"); err != nil {
-		t.Fatalf("Flags().Set(upload-timeout) error = %v", err)
-	}
-	if err := runComponentSet(cmd, "upload-limits", "enabled"); err != nil {
-		t.Fatalf("runComponentSet(enabled) error = %v", err)
-	}
-	if !strings.Contains(out.String(), "upload-limits: enabled (2G, 10m)") {
-		t.Fatalf("expected component output, got:\n%s", out.String())
-	}
-
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
-	compose := readFileForTest(t, composePath)
+	router := readFileForTest(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
 	for _, want := range []string{
-		`PHP_UPLOAD_MAX_FILESIZE: "2G"`,
-		`PHP_POST_MAX_SIZE: "2G"`,
-		`NGINX_CLIENT_MAX_BODY_SIZE: "2G"`,
-		`NGINX_FASTCGI_READ_TIMEOUT: "10m"`,
-		"--entryPoints.http.transport.respondingTimeouts.readTimeout=10m",
+		"Host(`repo.example.org`)",
+		"certResolver: letsencrypt",
 	} {
-		if !strings.Contains(compose, want) {
-			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		if !strings.Contains(router, want) {
+			t.Fatalf("expected router to contain %q, got:\n%s", want, router)
 		}
-	}
-
-	if err := runComponentSet(newComponentSetTestCommand(), "upload-limits", "disabled"); err != nil {
-		t.Fatalf("runComponentSet(disabled) error = %v", err)
-	}
-	compose = readFileForTest(t, composePath)
-	for _, removed := range []string{"PHP_UPLOAD_MAX_FILESIZE", "PHP_POST_MAX_SIZE", "NGINX_CLIENT_MAX_BODY_SIZE", "NGINX_FASTCGI_READ_TIMEOUT"} {
-		if strings.Contains(compose, removed) {
-			t.Fatalf("expected compose to remove %q, got:\n%s", removed, compose)
-		}
-	}
-	if !strings.Contains(compose, "--entryPoints.http.transport.respondingTimeouts.readTimeout=300s") {
-		t.Fatalf("expected default readTimeout restored, got:\n%s", compose)
 	}
 }
 
-func TestRunComponentSetReverseProxyRequiresTrustedIP(t *testing.T) {
+func TestRunComponentSetIngressLetsEncryptRequiresACMEEmail(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
-	addReverseProxyTestEntrypoints(t, projectDir)
 
 	oldStatusPath := statusPath
 	oldDrupalRootfs := statusDrupalRootfs
@@ -909,9 +788,13 @@ func TestRunComponentSetReverseProxyRequiresTrustedIP(t *testing.T) {
 	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
 	componentSetYolo = true
 
-	err := runComponentSet(newComponentSetTestCommand(), "reverse-proxy", "enabled")
-	if err == nil || !strings.Contains(err.Error(), "--trusted-ip is required") {
-		t.Fatalf("expected required trusted-ip error, got %v", err)
+	cmd := newComponentSetTestCommand()
+	if err := cmd.Flags().Set("mode", coretraefik.IngressModeHTTPSLetsEncrypt); err != nil {
+		t.Fatalf("Flags().Set(mode) error = %v", err)
+	}
+	err := runComponentSet(cmd, coretraefik.IngressName, "enabled")
+	if err == nil || !strings.Contains(err.Error(), "--acme-email is required") {
+		t.Fatalf("expected required acme-email error, got %v", err)
 	}
 }
 
@@ -1039,7 +922,7 @@ func TestRunComponentSetDistributesCantaloupeIIIF(t *testing.T) {
 	if !strings.Contains(string(devComposeText), "IIIF_UPSTREAM_URL: \"http://cantaloupe:8182\"") {
 		t.Fatalf("expected dev compose to reset IIIF upstream, got:\n%s", string(devComposeText))
 	}
-	if !strings.Contains(string(devComposeText), "DRUPAL_DEFAULT_CANTALOUPE_URL: \"${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/cantaloupe/iiif/2\"") {
+	if !strings.Contains(string(devComposeText), "DRUPAL_DEFAULT_CANTALOUPE_URL: \"http://localhost/cantaloupe/iiif/2\"") {
 		t.Fatalf("expected dev compose to reset Drupal IIIF URL, got:\n%s", string(devComposeText))
 	}
 	if !strings.Contains(out.String(), "iiif-topology: distributed (http://cantaloupe.example:8182)") {
@@ -1190,162 +1073,6 @@ func TestRunComponentSetDistributesFITSAndKeepsLocalCrayfitsPointedAtManagedFITS
 	}
 }
 
-func TestRunComponentSetPromptsForProdTLSModeWhenMissing(t *testing.T) {
-	projectDir := t.TempDir()
-	writeISLEOnFixture(t, projectDir)
-
-	oldStatusPath := statusPath
-	oldDrupalRootfs := statusDrupalRootfs
-	oldYolo := componentSetYolo
-	oldTLSMode := componentSetTLSMode
-	oldInput := componentSetInput
-	oldPromptChoice := componentPromptChoice
-	t.Cleanup(func() {
-		statusPath = oldStatusPath
-		statusDrupalRootfs = oldDrupalRootfs
-		componentSetYolo = oldYolo
-		componentSetTLSMode = oldTLSMode
-		componentSetInput = oldInput
-		componentPromptChoice = oldPromptChoice
-	})
-
-	statusPath = projectDir
-	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
-	componentSetYolo = false
-	componentSetTLSMode = ""
-
-	var promptedName string
-	var promptedDefault string
-	componentPromptChoice = func(name string, choices []corecomponent.Choice, defaultValue string, input corecomponent.InputFunc, sections ...string) (string, error) {
-		promptedName = name
-		promptedDefault = defaultValue
-		return traefikconfig.ModeLetsEncrypt, nil
-	}
-	componentSetInput = func(question ...string) (string, error) {
-		return "y", nil
-	}
-
-	if err := runComponentSet(newComponentSetTestCommand(), "isle-tls", "on"); err != nil {
-		t.Fatalf("runComponentSet() error = %v", err)
-	}
-
-	if promptedName != "isle-tls-tls-mode" {
-		t.Fatalf("expected prod tls prompt, got %q", promptedName)
-	}
-	if promptedDefault != traefikconfig.ModeSelfManaged {
-		t.Fatalf("expected self-managed default, got %q", promptedDefault)
-	}
-
-	envText, err := os.ReadFile(filepath.Join(projectDir, ".env"))
-	if err != nil {
-		t.Fatalf("ReadFile(.env) error = %v", err)
-	}
-	if !strings.Contains(string(envText), "URI_SCHEME=\"https\"") || !strings.Contains(string(envText), "TLS_PROVIDER=\"letsencrypt\"") {
-		t.Fatalf("expected letsencrypt env settings, got:\n%s", string(envText))
-	}
-
-	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
-	if err != nil {
-		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
-	}
-	if !strings.Contains(string(composeText), "DRUPAL_ENABLE_HTTPS: \"true\"") {
-		t.Fatalf("expected https enabled in docker-compose.yml, got:\n%s", string(composeText))
-	}
-}
-
-func TestRunComponentSetPromptsForDevTLSModeWhenMissing(t *testing.T) {
-	projectDir := t.TempDir()
-	writeISLEOnFixture(t, projectDir)
-
-	oldStatusPath := statusPath
-	oldDrupalRootfs := statusDrupalRootfs
-	oldYolo := componentSetYolo
-	oldTLSMode := componentSetTLSMode
-	oldInput := componentSetInput
-	oldPromptChoice := componentPromptChoice
-	t.Cleanup(func() {
-		statusPath = oldStatusPath
-		statusDrupalRootfs = oldDrupalRootfs
-		componentSetYolo = oldYolo
-		componentSetTLSMode = oldTLSMode
-		componentSetInput = oldInput
-		componentPromptChoice = oldPromptChoice
-	})
-
-	statusPath = projectDir
-	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
-	componentSetYolo = false
-	componentSetTLSMode = ""
-
-	var promptedName string
-	var promptedDefault string
-	componentPromptChoice = func(name string, choices []corecomponent.Choice, defaultValue string, input corecomponent.InputFunc, sections ...string) (string, error) {
-		promptedName = name
-		promptedDefault = defaultValue
-		return traefikconfig.ModeHTTP, nil
-	}
-	componentSetInput = func(question ...string) (string, error) {
-		return "y", nil
-	}
-
-	if err := runComponentSet(newComponentSetTestCommand(), "isle-tls-override", "on"); err != nil {
-		t.Fatalf("runComponentSet() error = %v", err)
-	}
-
-	if promptedName != "isle-tls-override-tls-mode" {
-		t.Fatalf("expected dev tls prompt, got %q", promptedName)
-	}
-	if promptedDefault != traefikconfig.ModeMkcert {
-		t.Fatalf("expected mkcert default, got %q", promptedDefault)
-	}
-
-	devOverride, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.local.yml"))
-	if err != nil {
-		t.Fatalf("ReadFile(docker-compose.local.yml) error = %v", err)
-	}
-	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") {
-		t.Fatalf("expected dev http override, got:\n%s", string(devOverride))
-	}
-}
-
-func TestRunComponentSetForcesHTTPWhenTurningProdTLSOff(t *testing.T) {
-	projectDir := t.TempDir()
-	writeISLEOnFixture(t, projectDir)
-	if err := traefikconfig.ApplyProd(projectDir, traefikconfig.ModeMkcert); err != nil {
-		t.Fatalf("ApplyProd() error = %v", err)
-	}
-
-	oldStatusPath := statusPath
-	oldDrupalRootfs := statusDrupalRootfs
-	oldYolo := componentSetYolo
-	oldTLSMode := componentSetTLSMode
-	oldPromptChoice := componentPromptChoice
-	t.Cleanup(func() {
-		statusPath = oldStatusPath
-		statusDrupalRootfs = oldDrupalRootfs
-		componentSetYolo = oldYolo
-		componentSetTLSMode = oldTLSMode
-		componentPromptChoice = oldPromptChoice
-	})
-
-	statusPath = projectDir
-	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
-	componentSetYolo = true
-	componentSetTLSMode = traefikconfig.ModeMkcert
-
-	if err := runComponentSet(newComponentSetTestCommand(), "isle-tls", "off"); err != nil {
-		t.Fatalf("runComponentSet() error = %v", err)
-	}
-
-	envText, err := os.ReadFile(filepath.Join(projectDir, ".env"))
-	if err != nil {
-		t.Fatalf("ReadFile(.env) error = %v", err)
-	}
-	if !strings.Contains(string(envText), "URI_SCHEME=\"http\"") {
-		t.Fatalf("expected URI_SCHEME to be http, got:\n%s", string(envText))
-	}
-}
-
 func TestResolveComponentSetStateValueUsesFlag(t *testing.T) {
 	oldState := componentSetState
 	t.Cleanup(func() {
@@ -1445,76 +1172,13 @@ func TestRunComponentSetPromptsForStateWhenMissing(t *testing.T) {
 	}
 }
 
-func TestRunComponentSetPromptsForStateAndTLSModeWhenMissing(t *testing.T) {
-	projectDir := t.TempDir()
-	writeISLEOnFixture(t, projectDir)
-
-	oldStatusPath := statusPath
-	oldDrupalRootfs := statusDrupalRootfs
-	oldYolo := componentSetYolo
-	oldTLSMode := componentSetTLSMode
-	oldPromptState := componentPromptState
-	oldPromptChoice := componentPromptChoice
-	oldInput := componentSetInput
-	oldState := componentSetState
-	t.Cleanup(func() {
-		statusPath = oldStatusPath
-		statusDrupalRootfs = oldDrupalRootfs
-		componentSetYolo = oldYolo
-		componentSetTLSMode = oldTLSMode
-		componentPromptState = oldPromptState
-		componentPromptChoice = oldPromptChoice
-		componentSetInput = oldInput
-		componentSetState = oldState
-	})
-
-	statusPath = projectDir
-	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
-	componentSetYolo = false
-	componentSetTLSMode = ""
-	componentSetState = ""
-
-	var promptedStateName string
-	var promptedModeName string
-	componentPromptState = func(name string, guidance corecomponent.StateGuidance, input corecomponent.InputFunc) (corecomponent.State, error) {
-		promptedStateName = name
-		return corecomponent.StateOn, nil
-	}
-	componentPromptChoice = func(name string, choices []corecomponent.Choice, defaultValue string, input corecomponent.InputFunc, sections ...string) (string, error) {
-		promptedModeName = name
-		return traefikconfig.ModeLetsEncrypt, nil
-	}
-	componentSetInput = func(question ...string) (string, error) {
-		return "y", nil
-	}
-
-	if err := runComponentSet(newComponentSetTestCommand(), "isle-tls", ""); err != nil {
-		t.Fatalf("runComponentSet() error = %v", err)
-	}
-
-	if promptedStateName != "isle-tls" {
-		t.Fatalf("expected state prompt for isle-tls, got %q", promptedStateName)
-	}
-	if promptedModeName != "isle-tls-tls-mode" {
-		t.Fatalf("expected tls mode prompt for isle-tls, got %q", promptedModeName)
-	}
-
-	envText, err := os.ReadFile(filepath.Join(projectDir, ".env"))
-	if err != nil {
-		t.Fatalf("ReadFile(.env) error = %v", err)
-	}
-	if !strings.Contains(string(envText), "TLS_PROVIDER=\"letsencrypt\"") {
-		t.Fatalf("expected letsencrypt env after prompts, got:\n%s", string(envText))
-	}
-}
-
 func TestComponentExtensionSetRegistersFollowUpFlags(t *testing.T) {
-	for _, name := range []string{"codebase-rootfs", "drupal-rootfs", "isle-file-system-uri", "iiif-upstream-url", "trusted-ip", "tls-mode"} {
+	for _, name := range []string{"codebase-rootfs", "drupal-rootfs", "isle-file-system-uri", "iiif-upstream-url", "mode", "domain", "acme-email", "trusted-ip", "max-upload-size", "upload-timeout"} {
 		if componentExtensionSetCmd.Flags().Lookup(name) == nil {
 			t.Fatalf("expected component set handler to register --%s", name)
 		}
 	}
-	for _, name := range []string{"isle-tls-tls-mode", "isle-tls-override-tls-mode"} {
+	for _, name := range []string{"tls-mode"} {
 		if componentExtensionSetCmd.Flags().Lookup(name) != nil {
 			t.Fatalf("did not expect unused TLS follow-up flag --%s", name)
 		}
@@ -1655,18 +1319,6 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 	compose = strings.Replace(compose, "  drupal:\n    environment:\n", "  drupal:\n    build:\n      context: ./drupal\n    environment:\n", 1)
 	compose = strings.Replace(compose, "  traefik:\n", "  init:\n    volumes:\n      - ./drupal:/drupal:rw\n  traefik:\n", 1)
 	writeFileForTest(t, composePath, compose)
-}
-
-func addReverseProxyTestEntrypoints(t *testing.T, projectDir string) {
-	t.Helper()
-
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
-	compose := readFileForTest(t, composePath)
-	updated := strings.Replace(compose, "  traefik:\n    environment:\n", "  traefik:\n    command:\n      - --entrypoints.http.address=:80\n    environment:\n", 1)
-	if updated == compose {
-		t.Fatal("failed to add reverse proxy test entrypoint")
-	}
-	writeFileForTest(t, composePath, updated)
 }
 
 func addDerivativeServiceFixture(t *testing.T, projectDir, service string) {

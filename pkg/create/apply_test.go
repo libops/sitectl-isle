@@ -176,10 +176,10 @@ volumes: {}
 		"\n  fcrepo:\n",
 		"\n  milliner:\n",
 		"  fcrepo-data: {}",
-		"image: libops/fcrepo:${ISLANDORA_TAG}",
-		"image: islandora/milliner:${ISLANDORA_TAG}",
+		"image: libops/fcrepo:7",
+		"image: islandora/milliner:main",
 		`ALPACA_FCREPO_INDEXER_ENABLED: "true"`,
-		`DRUPAL_DEFAULT_FCREPO_URL: "${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/"`,
+		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo.localhost/fcrepo/rest/"`,
 	} {
 		if !strings.Contains(compose, want) {
 			t.Fatalf("expected restored compose to contain %q, got:\n%s", want, compose)
@@ -224,11 +224,54 @@ volumes: {}
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
 	compose := string(composeData)
-	if !strings.Contains(compose, "image: libops/fcrepo:nginx-1.30.3-php84") {
-		t.Fatalf("expected fcrepo to use libops tag inferred from activemq, got:\n%s", compose)
+	if !strings.Contains(compose, "image: libops/fcrepo:7") {
+		t.Fatalf("expected fcrepo to use the current libops fcrepo 7 image, got:\n%s", compose)
 	}
 	if !strings.Contains(compose, "image: islandora/milliner:6") {
 		t.Fatalf("expected existing milliner image left in place, got:\n%s", compose)
+	}
+}
+
+func TestApplyFcrepoOnDoesNotInferLibopsFcrepoFive(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(configDir) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+services:
+  activemq:
+    image: libops/activemq:5
+  alpaca:
+    environment:
+      ALPACA_FCREPO_INDEXER_ENABLED: "false"
+  drupal:
+    environment: {}
+volumes: {}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+
+	if err := Apply(Options{
+		Path:       projectDir,
+		Fcrepo:     FcrepoStateOn,
+		Blazegraph: FcrepoStateOff,
+	}); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(compose) error = %v", err)
+	}
+	compose := string(composeData)
+	if strings.Contains(compose, "image: libops/fcrepo:5") {
+		t.Fatalf("expected fcrepo restore to avoid nonexistent libops/fcrepo:5, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, "image: libops/fcrepo:7") {
+		t.Fatalf("expected fcrepo restore to use libops/fcrepo:7, got:\n%s", compose)
 	}
 }
 
@@ -255,10 +298,10 @@ services:
     image: islandora/cantaloupe
   drupal:
     environment:
-      DRUPAL_DEFAULT_CANTALOUPE_URL: ${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/cantaloupe/iiif/2
+      DRUPAL_DEFAULT_CANTALOUPE_URL: http://localhost/cantaloupe/iiif/2
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
-      DRUPAL_DEFAULT_FCREPO_URL: ${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/
+      DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.localhost/fcrepo/rest/
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
   fcrepo:
     image: islandora/fcrepo6
@@ -741,7 +784,7 @@ func TestApplyCreateMatrix(t *testing.T) {
 				if !strings.Contains(compose, "\n  triplet:\n") || strings.Contains(compose, "\n  cantaloupe:\n") {
 					t.Fatalf("expected triplet to replace cantaloupe, got:\n%s", compose)
 				}
-				if !strings.Contains(compose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/iiif/3"`) {
+				if !strings.Contains(compose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "http://localhost/iiif/3"`) {
 					t.Fatalf("expected Drupal IIIF URL to use /iiif/3, got:\n%s", compose)
 				}
 			},
@@ -824,7 +867,7 @@ services:
     environment:
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
-      DRUPAL_DEFAULT_FCREPO_URL: ${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/
+      DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.localhost/fcrepo/rest/
   fcrepo:
     <<: *common
     image: libops/fcrepo@sha256:611b9b15bf205c369aa664d119126429785da28d255635d8aeeb29ddf4ce03f0
@@ -1183,10 +1226,10 @@ func writeApplyMatrixProject(t *testing.T, projectDir string) {
     build:
       context: ./drupal
     environment:
-      DRUPAL_DEFAULT_CANTALOUPE_URL: ${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/cantaloupe/iiif/2
+      DRUPAL_DEFAULT_CANTALOUPE_URL: http://localhost/cantaloupe/iiif/2
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
-      DRUPAL_DEFAULT_FCREPO_URL: ${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/
+      DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.localhost/fcrepo/rest/
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
   fcrepo:
     image: islandora/fcrepo6

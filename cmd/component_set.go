@@ -8,7 +8,6 @@ import (
 
 	"github.com/libops/sitectl-isle/pkg/components"
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
-	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
@@ -21,7 +20,6 @@ var (
 	componentSetYolo           bool
 	componentSetState          string
 	componentSetDisposition    string
-	componentSetTLSMode        string
 	componentSetInput          = config.GetInput
 	componentApplyOptions      = createpkg.Apply
 	componentPromptChoice      = corecomponent.PromptChoice
@@ -38,7 +36,6 @@ type componentSetOptions struct {
 	State          string
 	Disposition    string
 	Yolo           bool
-	TLSMode        string
 }
 
 func componentSetOptionsFromGlobals() componentSetOptions {
@@ -49,7 +46,6 @@ func componentSetOptionsFromGlobals() componentSetOptions {
 		State:          componentSetState,
 		Disposition:    componentSetDisposition,
 		Yolo:           componentSetYolo,
-		TLSMode:        componentSetTLSMode,
 	}
 }
 
@@ -133,22 +129,13 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	}
 	disposition, state = normalizeComponentSetDispositionState(name, disposition, state)
 
-	tlsMode := strings.TrimSpace(opts.TLSMode)
 	followUps, err := resolveComponentSetFollowUps(cmd, def, statusByName[name], disposition, opts)
 	if err != nil {
 		return err
 	}
 
 	if !opts.Yolo {
-		if requiresTLSModeSelection(name, disposition, tlsMode) {
-			mode, err := resolveTLSComponentMode(name)
-			if err != nil {
-				return err
-			}
-			tlsMode = mode
-			followUps["tls-mode"] = mode
-		}
-		prompt, err := componentSetPrompt(def, disposition, state, followUps, tlsMode)
+		prompt, err := componentSetPrompt(def, disposition, state, followUps)
 		if err != nil {
 			return err
 		}
@@ -161,20 +148,14 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 		}
 	}
 
-	if name == "isle-tls" || name == "isle-tls-override" {
-		return runTLSComponentSet(cmd, ctx, name, disposition, state, tlsMode)
-	}
 	if name == "iiif" || name == "iiif-topology" {
 		return runIIIFComponentSet(cmd, ctx, rootfs, name, disposition, statusByName, followUps, currentStates)
 	}
 	if createpkg.IsDerivativeService(name) {
 		return runDerivativeServiceComponentSet(cmd, ctx, name, disposition)
 	}
-	if name == coretraefik.ReverseProxyName {
-		return runReverseProxyComponentSet(cmd, ctx, disposition, state, followUps)
-	}
-	if name == coretraefik.UploadLimitsName {
-		return runUploadLimitsComponentSet(cmd, ctx, disposition, state, followUps)
+	if name == coretraefik.IngressName {
+		return runIngressComponentSet(cmd, ctx, disposition, state, followUps)
 	}
 	if name == coredevmode.Name {
 		return runDevModeComponentSet(cmd, ctx, disposition, state)
@@ -249,7 +230,7 @@ func componentDefinitions() map[string]corecomponent.Definition {
 }
 
 func orderedComponentDefinitions() []corecomponent.Definition {
-	reverseProxy, err := isleReverseProxyComponent()
+	ingress, err := isleIngressComponent()
 	if err != nil {
 		panic(err)
 	}
@@ -259,8 +240,7 @@ func orderedComponentDefinitions() []corecomponent.Definition {
 		components.IIIF(components.TemplateSource{}),
 		components.IIIFTopology(),
 		components.Codebase(),
-		reverseProxy.Definition(),
-		isleUploadLimitsDefinition(),
+		ingress.Definition(),
 		isleDevModeDefinition(),
 		coretraefik.BotMitigation(isleBotMitigationOptions()),
 	}
@@ -269,24 +249,11 @@ func orderedComponentDefinitions() []corecomponent.Definition {
 }
 
 func managedComponentDefinitions() []corecomponent.Definition {
-	defs := append([]corecomponent.Definition{}, orderedComponentDefinitions()...)
-	defs = append(defs,
-		components.ISLEEntrypoint(),
-		components.ISLEEntrypointOverride(),
-	)
-	return defs
+	return append([]corecomponent.Definition{}, orderedComponentDefinitions()...)
 }
 
 func componentCatalogDefinitions() []corecomponent.Definition {
-	defs := managedComponentDefinitions()
-	for i := range defs {
-		for j := range defs[i].FollowUps {
-			if defs[i].FollowUps[j].Name == "tls-mode" && (defs[i].Name == "isle-tls" || defs[i].Name == "isle-tls-override") {
-				defs[i].FollowUps[j].FlagName = "tls-mode"
-			}
-		}
-	}
-	return defs
+	return managedComponentDefinitions()
 }
 
 func blocksComponentSetOnDrift(targetName, driftedName string) bool {
@@ -294,11 +261,11 @@ func blocksComponentSetOnDrift(targetName, driftedName string) bool {
 		return false
 	}
 	switch targetName {
-	case "iiif", "iiif-topology", "codebase", "isle-tls", "isle-tls-override", coredevmode.Name, coretraefik.ReverseProxyName, coretraefik.UploadLimitsName, coretraefik.BotMitigationName:
+	case "iiif", "iiif-topology", "codebase", coredevmode.Name, coretraefik.IngressName, coretraefik.BotMitigationName:
 		return false
 	}
 	switch driftedName {
-	case "iiif", "iiif-topology", "codebase", "isle-tls", "isle-tls-override", coredevmode.Name, coretraefik.ReverseProxyName, coretraefik.UploadLimitsName, coretraefik.BotMitigationName:
+	case "iiif", "iiif-topology", "codebase", coredevmode.Name, coretraefik.IngressName, coretraefik.BotMitigationName:
 		return false
 	default:
 		return !createpkg.IsDerivativeService(driftedName)
@@ -367,8 +334,8 @@ func runBotMitigationComponentSet(cmd *cobra.Command, ctx *config.Context, dispo
 	return nil
 }
 
-func runReverseProxyComponentSet(cmd *cobra.Command, ctx *config.Context, disposition corecomponent.Disposition, state corecomponent.State, followUps map[string]string) error {
-	component, err := isleReverseProxyComponent()
+func runIngressComponentSet(cmd *cobra.Command, ctx *config.Context, disposition corecomponent.Disposition, state corecomponent.State, followUps map[string]string) error {
+	component, err := isleIngressComponent()
 	if err != nil {
 		return err
 	}
@@ -379,68 +346,53 @@ func runReverseProxyComponentSet(cmd *cobra.Command, ctx *config.Context, dispos
 		if err := manager.EnableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
 			return err
 		}
-	case corecomponent.StateOff:
-		if err := manager.DisableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+		if err := applyISLEIngressFiles(ctx, followUps); err != nil {
 			return err
 		}
 	default:
-		return fmt.Errorf("unsupported reverse proxy state %q", state)
+		return fmt.Errorf("unsupported ingress state %q", state)
 	}
 	if err := ctx.EnsureTrackedComposeOverrideSymlink(); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", coretraefik.ReverseProxyName, disposition)
-	if value := strings.TrimSpace(followUps["trusted-ip"]); value != "" && state == corecomponent.StateOn {
-		fmt.Fprintf(cmd.OutOrStdout(), " (%s)", value)
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", coretraefik.IngressName, disposition)
+	if mode := strings.TrimSpace(followUps["mode"]); mode != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), " (%s)", mode)
 	}
 	fmt.Fprintln(cmd.OutOrStdout())
 	return nil
 }
 
-func isleReverseProxyComponent() (corecomponent.ComposeServiceComponent, error) {
-	return coretraefik.ReverseProxy(coretraefik.ReverseProxyOptions{
-		AppService: "drupal",
-	})
-}
-
-func runUploadLimitsComponentSet(cmd *cobra.Command, ctx *config.Context, disposition corecomponent.Disposition, state corecomponent.State, followUps map[string]string) error {
-	component, err := isleUploadLimitsComponent()
-	if err != nil {
-		return err
-	}
-	manager := corecomponent.NewManager(ctx)
-	spec := component.SpecForWithOptions(state, followUps)
-	switch state {
-	case corecomponent.StateOn:
-		if err := manager.EnableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
-			return err
-		}
-	case corecomponent.StateOff:
-		if err := manager.DisableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unsupported upload limits state %q", state)
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", coretraefik.UploadLimitsName, disposition)
-	if state == corecomponent.StateOn {
-		fmt.Fprintf(cmd.OutOrStdout(), " (%s, %s)", uploadLimitValue(followUps, "max-upload-size"), uploadLimitValue(followUps, "upload-timeout"))
-	}
-	fmt.Fprintln(cmd.OutOrStdout())
-	return nil
-}
-
-func isleUploadLimitsDefinition() corecomponent.Definition {
-	component, err := isleUploadLimitsComponent()
-	if err != nil {
-		panic(err)
-	}
-	return component.Definition()
-}
-
-func isleUploadLimitsComponent() (corecomponent.ComposeServiceComponent, error) {
-	return coretraefik.UploadLimits(coretraefik.UploadLimitsOptions{
-		AppService: "drupal",
+func isleIngressComponent() (corecomponent.ComposeServiceComponent, error) {
+	return coretraefik.Ingress(coretraefik.IngressOptions{
+		AppService:      "drupal",
+		HTTPEntrypoint:  "http",
+		HTTPSEntrypoint: "https",
+		RouterHosts: map[string]string{
+			"activemq":   "activemq.{domain}",
+			"blazegraph": "blazegraph.{domain}",
+			"drupal":     "{domain}",
+			"fcrepo":     "fcrepo.{domain}",
+			"solr":       "solr.{domain}",
+			"traefik":    "traefik.{domain}",
+			"triplet":    "{domain}",
+			"cantaloupe": "{domain}",
+		},
+		ServiceEnvTemplates: map[string]map[string]string{
+			"drupal": {
+				"DRUPAL_DEFAULT_CANTALOUPE_URL": "{base_url}/iiif/3",
+				"DRUPAL_DEFAULT_FCREPO_URL":     "{scheme}://fcrepo.{domain}/fcrepo/rest/",
+				"DRUPAL_DEFAULT_SITE_URL":       "{base_url}",
+				"DRUPAL_ENABLE_HTTPS":           "{https_enabled}",
+				"DRUSH_OPTIONS_URI":             "{base_url}",
+			},
+			"fcrepo": {
+				"FCREPO_ALLOW_EXTERNAL_DRUPAL": "{base_url}/",
+			},
+			"triplet": {
+				"TRIPLET_PUBLIC_BASE_URL": "{base_url}",
+			},
+		},
 	})
 }
 
@@ -471,8 +423,14 @@ func runDevModeComponentSet(cmd *cobra.Command, ctx *config.Context, disposition
 		if err := manager.EnableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
 			return err
 		}
+		if err := applyISLEDevMode(ctx, true); err != nil {
+			return err
+		}
 	case corecomponent.StateOff:
 		if err := manager.DisableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+		if err := applyISLEDevMode(ctx, false); err != nil {
 			return err
 		}
 	default:
@@ -493,6 +451,10 @@ func isleDevModeDefinition() corecomponent.Definition {
 func isleDevModeComponent() (corecomponent.ComposeServiceComponent, error) {
 	return coredevmode.Component(coredevmode.Options{
 		AppService: "drupal",
+		Environment: map[string]string{
+			"DEVELOPMENT_ENVIRONMENT": "true",
+			"UID":                     "${UID:-1000}",
+		},
 		Volumes: []string{
 			"./assets:/var/www/drupal/assets:z,rw",
 			"./composer.json:/var/www/drupal/composer.json:z,rw",
@@ -598,7 +560,7 @@ func updateContextRootfsForCodebase(ctx *config.Context, pathOverride, targetNam
 	return config.SaveContext(ctx, false)
 }
 
-func componentSetPrompt(def corecomponent.Definition, disposition corecomponent.Disposition, state corecomponent.State, followUps map[string]string, tlsMode string) (string, error) {
+func componentSetPrompt(def corecomponent.Definition, disposition corecomponent.Disposition, state corecomponent.State, followUps map[string]string) (string, error) {
 	var summary string
 	switch state {
 	case corecomponent.StateOn:
@@ -620,9 +582,6 @@ func componentSetPrompt(def corecomponent.Definition, disposition corecomponent.
 	if strings.TrimSpace(summary) != "" {
 		body = append(body, "", summary)
 	}
-	if requestedMode := componentRequestedMode(def.Name, disposition, tlsMode); strings.TrimSpace(requestedMode) != "" {
-		body = append(body, "", fmt.Sprintf("Requested mode: `%s`.", requestedMode))
-	}
 	if rendered := corecomponent.RenderDecisionFollowUps(def, corecomponent.ReviewDecision{
 		Disposition: disposition,
 		State:       state,
@@ -640,43 +599,6 @@ func componentSetPrompt(def corecomponent.Definition, disposition corecomponent.
 	return section + "\n\n" + prompt, nil
 }
 
-func runTLSComponentSet(cmd *cobra.Command, ctx *config.Context, name string, disposition corecomponent.Disposition, state corecomponent.State, tlsMode string) error {
-	mode, err := resolvedTLSMode(name, disposition, tlsMode)
-	if err != nil {
-		return err
-	}
-
-	switch name {
-	case "isle-tls":
-		if state == corecomponent.StateOn && mode == traefikconfig.ModeHTTP {
-			return fmt.Errorf("isle-tls=on requires --tls-mode self-managed, mkcert, or letsencrypt")
-		}
-		if err := traefikconfig.ApplyProd(ctx.ProjectDir, mode); err != nil {
-			return err
-		}
-	case "isle-tls-override":
-		if err := traefikconfig.ApplyOverride(ctx.ProjectDir, resolveEnvironmentOverridePath(ctx), state == corecomponent.StateOn, mode); err != nil {
-			return err
-		}
-		if err := ctx.EnsureTrackedComposeOverrideSymlink(); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unsupported entrypoint component %q", name)
-	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", name, disposition)
-	return nil
-}
-
-func componentRequestedMode(name string, disposition corecomponent.Disposition, tlsMode string) string {
-	mode, err := resolvedTLSMode(name, disposition, tlsMode)
-	if err != nil {
-		return ""
-	}
-	return mode
-}
-
 func confirmComponentSet(prompt string) (bool, error) {
 	response, err := componentSetInput(prompt)
 	if err != nil {
@@ -684,116 +606,6 @@ func confirmComponentSet(prompt string) (bool, error) {
 	}
 	value := strings.TrimSpace(strings.ToLower(response))
 	return value == "y" || value == "yes", nil
-}
-
-func requiresTLSModeSelection(name string, disposition corecomponent.Disposition, tlsMode string) bool {
-	return disposition == corecomponent.DispositionEnabled && strings.TrimSpace(tlsMode) == "" &&
-		(name == "isle-tls" || name == "isle-tls-override")
-}
-
-func resolveTLSComponentMode(name string) (string, error) {
-	defaultValue, err := defaultTLSPromptMode(name)
-	if err != nil {
-		return "", err
-	}
-	return promptTLSComponentMode(name, defaultValue, componentSetInput, componentPromptChoice)
-}
-
-func resolvedTLSMode(name string, disposition corecomponent.Disposition, tlsMode string) (string, error) {
-	tlsMode = strings.TrimSpace(tlsMode)
-	switch name {
-	case "isle-tls":
-		if disposition != corecomponent.DispositionEnabled {
-			return traefikconfig.ModeHTTP, nil
-		}
-		if tlsMode == "" {
-			return traefikconfig.ModeSelfManaged, nil
-		}
-		return tlsMode, nil
-	case "isle-tls-override":
-		if disposition != corecomponent.DispositionEnabled {
-			return traefikconfig.ModeInherited, nil
-		}
-		if tlsMode == "" {
-			return traefikconfig.ModeMkcert, nil
-		}
-		return tlsMode, nil
-	default:
-		return "", fmt.Errorf("unsupported TLS component %q", name)
-	}
-}
-
-func defaultTLSPromptMode(name string) (string, error) {
-	switch name {
-	case "isle-tls":
-		return traefikconfig.ModeSelfManaged, nil
-	case "isle-tls-override":
-		return traefikconfig.ModeMkcert, nil
-	default:
-		return "", fmt.Errorf("unsupported TLS component %q", name)
-	}
-}
-
-func promptTLSComponentMode(name, defaultValue string, input corecomponent.InputFunc, promptChoice func(string, []corecomponent.Choice, string, corecomponent.InputFunc, ...string) (string, error)) (string, error) {
-	var question string
-	choices := []corecomponent.Choice{
-		{
-			Value:   traefikconfig.ModeSelfManaged,
-			Label:   traefikconfig.ModeSelfManaged,
-			Help:    "Use HTTPS with certificates you manage yourself.",
-			Aliases: []string{"1"},
-		},
-		{
-			Value:   traefikconfig.ModeMkcert,
-			Label:   traefikconfig.ModeMkcert,
-			Help:    "Use HTTPS with mkcert for local development.",
-			Aliases: []string{"2"},
-		},
-		{
-			Value:   traefikconfig.ModeLetsEncrypt,
-			Label:   traefikconfig.ModeLetsEncrypt,
-			Help:    "Use HTTPS with Let's Encrypt automation.",
-			Aliases: []string{"3"},
-		},
-	}
-
-	switch name {
-	case "isle-tls":
-		question = "Choose how the production stack frontend should be served."
-	case "isle-tls-override":
-		question = "Choose how the development stack frontend should be served."
-		choices = []corecomponent.Choice{
-			{
-				Value:   traefikconfig.ModeHTTP,
-				Label:   traefikconfig.ModeHTTP,
-				Help:    "Use HTTP only for the dev override.",
-				Aliases: []string{"1"},
-			},
-			{
-				Value:   traefikconfig.ModeMkcert,
-				Label:   traefikconfig.ModeMkcert,
-				Help:    "Use HTTPS with mkcert for local development.",
-				Aliases: []string{"2"},
-			},
-			{
-				Value:   traefikconfig.ModeSelfManaged,
-				Label:   traefikconfig.ModeSelfManaged,
-				Help:    "Use HTTPS with certificates you manage yourself.",
-				Aliases: []string{"3"},
-			},
-			{
-				Value:   traefikconfig.ModeLetsEncrypt,
-				Label:   traefikconfig.ModeLetsEncrypt,
-				Help:    "Use HTTPS with Let's Encrypt automation.",
-				Aliases: []string{"4"},
-			},
-		}
-	default:
-		return "", fmt.Errorf("unsupported TLS component %q", name)
-	}
-
-	section := corecomponent.RenderSection("Frontend mode", question)
-	return promptChoice(name+"-tls-mode", choices, defaultValue, input, strings.Split(section, "\n")...)
 }
 
 // isleSetRunner implements plugin.SetRunner for the isle plugin.
@@ -804,7 +616,6 @@ type isleSetRunner struct {
 	state          string
 	disposition    string
 	yolo           bool
-	tlsMode        string
 }
 
 func (r *isleSetRunner) BindFlags(cmd *cobra.Command) {
@@ -813,7 +624,6 @@ func (r *isleSetRunner) BindFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&r.state, "state", "", "Component state to apply (on, off)")
 	cmd.Flags().StringVar(&r.disposition, "disposition", "", "Component disposition to apply")
 	cmd.Flags().BoolVar(&r.yolo, "yolo", false, "Apply without confirmation")
-	cmd.Flags().StringVar(&r.tlsMode, "tls-mode", "", "TLS mode for the selected component")
 	addComponentSetFollowUpFlags(cmd, managedComponentDefinitions())
 }
 
@@ -829,7 +639,6 @@ func (r *isleSetRunner) Run(cmd *cobra.Command, args []string, ctx *config.Conte
 		State:          r.state,
 		Disposition:    r.disposition,
 		Yolo:           r.yolo,
-		TLSMode:        r.tlsMode,
 	})
 }
 
@@ -868,9 +677,6 @@ func selectedFcrepoFileSystemURI(cmd *cobra.Command, followUps map[string]string
 func addComponentSetFollowUpFlags(cmd *cobra.Command, defs []corecomponent.Definition) {
 	for _, def := range defs {
 		for _, followUp := range def.FollowUps {
-			if followUp.Name == "tls-mode" && (def.Name == "isle-tls" || def.Name == "isle-tls-override") {
-				continue
-			}
 			flagName := componentSetFollowUpSpecFlagName(def.Name, followUp)
 			if flagName == "" || cmd.Flags().Lookup(flagName) != nil {
 				continue
@@ -904,17 +710,8 @@ func resolveComponentSetFollowUps(cmd *cobra.Command, def corecomponent.Definiti
 	for _, spec := range def.FollowUpsForDisposition(disposition) {
 		flagName := componentSetFollowUpSpecFlagName(def.Name, spec)
 		switch {
-		case spec.Name == "tls-mode" && (def.Name == "isle-tls" || def.Name == "isle-tls-override"):
-			defaultValue := strings.TrimSpace(view.FollowUpValues[spec.Name])
-			if defaultValue == "" {
-				defaultValue = strings.TrimSpace(spec.DefaultValue)
-			}
-			if strings.TrimSpace(opts.TLSMode) != "" {
-				defaultValue = strings.TrimSpace(opts.TLSMode)
-			}
-			options[spec.Name] = defaultValue
-		case spec.Name == "tls-mode" && strings.TrimSpace(opts.TLSMode) != "":
-			options[spec.Name] = strings.TrimSpace(opts.TLSMode)
+		case spec.Name == "acme-email" && def.Name == coretraefik.IngressName && resolvedIngressMode(options, view, def) != coretraefik.IngressModeHTTPSLetsEncrypt:
+			options[spec.Name] = strings.TrimSpace(view.FollowUpValues[spec.Name])
 		case cmd != nil && cmd.Flags().Lookup(flagName) != nil && cmd.Flags().Changed(flagName):
 			if spec.MultiValue {
 				values, err := cmd.Flags().GetStringArray(flagName)
@@ -963,6 +760,21 @@ func resolveComponentSetFollowUps(cmd *cobra.Command, def corecomponent.Definiti
 		}
 	}
 	return options, nil
+}
+
+func resolvedIngressMode(options map[string]string, view componentView, def corecomponent.Definition) string {
+	if mode := strings.TrimSpace(options["mode"]); mode != "" {
+		return mode
+	}
+	if mode := strings.TrimSpace(view.FollowUpValues["mode"]); mode != "" {
+		return mode
+	}
+	for _, spec := range def.FollowUps {
+		if spec.Name == "mode" && strings.TrimSpace(spec.DefaultValue) != "" {
+			return strings.TrimSpace(spec.DefaultValue)
+		}
+	}
+	return coretraefik.IngressModeHTTP
 }
 
 func componentSetFollowUpSpecFlagName(componentName string, followUp corecomponent.FollowUpSpec) string {
