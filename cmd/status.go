@@ -10,6 +10,7 @@ import (
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
+	"github.com/libops/sitectl/pkg/healthcheck"
 	"github.com/libops/sitectl/pkg/helpers"
 	"github.com/libops/sitectl/pkg/plugin"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
@@ -189,9 +190,13 @@ func currentIngressFollowUps(siteCtx *config.Context) map[string]string {
 		return followUps
 	}
 	command := composeServiceCommand(compose, "traefik")
+	projectEnv := healthcheck.ProjectEnv(siteCtx)
 	followUps["mode"] = detectIngressMode(command)
-	if domain := domainFromServiceURL(composeServiceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL")); domain != "" {
+	if domain := domainFromServiceURL(composeServiceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL"), projectEnv); domain != "" {
 		followUps["domain"] = domain
+	}
+	if followUps["domain"] == "" {
+		followUps["domain"] = strings.TrimSpace(projectEnv["DOMAIN"])
 	}
 	if email := helpers.FirstNonEmpty(
 		commandValueByPrefix(command, "--certificatesResolvers.letsencrypt.acme.email="),
@@ -233,7 +238,7 @@ func detectIngressMode(command string) string {
 	return coretraefik.IngressModeHTTP
 }
 
-func domainFromServiceURL(value string) string {
+func domainFromServiceURL(value string, env map[string]string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
@@ -242,7 +247,13 @@ func domainFromServiceURL(value string) string {
 	if err != nil || strings.TrimSpace(parsed.Host) == "" {
 		return ""
 	}
-	return strings.TrimSpace(parsed.Host)
+	host := os.Expand(strings.TrimSpace(parsed.Host), func(name string) string {
+		return strings.TrimSpace(env[name])
+	})
+	if strings.Contains(host, "$") {
+		return ""
+	}
+	return strings.TrimSpace(host)
 }
 
 func commandValueByPrefix(command, prefix string) string {

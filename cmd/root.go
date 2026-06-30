@@ -11,9 +11,8 @@ var commandSDK *plugin.SDK
 func RegisterCommands(sdk *plugin.SDK) {
 	commandSDK = sdk
 	sdk.SetComposeProjectDiscovery(plugin.ComposeProjectDiscovery{
-		RequiredServices:         []string{"drupal"},
-		RequiredComposerPackages: []string{"drupal/islandora"},
-		Reason:                   "drupal service with drupal/islandora in composer.json",
+		RequiredServices: []string{"drupal", "alpaca"},
+		Reason:           "drupal and alpaca services from ISLE site template",
 	})
 	pluginjobs.Register(sdk)
 	sdk.RegisterComponentDefinitions(orderedComponentDefinitions()...)

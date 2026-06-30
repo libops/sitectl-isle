@@ -415,6 +415,47 @@ volumes:
 	}
 }
 
+func TestCurrentIngressFollowUpsUsesLegacyDomainEnv(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		siteURL    string
+		wantDomain string
+	}{
+		{
+			name:       "expanded-site-url",
+			siteURL:    "http://${DOMAIN}",
+			wantDomain: "sandbox.islandora.ca",
+		},
+		{
+			name:       "env-fallback",
+			siteURL:    "",
+			wantDomain: "sandbox.islandora.ca",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			projectDir := t.TempDir()
+			siteURLEnvironment := ""
+			if tt.siteURL != "" {
+				siteURLEnvironment = "\n      DRUPAL_DEFAULT_SITE_URL: " + tt.siteURL
+			}
+			writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+services:
+  drupal:
+    environment:`+siteURLEnvironment+`
+  traefik:
+    command:
+      - --entryPoints.http.address=:80
+`)
+			writeFileForTest(t, filepath.Join(projectDir, ".env"), "DOMAIN=sandbox.islandora.ca\n")
+
+			got := currentIngressFollowUps(&config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal})
+			if got["domain"] != tt.wantDomain {
+				t.Fatalf("expected domain %q, got %#v", tt.wantDomain, got)
+			}
+		})
+	}
+}
+
 func TestRunIsleValidationAcceptsTripletIIIFConfig(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
