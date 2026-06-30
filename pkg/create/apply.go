@@ -15,6 +15,10 @@ const (
 	FcrepoStateOn  = "on"
 	FcrepoStateOff = "off"
 
+	blazegraphDataVolumeName = "blazegraph-data"
+	blazegraphImageRef       = "islandora/blazegraph:main"
+	blazegraphServiceName    = "blazegraph"
+
 	IIIFCantaloupe       = "cantaloupe"
 	IIIFTriplet          = "triplet"
 	IIIFTopologyLocal    = "local"
@@ -145,7 +149,6 @@ func Apply(opts Options) error {
 		opts.DrupalRootfs = corecomponent.DefaultDrupalRootfs
 	}
 
-	composePath := filepath.Join(opts.Path, "docker-compose.yml")
 	if opts.Fcrepo == FcrepoStateOn {
 		if err := applyFcrepoOn(opts.Path); err != nil {
 			return fmt.Errorf("apply fcrepo=on: %w", err)
@@ -157,11 +160,8 @@ func Apply(opts Options) error {
 	}
 
 	if opts.Blazegraph == FcrepoStateOn {
-		if err := setComposeEnv(composePath, "alpaca", "ALPACA_TRIPLESTORE_INDEXER_ENABLED", "true"); err != nil {
-			return err
-		}
-		if err := setComposeEnv(composePath, "drupal", "DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE", "islandora"); err != nil {
-			return err
+		if err := applyBlazegraphOn(opts.Path); err != nil {
+			return fmt.Errorf("apply blazegraph=on: %w", err)
 		}
 	} else {
 		if err := applyBlazegraphOff(opts.Path, opts.DrupalRootfs); err != nil {
@@ -577,6 +577,45 @@ func millinerRestoreServiceBlock(image, commonMerge string) string {
       - source: JWT_PUBLIC_KEY`
 }
 
+func applyBlazegraphOn(projectDir string) error {
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	compose, err := corecomponent.LoadComposeFile(composePath)
+	if err != nil {
+		return err
+	}
+	if !compose.HasVolume(blazegraphDataVolumeName) {
+		if err := compose.AddVolumeBlock(blazegraphDataVolumeName, "  "+blazegraphDataVolumeName+": {}"); err != nil {
+			return err
+		}
+	}
+	if !compose.HasService(blazegraphServiceName) {
+		block, err := blazegraphRestoreServiceBlock(composePath)
+		if err != nil {
+			return err
+		}
+		if err := compose.AddServiceBlock(blazegraphServiceName, block); err != nil {
+			return err
+		}
+	}
+	if err := compose.SetServiceScalar(blazegraphServiceName, "image", blazegraphImageRef); err != nil {
+		return err
+	}
+	if err := compose.SetServiceEnv("alpaca", "ALPACA_TRIPLESTORE_INDEXER_ENABLED", "true"); err != nil {
+		return err
+	}
+	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE", "islandora"); err != nil {
+		return err
+	}
+	return compose.Save()
+}
+
+func blazegraphRestoreServiceBlock(composePath string) (string, error) {
+	return renderApplyAsset("blazegraph-service.yml", map[string]string{
+		"BLAZEGRAPH_IMAGE": blazegraphImageRef,
+		"COMMON_MERGE":     commonMergeLine(composePath),
+	})
+}
+
 func applyFcrepoOff(projectDir, drupalRootfs, targetScheme string) error {
 	if err := updateComposeForFcrepoOff(filepath.Join(projectDir, "docker-compose.yml")); err != nil {
 		return err
@@ -647,17 +686,6 @@ func updateComposeForBlazegraphOff(composePath string) error {
 		return err
 	}
 	if err := compose.SetServiceEnv("alpaca", "ALPACA_TRIPLESTORE_INDEXER_ENABLED", "false"); err != nil {
-		return err
-	}
-	return compose.Save()
-}
-
-func setComposeEnv(composePath, serviceName, key, value string) error {
-	compose, err := corecomponent.LoadComposeFile(composePath)
-	if err != nil {
-		return err
-	}
-	if err := compose.SetServiceEnv(serviceName, key, value); err != nil {
 		return err
 	}
 	return compose.Save()

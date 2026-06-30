@@ -359,7 +359,7 @@ services:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   drupal:
     environment:
       DRUPAL_DEFAULT_FCREPO_URL: https://fcrepo.example/fcrepo/rest/
@@ -467,7 +467,7 @@ services:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   drupal:
     environment:
       DRUPAL_DEFAULT_CANTALOUPE_URL: http://localhost/cantaloupe/iiif/2

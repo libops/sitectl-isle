@@ -280,7 +280,7 @@ services:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   drupal:
     environment:
       DRUPAL_DEFAULT_FCREPO_URL: https://fcrepo.example/fcrepo/rest/

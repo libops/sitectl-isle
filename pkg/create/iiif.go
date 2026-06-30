@@ -567,18 +567,7 @@ func updateRobotsIIIF(projectDir, drupalRootfs string, enabled bool) error {
 }
 
 func renderIIIFAsset(name string, replacements map[string]string) (string, error) {
-	data, err := iiifAssets.ReadFile("assets/iiif/" + name)
-	if err != nil {
-		return "", err
-	}
-	contents := string(data)
-	for key, value := range replacements {
-		if value == "" {
-			contents = strings.ReplaceAll(contents, "{{"+key+"}}\n", "")
-		}
-		contents = strings.ReplaceAll(contents, "{{"+key+"}}", value)
-	}
-	return strings.TrimRight(contents, "\n"), nil
+	return renderEmbeddedAsset(iiifAssets, "assets/iiif/"+name, replacements)
 }
 
 func tripletTraefikConfig(upstream string) (string, error) {

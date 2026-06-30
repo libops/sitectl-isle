@@ -23,7 +23,7 @@ services:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   drupal:
     environment:
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
@@ -187,6 +187,89 @@ volumes: {}
 	}
 }
 
+func TestApplyBlazegraphOnRestoresServiceAndVolume(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+x-common: &common
+  restart: unless-stopped
+services:
+  alpaca:
+    <<: *common
+    environment:
+      ALPACA_TRIPLESTORE_INDEXER_ENABLED: "false"
+  drupal:
+    <<: *common
+    environment: {}
+volumes: {}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+
+	if err := applyBlazegraphOn(projectDir); err != nil {
+		t.Fatalf("applyBlazegraphOn() error = %v", err)
+	}
+
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(compose) error = %v", err)
+	}
+	compose := string(composeData)
+	for _, want := range []string{
+		"\n  blazegraph:\n",
+		"    <<: *common\n    image: islandora/blazegraph:main",
+		"      - blazegraph-data:/data:rw",
+		"  blazegraph-data: {}",
+		`ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"`,
+		`DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: "islandora"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected restored blazegraph compose to contain %q, got:\n%s", want, compose)
+		}
+	}
+}
+
+func TestApplyBlazegraphOnRewritesExistingImage(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+services:
+  alpaca:
+    environment: {}
+  blazegraph:
+    image: registry.invalid/blazegraph@sha256:old
+    labels:
+      com.example.preserve: "true"
+  drupal:
+    environment: {}
+volumes:
+  blazegraph-data: {}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+
+	if err := applyBlazegraphOn(projectDir); err != nil {
+		t.Fatalf("applyBlazegraphOn() error = %v", err)
+	}
+
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(compose) error = %v", err)
+	}
+	compose := string(composeData)
+	if strings.Contains(compose, "registry.invalid/blazegraph") {
+		t.Fatalf("expected stale blazegraph image rewritten, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, "image: islandora/blazegraph:main") {
+		t.Fatalf("expected islandora blazegraph image, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, `com.example.preserve: "true"`) {
+		t.Fatalf("expected existing service config preserved, got:\n%s", compose)
+	}
+}
+
 func TestApplyFcrepoOnPrefersLibopsServicesOverExistingMilliner(t *testing.T) {
 	t.Parallel()
 
@@ -293,7 +376,7 @@ services:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   cantaloupe:
     image: islandora/cantaloupe
   drupal:
@@ -389,7 +472,7 @@ services:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   drupal:
     environment:
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
@@ -496,7 +579,7 @@ func TestApplyFcrepoOnNoOp(t *testing.T) {
 
 	projectDir := t.TempDir()
 	composePath := filepath.Join(projectDir, "docker-compose.yml")
-	original := []byte("services:\n  alpaca:\n    environment: {}\n  drupal:\n    environment: {}\n  blazegraph:\n    image: islandora/blazegraph\n  fcrepo:\n    image: islandora/fcrepo6\n")
+	original := []byte("services:\n  alpaca:\n    environment: {}\n  drupal:\n    environment: {}\n  blazegraph:\n    image: islandora/blazegraph:main\n  fcrepo:\n    image: islandora/fcrepo6\n")
 	if err := os.WriteFile(composePath, original, 0o644); err != nil {
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}
@@ -859,7 +942,7 @@ services:
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
     <<: *common
-    image: libops/blazegraph@sha256:7f4c0b54d9ef0f0822913559d57498e8de2774cadb664161cfe32f40650d8fc0
+    image: islandora/blazegraph:main
     volumes:
       - blazegraph-data:/data:rw
   drupal:
@@ -1219,7 +1302,7 @@ func writeApplyMatrixProject(t *testing.T, projectDir string) {
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   cantaloupe:
     image: islandora/cantaloupe
   drupal:

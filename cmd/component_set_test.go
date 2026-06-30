@@ -366,6 +366,21 @@ func TestRunComponentSetUsesContextRootfsAfterCodebaseGitRoot(t *testing.T) {
 			t.Fatalf("expected %q removed after component sequence, got:\n%s", absent, compose)
 		}
 	}
+	if err := runComponentSet(newComponentSetTestCommand(), "blazegraph", "enabled"); err != nil {
+		t.Fatalf("runComponentSet(blazegraph enable) error = %v", err)
+	}
+	compose = readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	for _, want := range []string{
+		"\n  blazegraph:\n",
+		"image: islandora/blazegraph:main",
+		"blazegraph-data",
+		`ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"`,
+		`DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: "islandora"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected blazegraph re-enabled compose to contain %q, got:\n%s", want, compose)
+		}
+	}
 	field := readFileForTest(t, filepath.Join(projectDir, "config", "sync", "field.storage.media.field_media_file.yml"))
 	if !strings.Contains(field, `uri_scheme: "private"`) && !strings.Contains(field, "uri_scheme: private") {
 		t.Fatalf("expected fcrepo replacement to use private files, got:\n%s", field)
