@@ -46,7 +46,7 @@ var (
 )
 
 const (
-	defaultTemplateRepo   = "https://github.com/islandora-devops/isle-site-template"
+	defaultTemplateRepo   = "https://github.com/libops/isle"
 	defaultTemplateBranch = "main"
 )
 
@@ -85,7 +85,7 @@ func (createRunner) Run(cmd *cobra.Command) error {
 func createDefinition() plugin.CreateSpec {
 	return plugin.CreateSpec{
 		Name:                "default",
-		Description:         "Create a new ISLE site from the upstream template",
+		Description:         "Create a new ISLE site from the LibOps ISLE template",
 		Default:             true,
 		MinCPUCores:         4,
 		MinMemory:           "8 GiB",
