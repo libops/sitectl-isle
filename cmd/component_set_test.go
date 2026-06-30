@@ -752,7 +752,7 @@ func TestRunComponentSetConfiguresIngressLetsEncrypt(t *testing.T) {
 	for _, want := range []string{
 		`DRUPAL_ENABLE_HTTPS: "true"`,
 		`DRUPAL_DEFAULT_SITE_URL: "https://repo.example.org"`,
-		`DRUPAL_DEFAULT_FCREPO_URL: "https://fcrepo.repo.example.org/fcrepo/rest/"`,
+		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`,
 		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "https://repo.example.org/"`,
 		"--entryPoints.https.address=:443",
 		"--certificatesResolvers.letsencrypt.acme.email=admin@example.org",
@@ -838,7 +838,7 @@ services:
 	}
 
 	compose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
-	want := `DRUPAL_DEFAULT_FCREPO_URL: "https://fcrepo.repo.example.org/fcrepo/rest/"`
+	want := `DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`
 	if !strings.Contains(compose, want) {
 		t.Fatalf("expected fcrepo URL %q, got:\n%s", want, compose)
 	}

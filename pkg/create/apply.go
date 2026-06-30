@@ -34,6 +34,7 @@ const (
 	DefaultISLEFileSystemURI = "private"
 	PublicISLEFileSystemURI  = "public"
 	PrivateISLEFileSystemURI = "private"
+	drupalFcrepoInternalURL  = "http://fcrepo:8080/fcrepo/rest/"
 )
 
 var fedoraCleanupFiles = []string{
@@ -459,7 +460,7 @@ func applyFcrepoOn(projectDir string) error {
 	for key, value := range map[string]string{
 		"DRUPAL_DEFAULT_FCREPO_HOST": "fcrepo",
 		"DRUPAL_DEFAULT_FCREPO_PORT": "8080",
-		"DRUPAL_DEFAULT_FCREPO_URL":  "http://fcrepo.localhost/fcrepo/rest/",
+		"DRUPAL_DEFAULT_FCREPO_URL":  drupalFcrepoInternalURL,
 	} {
 		if err := compose.SetServiceEnv("drupal", key, value); err != nil {
 			return err

@@ -13,6 +13,8 @@ import (
 	yaml "gopkg.in/yaml.v3"
 )
 
+const drupalFcrepoInternalURL = "http://fcrepo:8080/fcrepo/rest/"
+
 func applyISLEIngressFiles(ctx *config.Context, values map[string]string) error {
 	if ctx == nil {
 		return fmt.Errorf("context is nil")
@@ -60,8 +62,7 @@ func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) er
 		}
 		return compose.Save()
 	}
-	fcrepoURL := ingressScheme(values) + "://" + subdomainIngressRouteDomain("fcrepo", ingressDomain(values)) + "/fcrepo/rest/"
-	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_FCREPO_URL", fcrepoURL); err != nil {
+	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_FCREPO_URL", drupalFcrepoInternalURL); err != nil {
 		return err
 	}
 	return compose.Save()

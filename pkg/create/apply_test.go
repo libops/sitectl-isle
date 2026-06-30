@@ -179,7 +179,7 @@ volumes: {}
 		"image: libops/fcrepo:7",
 		"image: islandora/milliner:main",
 		`ALPACA_FCREPO_INDEXER_ENABLED: "true"`,
-		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo.localhost/fcrepo/rest/"`,
+		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`,
 	} {
 		if !strings.Contains(compose, want) {
 			t.Fatalf("expected restored compose to contain %q, got:\n%s", want, compose)
