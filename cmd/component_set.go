@@ -381,7 +381,6 @@ func isleIngressComponent() (corecomponent.ComposeServiceComponent, error) {
 		ServiceEnvTemplates: map[string]map[string]string{
 			"drupal": {
 				"DRUPAL_DEFAULT_CANTALOUPE_URL": "{base_url}/iiif/3",
-				"DRUPAL_DEFAULT_FCREPO_URL":     "{scheme}://fcrepo.{domain}/fcrepo/rest/",
 				"DRUPAL_DEFAULT_SITE_URL":       "{base_url}",
 				"DRUPAL_ENABLE_HTTPS":           "{https_enabled}",
 				"DRUSH_OPTIONS_URI":             "{base_url}",

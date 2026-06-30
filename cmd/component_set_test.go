@@ -784,6 +784,66 @@ func TestRunComponentSetConfiguresIngressLetsEncrypt(t *testing.T) {
 	}
 }
 
+func TestApplyISLEIngressFilesRemovesFcrepoEnvWhenServiceAbsent(t *testing.T) {
+	projectDir := t.TempDir()
+	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+services:
+  drupal:
+    environment:
+      DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
+      DRUPAL_DEFAULT_FCREPO_PORT: "8080"
+      DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.localhost/fcrepo/rest/
+  traefik:
+    command: []
+`)
+
+	ctx := &config.Context{ProjectDir: projectDir}
+	if err := applyISLEIngressFiles(ctx, map[string]string{
+		"mode":   coretraefik.IngressModeHTTP,
+		"domain": "localhost",
+	}); err != nil {
+		t.Fatalf("applyISLEIngressFiles() error = %v", err)
+	}
+
+	compose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	for _, absent := range []string{
+		"DRUPAL_DEFAULT_FCREPO_HOST",
+		"DRUPAL_DEFAULT_FCREPO_PORT",
+		"DRUPAL_DEFAULT_FCREPO_URL",
+	} {
+		if strings.Contains(compose, absent) {
+			t.Fatalf("expected fcrepo env %q removed, got:\n%s", absent, compose)
+		}
+	}
+}
+
+func TestApplyISLEIngressFilesSetsFcrepoEnvWhenServicePresent(t *testing.T) {
+	projectDir := t.TempDir()
+	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+services:
+  drupal:
+    environment: {}
+  fcrepo:
+    image: libops/fcrepo:7
+  traefik:
+    command: []
+`)
+
+	ctx := &config.Context{ProjectDir: projectDir}
+	if err := applyISLEIngressFiles(ctx, map[string]string{
+		"mode":   coretraefik.IngressModeHTTPSDefault,
+		"domain": "repo.example.org",
+	}); err != nil {
+		t.Fatalf("applyISLEIngressFiles() error = %v", err)
+	}
+
+	compose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	want := `DRUPAL_DEFAULT_FCREPO_URL: "https://fcrepo.repo.example.org/fcrepo/rest/"`
+	if !strings.Contains(compose, want) {
+		t.Fatalf("expected fcrepo URL %q, got:\n%s", want, compose)
+	}
+}
+
 func TestRunComponentSetIngressLetsEncryptRequiresACMEEmail(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	yaml "gopkg.in/yaml.v3"
@@ -15,6 +16,9 @@ import (
 func applyISLEIngressFiles(ctx *config.Context, values map[string]string) error {
 	if ctx == nil {
 		return fmt.Errorf("context is nil")
+	}
+	if err := applyISLEFcrepoIngressEnv(ctx, values); err != nil {
+		return err
 	}
 	baseURL := ingressBaseURL(values)
 	path := ctx.ResolveProjectPath(filepath.Join("conf", "triplet", "config.yaml"))
@@ -39,18 +43,50 @@ func applyISLEIngressFiles(ctx *config.Context, values map[string]string) error 
 	return ctx.WriteFile(path, updated)
 }
 
+func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) error {
+	compose, err := corecomponent.LoadComposeFile(ctx.ResolveProjectPath("docker-compose.yml"))
+	if err != nil {
+		return err
+	}
+	if !compose.HasService("fcrepo") {
+		for _, key := range []string{
+			"DRUPAL_DEFAULT_FCREPO_HOST",
+			"DRUPAL_DEFAULT_FCREPO_PORT",
+			"DRUPAL_DEFAULT_FCREPO_URL",
+		} {
+			if err := compose.DeleteServiceEnv("drupal", key); err != nil {
+				return err
+			}
+		}
+		return compose.Save()
+	}
+	fcrepoURL := ingressScheme(values) + "://" + subdomainIngressRouteDomain("fcrepo", ingressDomain(values)) + "/fcrepo/rest/"
+	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_FCREPO_URL", fcrepoURL); err != nil {
+		return err
+	}
+	return compose.Save()
+}
+
 func ingressBaseURL(values map[string]string) string {
+	return ingressScheme(values) + "://" + ingressDomain(values)
+}
+
+func ingressScheme(values map[string]string) string {
 	mode := strings.TrimSpace(values["mode"])
-	scheme := "http"
 	switch mode {
 	case coretraefik.IngressModeHTTPSDefault, coretraefik.IngressModeHTTPSLetsEncrypt:
-		scheme = "https"
+		return "https"
+	default:
+		return "http"
 	}
+}
+
+func ingressDomain(values map[string]string) string {
 	domain := strings.TrimSpace(values["domain"])
 	if domain == "" {
 		domain = coretraefik.DefaultIngressDomain
 	}
-	return scheme + "://" + domain
+	return domain
 }
 
 func setNestedYAMLValue(root any, path []string, value any) {
