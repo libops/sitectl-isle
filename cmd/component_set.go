@@ -242,7 +242,7 @@ func orderedComponentDefinitions() []corecomponent.Definition {
 		components.Codebase(),
 		ingress.Definition(),
 		isleDevModeDefinition(),
-		coretraefik.BotMitigation(isleBotMitigationOptions()),
+		coretraefik.BotMitigation(createpkg.BotMitigationOptions()),
 	}
 	defs = append(defs, components.DerivativeServices()...)
 	return defs
@@ -321,7 +321,7 @@ func runBotMitigationComponentSet(cmd *cobra.Command, ctx *config.Context, dispo
 	if state == corecomponent.StateOn {
 		target = coretraefik.BotMitigationStateOn
 	}
-	if err := coretraefik.ApplyBotMitigation(ctx.ProjectDir, target, isleBotMitigationOptions()); err != nil {
+	if err := createpkg.ApplyBotMitigation(ctx.ProjectDir, target); err != nil {
 		return err
 	}
 	if err := ctx.EnsureTrackedComposeOverrideSymlink(); err != nil {
@@ -482,13 +482,6 @@ func runDerivativeServiceComponentSet(cmd *cobra.Command, ctx *config.Context, n
 
 	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", name, disposition)
 	return nil
-}
-
-func isleBotMitigationOptions() coretraefik.BotMitigationOptions {
-	return coretraefik.BotMitigationOptions{
-		RouterName:       "drupal",
-		RouterConfigPath: "conf/traefik/drupal.yml",
-	}
 }
 
 func resolveIIIFCreateValue(targetName string, targetDisposition corecomponent.Disposition, current map[string]corecomponent.DetectedState) string {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
@@ -27,7 +28,7 @@ func applyISLEIngressFiles(ctx *config.Context, values map[string]string) error 
 	data, err := ctx.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil
+			return createpkg.SyncBotMitigationBypass(ctx.ProjectDir)
 		}
 		return fmt.Errorf("read Triplet config: %w", err)
 	}
@@ -42,7 +43,10 @@ func applyISLEIngressFiles(ctx *config.Context, values map[string]string) error 
 	if err != nil {
 		return fmt.Errorf("marshal Triplet config: %w", err)
 	}
-	return ctx.WriteFile(path, updated)
+	if err := ctx.WriteFile(path, updated); err != nil {
+		return err
+	}
+	return createpkg.SyncBotMitigationBypass(ctx.ProjectDir)
 }
 
 func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) error {

@@ -185,6 +185,15 @@ volumes: {}
 			t.Fatalf("expected restored compose to contain %q, got:\n%s", want, compose)
 		}
 	}
+	for _, name := range []string{
+		"user.role.fedoraadmin.yml",
+		"system.action.user_add_role_action.fedoraadmin.yml",
+		"views.view.non_fedora_files.yml",
+	} {
+		if _, err := os.Stat(filepath.Join(configDir, name)); err != nil {
+			t.Fatalf("expected fcrepo config %s restored: %v", name, err)
+		}
+	}
 }
 
 func TestApplyBlazegraphOnRestoresServiceAndVolume(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -35,6 +36,9 @@ const (
 	PublicISLEFileSystemURI  = "public"
 	PrivateISLEFileSystemURI = "private"
 	drupalFcrepoInternalURL  = "http://fcrepo:8080/fcrepo/rest/"
+
+	workbenchIntegrationRouterName = "islandora-workbench-integration"
+	workbenchIntegrationPathRule   = "PathPrefix(`/islandora_workbench_integration`)"
 )
 
 var fedoraCleanupFiles = []string{
@@ -151,7 +155,7 @@ func Apply(opts Options) error {
 	}
 
 	if opts.Fcrepo == FcrepoStateOn {
-		if err := applyFcrepoOn(opts.Path); err != nil {
+		if err := applyFcrepoOn(opts.Path, opts.DrupalRootfs); err != nil {
 			return fmt.Errorf("apply fcrepo=on: %w", err)
 		}
 	} else {
@@ -179,7 +183,7 @@ func Apply(opts Options) error {
 		}
 	}
 	if opts.BotMitigation == coretraefik.BotMitigationStateOn {
-		if err := coretraefik.ApplyBotMitigation(opts.Path, opts.BotMitigation, isleBotMitigationOptions()); err != nil {
+		if err := ApplyBotMitigation(opts.Path, opts.BotMitigation); err != nil {
 			return fmt.Errorf("apply bot-mitigation=%s: %w", opts.BotMitigation, err)
 		}
 	}
@@ -223,10 +227,134 @@ func drupalLayoutExists(projectDir, drupalRootfs string) bool {
 	return false
 }
 
-func isleBotMitigationOptions() coretraefik.BotMitigationOptions {
+func BotMitigationOptions() coretraefik.BotMitigationOptions {
 	return coretraefik.BotMitigationOptions{
 		RouterName:       "drupal",
 		RouterConfigPath: "conf/traefik/drupal.yml",
+	}
+}
+
+func ApplyBotMitigation(projectDir, state string) error {
+	if err := coretraefik.ApplyBotMitigation(projectDir, state, BotMitigationOptions()); err != nil {
+		return err
+	}
+	return updateWorkbenchIntegrationBypass(projectDir, state == coretraefik.BotMitigationStateOn)
+}
+
+func SyncBotMitigationBypass(projectDir string) error {
+	path := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read bot mitigation router config: %w", err)
+	}
+	return updateWorkbenchIntegrationBypass(projectDir, strings.Contains(string(data), "captcha-protect"))
+}
+
+func updateWorkbenchIntegrationBypass(projectDir string, enabled bool) error {
+	path := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read bot mitigation router config: %w", err)
+	}
+	doc, err := corecomponent.LoadYAMLDocument(data)
+	if err != nil {
+		return fmt.Errorf("parse bot mitigation router config: %w", err)
+	}
+	routerPath := ".http.routers." + workbenchIntegrationRouterName
+	if !enabled {
+		if err := doc.DeletePath(routerPath); err != nil {
+			return err
+		}
+		updated, err := doc.Bytes()
+		if err != nil {
+			return fmt.Errorf("marshal bot mitigation router config: %w", err)
+		}
+		return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+	}
+	router, err := workbenchIntegrationRouter(data)
+	if err != nil {
+		return err
+	}
+	if err := doc.SetValue(routerPath, router); err != nil {
+		return err
+	}
+	updated, err := doc.Bytes()
+	if err != nil {
+		return fmt.Errorf("marshal bot mitigation router config: %w", err)
+	}
+	return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+}
+
+func workbenchIntegrationRouter(data []byte) (map[string]any, error) {
+	source, err := drupalRouter(data)
+	if err != nil {
+		return nil, err
+	}
+	rule := strings.TrimSpace(stringMapValue(source, "rule"))
+	if rule == "" {
+		rule = "Host(`localhost`)"
+	}
+	router := map[string]any{
+		"rule":     rule + " && " + workbenchIntegrationPathRule,
+		"service":  "drupal",
+		"priority": 1000,
+	}
+	for _, key := range []string{"entryPoints", "tls"} {
+		if value, ok := source[key]; ok {
+			router[key] = value
+		}
+	}
+	return router, nil
+}
+
+func drupalRouter(data []byte) (map[string]any, error) {
+	var root map[string]any
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("parse Traefik router config: %w", err)
+	}
+	httpMap := yamlMap(root["http"])
+	routers := yamlMap(httpMap["routers"])
+	router := yamlMap(routers["drupal"])
+	if router == nil {
+		return map[string]any{}, nil
+	}
+	return router, nil
+}
+
+func yamlMap(value any) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed
+	case map[any]any:
+		out := make(map[string]any, len(typed))
+		for key, value := range typed {
+			out[fmt.Sprint(key)] = value
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func stringMapValue(values map[string]any, key string) string {
+	if values == nil {
+		return ""
+	}
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch value := value.(type) {
+	case string:
+		return value
+	default:
+		return fmt.Sprint(value)
 	}
 }
 
@@ -434,7 +562,7 @@ func writeFilePreserveMode(path string, data []byte) error {
 	return os.WriteFile(path, data, mode) // #nosec G306 -- generated project files are non-secret.
 }
 
-func applyFcrepoOn(projectDir string) error {
+func applyFcrepoOn(projectDir, drupalRootfs string) error {
 	composePath := filepath.Join(projectDir, "docker-compose.yml")
 	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
@@ -469,7 +597,27 @@ func applyFcrepoOn(projectDir string) error {
 	if err := compose.SetServiceEnv("alpaca", "ALPACA_FCREPO_INDEXER_ENABLED", "true"); err != nil {
 		return err
 	}
-	return compose.Save()
+	if err := compose.Save(); err != nil {
+		return err
+	}
+	configDir := corecomponent.ResolveDrupalLayout(projectDir, drupalRootfs).ConfigSyncDir()
+	return restoreFcrepoDrupalConfig(configDir)
+}
+
+func restoreFcrepoDrupalConfig(configDir string) error {
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	for _, name := range fedoraCleanupFiles {
+		data, err := readFcrepoAsset(name)
+		if err != nil {
+			return fmt.Errorf("read fcrepo config asset %s: %w", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, name), data, 0o644); err != nil { // #nosec G306 -- generated Drupal config is non-secret project configuration.
+			return fmt.Errorf("write %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 type fcrepoRestoreImages struct {
