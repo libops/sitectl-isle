@@ -244,7 +244,7 @@ func localBotMitigationConfigured(projectDir string) (bool, bool) {
 }
 
 func checkBotMitigationChallenge(ctx context.Context, verifyCtx *config.Context) sitevalidate.Result {
-	target := healthcheck.PublicURLFromEnv(verifyCtx, "http", "islandora.io")
+	target := isleDrupalPublicURL(verifyCtx)
 	client, err := botMitigationHTTPClient(target, verifyCtx)
 	if err != nil {
 		return failedVerifyResult("verify:bot-mitigation", err.Error(), "")

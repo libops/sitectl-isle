@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"strings"
-
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/healthcheck"
 	"github.com/libops/sitectl/pkg/plugin"
@@ -21,17 +19,12 @@ func (isleHealthcheckRunner) Run(cmd *cobra.Command, ctx *config.Context) ([]sit
 	}
 	defer func() { _ = checker.Close() }()
 
-	drupalURL := healthcheck.PublicURLFromEnv(ctx, "http", "islandora.io")
-	if value, ok, err := checker.ServiceEnv(cmd.Context(), "drupal", "DRUPAL_DEFAULT_SITE_URL"); err == nil && ok && strings.TrimSpace(value) != "" {
-		drupalURL = value
-	}
-
 	results := []sitevalidate.Result{
 		checker.CheckHTTPRoute(
 			cmd.Context(),
 			"http:drupal",
 			"drupal",
-			drupalURL,
+			isleDrupalPublicURL(ctx),
 		),
 	}
 
@@ -55,3 +48,16 @@ func (isleHealthcheckRunner) Run(cmd *cobra.Command, ctx *config.Context) ([]sit
 }
 
 var _ plugin.HealthcheckRunner = isleHealthcheckRunner{}
+
+func isleDrupalPublicURL(ctx *config.Context) string {
+	target := healthcheck.PublicURLFromEnv(ctx, "http", "localhost")
+	if traefikURL, ok, err := healthcheck.PublicURLFromTraefik(ctx, healthcheck.TraefikRouteOptions{
+		AppService:    "drupal",
+		Router:        "drupal",
+		DefaultScheme: "http",
+		DefaultDomain: "localhost",
+	}); err == nil && ok {
+		target = traefikURL
+	}
+	return target
+}

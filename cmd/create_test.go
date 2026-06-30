@@ -26,7 +26,7 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	})
 
 	var promptCount int
-	inputs := []string{"2", "1", "1", "1", "1", "1", "", "1"}
+	inputs := []string{"2", "1", "1", "1", "1"}
 	createInput = func(question ...string) (string, error) {
 		promptCount++
 		if len(inputs) == 0 {
@@ -64,8 +64,8 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if promptCount != 8 {
-		t.Fatalf("expected 8 prompts, got %d", promptCount)
+	if promptCount != 5 {
+		t.Fatalf("expected 5 prompts, got %d", promptCount)
 	}
 	if req.ContextName != "" {
 		t.Fatalf("expected context name prompt path, got %q", req.ContextName)
