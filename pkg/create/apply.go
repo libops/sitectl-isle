@@ -37,8 +37,10 @@ const (
 	PrivateISLEFileSystemURI = "private"
 	drupalFcrepoInternalURL  = "http://fcrepo:8080/fcrepo/rest/"
 
-	workbenchIntegrationRouterName = "islandora-workbench-integration"
-	workbenchIntegrationPathRule   = "PathPrefix(`/islandora_workbench_integration`)"
+	workbenchClientRouterName     = "islandora-workbench-client"
+	workbenchClientUserAgentRule  = "HeaderRegexp(`User-Agent`, `(?i)^Islandora Workbench$`)"
+	workbenchClientRouterPriority = 100000
+	defaultDrupalHostRule         = "Host(`localhost`)"
 )
 
 var fedoraCleanupFiles = []string{
@@ -238,7 +240,7 @@ func ApplyBotMitigation(projectDir, state string) error {
 	if err := coretraefik.ApplyBotMitigation(projectDir, state, BotMitigationOptions()); err != nil {
 		return err
 	}
-	return updateWorkbenchIntegrationBypass(projectDir, state == coretraefik.BotMitigationStateOn)
+	return updateWorkbenchClientBypass(projectDir, state == coretraefik.BotMitigationStateOn)
 }
 
 func SyncBotMitigationBypass(projectDir string) error {
@@ -250,10 +252,10 @@ func SyncBotMitigationBypass(projectDir string) error {
 		}
 		return fmt.Errorf("read bot mitigation router config: %w", err)
 	}
-	return updateWorkbenchIntegrationBypass(projectDir, strings.Contains(string(data), "captcha-protect"))
+	return updateWorkbenchClientBypass(projectDir, strings.Contains(string(data), "captcha-protect"))
 }
 
-func updateWorkbenchIntegrationBypass(projectDir string, enabled bool) error {
+func updateWorkbenchClientBypass(projectDir string, enabled bool) error {
 	path := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
 	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
 	if err != nil {
@@ -266,7 +268,7 @@ func updateWorkbenchIntegrationBypass(projectDir string, enabled bool) error {
 	if err != nil {
 		return fmt.Errorf("parse bot mitigation router config: %w", err)
 	}
-	routerPath := ".http.routers." + workbenchIntegrationRouterName
+	routerPath := ".http.routers." + workbenchClientRouterName
 	if !enabled {
 		if err := doc.DeletePath(routerPath); err != nil {
 			return err
@@ -277,7 +279,7 @@ func updateWorkbenchIntegrationBypass(projectDir string, enabled bool) error {
 		}
 		return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
 	}
-	router, err := workbenchIntegrationRouter(data)
+	router, err := workbenchClientRouter(data)
 	if err != nil {
 		return err
 	}
@@ -291,19 +293,19 @@ func updateWorkbenchIntegrationBypass(projectDir string, enabled bool) error {
 	return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
 }
 
-func workbenchIntegrationRouter(data []byte) (map[string]any, error) {
+func workbenchClientRouter(data []byte) (map[string]any, error) {
 	source, err := drupalRouter(data)
 	if err != nil {
 		return nil, err
 	}
 	rule := strings.TrimSpace(stringMapValue(source, "rule"))
 	if rule == "" {
-		rule = "Host(`localhost`)"
+		rule = defaultDrupalHostRule
 	}
 	router := map[string]any{
-		"rule":     rule + " && " + workbenchIntegrationPathRule,
+		"rule":     "(" + rule + ") && " + workbenchClientUserAgentRule,
 		"service":  "drupal",
-		"priority": 1000,
+		"priority": workbenchClientRouterPriority,
 	}
 	for _, key := range []string{"entryPoints", "tls"} {
 		if value, ok := source[key]; ok {

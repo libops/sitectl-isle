@@ -627,9 +627,9 @@ func TestRunComponentSetEnablesBotMitigation(t *testing.T) {
 	traefik := string(traefikText)
 	for _, want := range []string{
 		"      middlewares:\n        - captcha-protect",
-		"islandora-workbench-integration:",
-		"PathPrefix(`/islandora_workbench_integration`)",
-		"priority: 1000",
+		"islandora-workbench-client:",
+		"(Host(`localhost`)) && HeaderRegexp(`User-Agent`, `(?i)^Islandora Workbench$`)",
+		"priority: 100000",
 		"    captcha-protect:\n      plugin:\n        captcha-protect:",
 		`{{ env "DRUPAL_UPSTREAM_URL" }}`,
 		"          siteKey: '{{ env \"TURNSTILE_SITE_KEY\" }}'",
@@ -699,7 +699,7 @@ func TestRunComponentSetDisablesBotMitigation(t *testing.T) {
 	if strings.Contains(traefik, "captcha-protect") {
 		t.Fatalf("expected drupal traefik config to remove captcha-protect, got:\n%s", string(traefikText))
 	}
-	if strings.Contains(traefik, "islandora-workbench-integration") {
+	if strings.Contains(traefik, "islandora-workbench-client") {
 		t.Fatalf("expected drupal traefik config to remove Workbench bypass router, got:\n%s", traefik)
 	}
 }
