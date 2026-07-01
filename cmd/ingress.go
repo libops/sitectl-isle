@@ -74,13 +74,8 @@ func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) er
 		return err
 	}
 	if localFcrepo {
-		for key, value := range map[string]string{
-			"DRUPAL_DEFAULT_SITE_URL": createpkg.LocalDrupalBaseURL,
-			"DRUSH_OPTIONS_URI":       createpkg.LocalDrupalBaseURL,
-		} {
-			if err := compose.SetServiceEnv("drupal", key, value); err != nil {
-				return err
-			}
+		if err := compose.SetServiceEnv("drupal", "DRUSH_OPTIONS_URI", createpkg.LocalDrupalBaseURL); err != nil {
+			return err
 		}
 		if err := compose.SetServiceEnv("fcrepo", "FCREPO_ALLOW_EXTERNAL_DRUPAL", createpkg.LocalDrupalBaseURL+"/"); err != nil {
 			return err

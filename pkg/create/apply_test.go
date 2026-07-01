@@ -29,9 +29,9 @@ services:
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
       DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.example/fcrepo/rest/
-      DRUPAL_DEFAULT_SITE_URL: http://drupal.localhost
+      DRUPAL_DEFAULT_SITE_URL: http://drupal.internal
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: temporary
-      DRUSH_OPTIONS_URI: http://drupal.localhost
+      DRUSH_OPTIONS_URI: http://drupal.internal
   fcrepo:
     image: islandora/fcrepo6
   milliner:
@@ -190,9 +190,9 @@ volumes: {}
 		"image: islandora/milliner:main",
 		`ALPACA_FCREPO_INDEXER_ENABLED: "true"`,
 		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`,
-		`DRUPAL_DEFAULT_SITE_URL: "http://drupal.localhost"`,
-		`DRUSH_OPTIONS_URI: "http://drupal.localhost"`,
-		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.localhost/"`,
+		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
+		`DRUSH_OPTIONS_URI: "http://drupal.internal"`,
+		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.internal/"`,
 	} {
 		if !strings.Contains(compose, want) {
 			t.Fatalf("expected restored compose to contain %q, got:\n%s", want, compose)
@@ -250,15 +250,17 @@ http:
 	}
 
 	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
-	for _, want := range []string{"fcrepo.localhost", "drupal.localhost"} {
+	for _, want := range []string{"fcrepo.localhost", "drupal.internal"} {
 		if !strings.Contains(compose, want) {
 			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
 		}
 	}
 	router := readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
 	for _, want := range []string{
-		"drupal-localhost:",
-		"Host(`drupal.localhost`)",
+		"drupal-internal:",
+		"Host(`drupal.internal`)",
+		"drupal-internal-host:",
+		"Host: localhost",
 		"priority: 9000",
 		"entryPoints:\n        - http",
 	} {
@@ -272,11 +274,11 @@ http:
 	}
 
 	compose = readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
-	if strings.Contains(compose, "drupal.localhost") || !strings.Contains(compose, "fcrepo.localhost") {
+	if strings.Contains(compose, "drupal.internal") || !strings.Contains(compose, "fcrepo.localhost") {
 		t.Fatalf("expected only local Drupal alias removed, got:\n%s", compose)
 	}
 	router = readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
-	if strings.Contains(router, "drupal-localhost") {
+	if strings.Contains(router, "drupal-internal") || strings.Contains(router, "drupal-internal-host") {
 		t.Fatalf("expected local Drupal router removed, got:\n%s", router)
 	}
 }

@@ -38,12 +38,13 @@ const (
 	drupalFcrepoInternalURL  = "http://fcrepo:8080/fcrepo/rest/"
 
 	drupalRouterName = "drupal"
-	localDrupalHost  = "drupal.localhost"
+	localDrupalHost  = "drupal.internal"
 	// LocalDrupalBaseURL is the internal Traefik route used by local Fcrepo
 	// clients that cannot reach the host machine's localhost.
 	LocalDrupalBaseURL            = "http://" + localDrupalHost
-	localDrupalHostRule           = "Host(`drupal.localhost`)"
-	localDrupalRouterName         = "drupal-localhost"
+	localDrupalHostRule           = "Host(`drupal.internal`)"
+	localDrupalHostMiddlewareName = "drupal-internal-host"
+	localDrupalRouterName         = "drupal-internal"
 	localDrupalRouterPriority     = 9000
 	workbenchClientRouterName     = "islandora-workbench-client"
 	workbenchClientUserAgentRule  = "HeaderRegexp(`User-Agent`, `(?i)^Islandora Workbench$`)"
@@ -340,6 +341,9 @@ func syncLocalDrupalRouter(projectDir string, enabled bool) error {
 		if err := doc.DeletePath(routerPath); err != nil {
 			return err
 		}
+		if err := doc.DeletePath(".http.middlewares." + localDrupalHostMiddlewareName); err != nil {
+			return err
+		}
 		updated, err := doc.Bytes()
 		if err != nil {
 			return fmt.Errorf("marshal local Drupal router config: %w", err)
@@ -351,6 +355,9 @@ func syncLocalDrupalRouter(projectDir string, enabled bool) error {
 		return err
 	}
 	if err := doc.SetValue(routerPath, router); err != nil {
+		return err
+	}
+	if err := doc.SetValue(".http.middlewares."+localDrupalHostMiddlewareName, localDrupalHostMiddleware()); err != nil {
 		return err
 	}
 	updated, err := doc.Bytes()
@@ -426,9 +433,10 @@ func localDrupalRouter(data []byte) (map[string]any, error) {
 		return nil, err
 	}
 	router := map[string]any{
-		"rule":     localDrupalHostRule,
-		"service":  drupalRouterName,
-		"priority": localDrupalRouterPriority,
+		"rule":        localDrupalHostRule,
+		"service":     drupalRouterName,
+		"priority":    localDrupalRouterPriority,
+		"middlewares": []any{localDrupalHostMiddlewareName},
 	}
 	for _, key := range []string{"entryPoints", "tls"} {
 		if value, ok := source[key]; ok {
@@ -436,6 +444,16 @@ func localDrupalRouter(data []byte) (map[string]any, error) {
 		}
 	}
 	return router, nil
+}
+
+func localDrupalHostMiddleware() map[string]any {
+	return map[string]any{
+		"headers": map[string]any{
+			"customRequestHeaders": map[string]any{
+				"Host": coretraefik.DefaultIngressDomain,
+			},
+		},
+	}
 }
 
 func drupalRouter(data []byte) (map[string]any, error) {
@@ -756,16 +774,14 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 		}
 	}
 	if shouldUseLocalDrupalInternalURL(serviceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL")) {
-		for key, value := range map[string]string{
-			"DRUPAL_DEFAULT_SITE_URL": LocalDrupalBaseURL,
-			"DRUSH_OPTIONS_URI":       LocalDrupalBaseURL,
-		} {
-			if err := compose.SetServiceEnv("drupal", key, value); err != nil {
-				return err
-			}
+		if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_SITE_URL", publicSiteURLExpr); err != nil {
+			return err
+		}
+		if err := compose.SetServiceEnv("drupal", "DRUSH_OPTIONS_URI", LocalDrupalBaseURL); err != nil {
+			return err
 		}
 	}
-	if err := compose.SetServiceEnv("fcrepo", "FCREPO_ALLOW_EXTERNAL_DRUPAL", fcrepoAllowedDrupalURL(serviceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL"))); err != nil {
+	if err := compose.SetServiceEnv("fcrepo", "FCREPO_ALLOW_EXTERNAL_DRUPAL", fcrepoAllowedDrupalURL(firstServiceEnvValue(compose, "drupal", "DRUSH_OPTIONS_URI", "DRUPAL_DEFAULT_SITE_URL"))); err != nil {
 		return err
 	}
 	if err := compose.SetServiceEnv("alpaca", "ALPACA_FCREPO_INDEXER_ENABLED", "true"); err != nil {
@@ -1019,6 +1035,16 @@ func fcrepoAllowedDrupalURL(siteURL string) string {
 		siteURL = publicSiteURLExpr
 	}
 	return siteURL + "/"
+}
+
+func firstServiceEnvValue(compose *corecomponent.ComposeFile, service string, keys ...string) string {
+	for _, key := range keys {
+		value := serviceEnvValue(compose, service, key)
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func serviceEnvValue(compose *corecomponent.ComposeFile, service, key string) string {
