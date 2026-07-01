@@ -33,7 +33,7 @@ func TestRegisterCommandsUsesRPCValidationAndCuratedDirectCommands(t *testing.T)
 			t.Fatalf("did not expect legacy direct command %q to be registered", name)
 		}
 	}
-	for _, name := range []string{"cache", "migrate", "sync"} {
+	for _, name := range []string{"cache", "sync"} {
 		if _, _, err := sdk.RootCmd.Find([]string{name}); err != nil {
 			t.Fatalf("expected direct command %q to remain registered: %v", name, err)
 		}

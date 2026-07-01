@@ -23,13 +23,15 @@ services:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   drupal:
     environment:
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
       DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.example/fcrepo/rest/
+      DRUPAL_DEFAULT_SITE_URL: http://drupal.internal
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: temporary
+      DRUSH_OPTIONS_URI: http://drupal.internal
   fcrepo:
     image: islandora/fcrepo6
   milliner:
@@ -78,6 +80,14 @@ volumes:
 	}
 	if strings.Contains(compose, "DRUPAL_DEFAULT_FCREPO_URL") {
 		t.Fatalf("expected fcrepo env removed, got:\n%s", compose)
+	}
+	for _, want := range []string{
+		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
+		`DRUSH_OPTIONS_URI: "http://localhost"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		}
 	}
 	if !strings.Contains(compose, `ALPACA_FCREPO_INDEXER_ENABLED: "false"`) && !strings.Contains(compose, "ALPACA_FCREPO_INDEXER_ENABLED: \"false\"") {
 		t.Fatalf("expected fcrepo indexer flag disabled, got:\n%s", compose)
@@ -176,14 +186,201 @@ volumes: {}
 		"\n  fcrepo:\n",
 		"\n  milliner:\n",
 		"  fcrepo-data: {}",
-		"image: libops/fcrepo:${ISLANDORA_TAG}",
-		"image: islandora/milliner:${ISLANDORA_TAG}",
+		"image: libops/fcrepo:7",
+		"image: islandora/milliner:main",
 		`ALPACA_FCREPO_INDEXER_ENABLED: "true"`,
-		`DRUPAL_DEFAULT_FCREPO_URL: "${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/"`,
+		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`,
+		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
+		`DRUSH_OPTIONS_URI: "http://drupal.internal"`,
+		`DRUPAL_TRUSTED_HOST_PATTERNS: "^localhost$,^drupal\\.internal$"`,
+		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.internal/"`,
 	} {
 		if !strings.Contains(compose, want) {
 			t.Fatalf("expected restored compose to contain %q, got:\n%s", want, compose)
 		}
+	}
+	for _, name := range []string{
+		"user.role.fedoraadmin.yml",
+		"system.action.user_add_role_action.fedoraadmin.yml",
+		"views.view.non_fedora_files.yml",
+	} {
+		if _, err := os.Stat(filepath.Join(configDir, name)); err != nil {
+			t.Fatalf("expected fcrepo config %s restored: %v", name, err)
+		}
+	}
+}
+
+func TestSyncLocalDrupalInternalIngress(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectDir, "conf", "traefik"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(conf/traefik) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+services:
+  traefik:
+    networks:
+      default:
+        aliases:
+          - fcrepo.localhost
+networks:
+  default: {}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "conf", "traefik", "drupal.yml"), []byte(`
+http:
+  services:
+    drupal:
+      loadBalancer:
+        servers:
+          - url: http://drupal:80
+  routers:
+    drupal:
+      rule: Host(`+"`"+`localhost`+"`"+`)
+      entryPoints:
+        - http
+      service: drupal
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(drupal router) error = %v", err)
+	}
+
+	if err := SyncLocalDrupalInternalIngress(projectDir, true); err != nil {
+		t.Fatalf("SyncLocalDrupalInternalIngress(true) error = %v", err)
+	}
+
+	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	for _, want := range []string{"fcrepo.localhost", "drupal.internal"} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		}
+	}
+	router := readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
+	for _, want := range []string{
+		"drupal-internal:",
+		"Host(`drupal.internal`)",
+		"priority: 9000",
+		"entryPoints:\n        - http",
+	} {
+		if !strings.Contains(router, want) {
+			t.Fatalf("expected router to contain %q, got:\n%s", want, router)
+		}
+	}
+	for _, absent := range []string{"drupal-internal-host", "Host: localhost", "middlewares:"} {
+		if strings.Contains(router, absent) {
+			t.Fatalf("expected router not to contain %q, got:\n%s", absent, router)
+		}
+	}
+
+	if err := SyncLocalDrupalInternalIngress(projectDir, false); err != nil {
+		t.Fatalf("SyncLocalDrupalInternalIngress(false) error = %v", err)
+	}
+
+	compose = readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	if strings.Contains(compose, "drupal.internal") || !strings.Contains(compose, "fcrepo.localhost") {
+		t.Fatalf("expected only local Drupal alias removed, got:\n%s", compose)
+	}
+	router = readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
+	if strings.Contains(router, "drupal-internal") || strings.Contains(router, "drupal-internal-host") {
+		t.Fatalf("expected local Drupal router removed, got:\n%s", router)
+	}
+	if strings.Contains(router, "middlewares: {}") {
+		t.Fatalf("expected empty middleware map pruned, got:\n%s", router)
+	}
+}
+
+func TestTrustedHostPatterns(t *testing.T) {
+	t.Parallel()
+
+	if got := TrustedHostPatterns("repo.example.org", false); got != `^repo\.example\.org$` {
+		t.Fatalf("TrustedHostPatterns(public) = %q", got)
+	}
+	if got := TrustedHostPatterns("localhost", true); got != `^localhost$,^drupal\.internal$` {
+		t.Fatalf("TrustedHostPatterns(local) = %q", got)
+	}
+}
+
+func TestApplyBlazegraphOnRestoresServiceAndVolume(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+x-common: &common
+  restart: unless-stopped
+services:
+  alpaca:
+    <<: *common
+    environment:
+      ALPACA_TRIPLESTORE_INDEXER_ENABLED: "false"
+  drupal:
+    <<: *common
+    environment: {}
+volumes: {}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+
+	if err := applyBlazegraphOn(projectDir); err != nil {
+		t.Fatalf("applyBlazegraphOn() error = %v", err)
+	}
+
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(compose) error = %v", err)
+	}
+	compose := string(composeData)
+	for _, want := range []string{
+		"\n  blazegraph:\n",
+		"    <<: *common\n    image: islandora/blazegraph:main",
+		"      - blazegraph-data:/data:rw",
+		"  blazegraph-data: {}",
+		`ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"`,
+		`DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: "islandora"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected restored blazegraph compose to contain %q, got:\n%s", want, compose)
+		}
+	}
+}
+
+func TestApplyBlazegraphOnRewritesExistingImage(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+services:
+  alpaca:
+    environment: {}
+  blazegraph:
+    image: registry.invalid/blazegraph@sha256:old
+    labels:
+      com.example.preserve: "true"
+  drupal:
+    environment: {}
+volumes:
+  blazegraph-data: {}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+
+	if err := applyBlazegraphOn(projectDir); err != nil {
+		t.Fatalf("applyBlazegraphOn() error = %v", err)
+	}
+
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(compose) error = %v", err)
+	}
+	compose := string(composeData)
+	if strings.Contains(compose, "registry.invalid/blazegraph") {
+		t.Fatalf("expected stale blazegraph image rewritten, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, "image: islandora/blazegraph:main") {
+		t.Fatalf("expected islandora blazegraph image, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, `com.example.preserve: "true"`) {
+		t.Fatalf("expected existing service config preserved, got:\n%s", compose)
 	}
 }
 
@@ -224,11 +421,54 @@ volumes: {}
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
 	compose := string(composeData)
-	if !strings.Contains(compose, "image: libops/fcrepo:nginx-1.30.3-php84") {
-		t.Fatalf("expected fcrepo to use libops tag inferred from activemq, got:\n%s", compose)
+	if !strings.Contains(compose, "image: libops/fcrepo:7") {
+		t.Fatalf("expected fcrepo to use the current libops fcrepo 7 image, got:\n%s", compose)
 	}
 	if !strings.Contains(compose, "image: islandora/milliner:6") {
 		t.Fatalf("expected existing milliner image left in place, got:\n%s", compose)
+	}
+}
+
+func TestApplyFcrepoOnDoesNotInferLibopsFcrepoFive(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	configDir := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(configDir) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+services:
+  activemq:
+    image: libops/activemq:5
+  alpaca:
+    environment:
+      ALPACA_FCREPO_INDEXER_ENABLED: "false"
+  drupal:
+    environment: {}
+volumes: {}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+
+	if err := Apply(Options{
+		Path:       projectDir,
+		Fcrepo:     FcrepoStateOn,
+		Blazegraph: FcrepoStateOff,
+	}); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("ReadFile(compose) error = %v", err)
+	}
+	compose := string(composeData)
+	if strings.Contains(compose, "image: libops/fcrepo:5") {
+		t.Fatalf("expected fcrepo restore to avoid nonexistent libops/fcrepo:5, got:\n%s", compose)
+	}
+	if !strings.Contains(compose, "image: libops/fcrepo:7") {
+		t.Fatalf("expected fcrepo restore to use libops/fcrepo:7, got:\n%s", compose)
 	}
 }
 
@@ -250,15 +490,15 @@ services:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   cantaloupe:
     image: islandora/cantaloupe
   drupal:
     environment:
-      DRUPAL_DEFAULT_CANTALOUPE_URL: ${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/cantaloupe/iiif/2
+      DRUPAL_DEFAULT_CANTALOUPE_URL: http://localhost/cantaloupe/iiif/2
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
-      DRUPAL_DEFAULT_FCREPO_URL: ${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/
+      DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.localhost/fcrepo/rest/
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
   fcrepo:
     image: islandora/fcrepo6
@@ -346,7 +586,7 @@ services:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   drupal:
     environment:
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
@@ -453,7 +693,7 @@ func TestApplyFcrepoOnNoOp(t *testing.T) {
 
 	projectDir := t.TempDir()
 	composePath := filepath.Join(projectDir, "docker-compose.yml")
-	original := []byte("services:\n  alpaca:\n    environment: {}\n  drupal:\n    environment: {}\n  blazegraph:\n    image: islandora/blazegraph\n  fcrepo:\n    image: islandora/fcrepo6\n")
+	original := []byte("services:\n  alpaca:\n    environment: {}\n  drupal:\n    environment: {}\n  blazegraph:\n    image: islandora/blazegraph:main\n  fcrepo:\n    image: islandora/fcrepo6\n")
 	if err := os.WriteFile(composePath, original, 0o644); err != nil {
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}
@@ -500,8 +740,7 @@ func TestApplyCodebaseGitRoot(t *testing.T) {
 		}
 	}
 
-	writeTestFile(t, filepath.Join(projectDir, "drupal", "Dockerfile"), `# syntax=docker/dockerfile:1.23.0
-ARG REPOSITORY
+	writeTestFile(t, filepath.Join(projectDir, "drupal", "Dockerfile"), `ARG REPOSITORY
 ARG TAG
 FROM ${REPOSITORY}/drupal:${TAG}
 
@@ -510,7 +749,7 @@ ARG TARGETARCH
 COPY --link rootfs /
 
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
     chown -R nginx:nginx /var/www/drupal && \
     cleanup.sh
 `)
@@ -559,7 +798,6 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 	dockerfile := readTestFile(t, filepath.Join(projectDir, "Dockerfile"))
 	for _, want := range []string{
 		"COPY --link composer.json composer.lock /var/www/drupal/",
-		"COPY --link drupal/rootfs/etc/ /etc/",
 		"COPY --link drupal/rootfs/opt/ /opt/",
 	} {
 		if !strings.Contains(dockerfile, want) {
@@ -568,6 +806,9 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 	}
 	if strings.Contains(dockerfile, "COPY --link rootfs /") {
 		t.Fatalf("expected nested rootfs copy removed, got:\n%s", dockerfile)
+	}
+	if strings.Contains(dockerfile, "COPY --link drupal/rootfs/etc/ /etc/") {
+		t.Fatalf("expected Drupal /etc overlay copy removed, got:\n%s", dockerfile)
 	}
 
 	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
@@ -614,8 +855,7 @@ func TestApplyCodebaseGitRootFromCurrentDrupalLayout(t *testing.T) {
 
 	writeTestFile(t, filepath.Join(projectDir, "README.md"), "project readme\n")
 	writeTestFile(t, filepath.Join(drupalRoot, "README.md"), "drupal readme\n")
-	writeTestFile(t, filepath.Join(drupalRoot, "Dockerfile"), `# syntax=docker/dockerfile:1.23.0
-ARG BASE_IMAGE=libops/islandora:php84
+	writeTestFile(t, filepath.Join(drupalRoot, "Dockerfile"), `ARG BASE_IMAGE=libops/islandora:php84
 FROM ${BASE_IMAGE}
 
 ARG TARGETARCH
@@ -656,9 +896,6 @@ COPY --link rootfs/opt/ /opt/
 			t.Fatalf("expected drupal/%s moved to git root, stat err = %v", rel, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(drupalRoot, "rootfs", "etc", "s6-overlay", "scripts")); err != nil {
-		t.Fatalf("expected drupal/rootfs overlays preserved: %v", err)
-	}
 	if got := readTestFile(t, filepath.Join(projectDir, "README.md")); got != "project readme\n" {
 		t.Fatalf("expected project README preserved, got %q", got)
 	}
@@ -669,12 +906,14 @@ COPY --link rootfs/opt/ /opt/
 	dockerfile := readTestFile(t, filepath.Join(projectDir, "Dockerfile"))
 	for _, want := range []string{
 		"COPY --link composer.json composer.lock /var/www/drupal/",
-		"COPY --link drupal/rootfs/etc/ /etc/",
 		"COPY --link drupal/rootfs/opt/ /opt/",
 	} {
 		if !strings.Contains(dockerfile, want) {
 			t.Fatalf("expected Dockerfile to contain %q, got:\n%s", want, dockerfile)
 		}
+	}
+	if strings.Contains(dockerfile, "COPY --link drupal/rootfs/etc/ /etc/") {
+		t.Fatalf("expected Drupal /etc overlay copy removed, got:\n%s", dockerfile)
 	}
 
 	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
@@ -742,7 +981,7 @@ func TestApplyCreateMatrix(t *testing.T) {
 				if !strings.Contains(compose, "\n  triplet:\n") || strings.Contains(compose, "\n  cantaloupe:\n") {
 					t.Fatalf("expected triplet to replace cantaloupe, got:\n%s", compose)
 				}
-				if !strings.Contains(compose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/iiif/3"`) {
+				if !strings.Contains(compose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "http://localhost/iiif/3"`) {
 					t.Fatalf("expected Drupal IIIF URL to use /iiif/3, got:\n%s", compose)
 				}
 			},
@@ -817,7 +1056,7 @@ services:
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
     <<: *common
-    image: libops/blazegraph@sha256:7f4c0b54d9ef0f0822913559d57498e8de2774cadb664161cfe32f40650d8fc0
+    image: islandora/blazegraph:main
     volumes:
       - blazegraph-data:/data:rw
   drupal:
@@ -825,7 +1064,7 @@ services:
     environment:
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
-      DRUPAL_DEFAULT_FCREPO_URL: ${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/
+      DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.localhost/fcrepo/rest/
   fcrepo:
     <<: *common
     image: libops/fcrepo@sha256:611b9b15bf205c369aa664d119126429785da28d255635d8aeeb29ddf4ce03f0
@@ -1177,17 +1416,17 @@ func writeApplyMatrixProject(t *testing.T, projectDir string) {
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   cantaloupe:
     image: islandora/cantaloupe
   drupal:
     build:
       context: ./drupal
     environment:
-      DRUPAL_DEFAULT_CANTALOUPE_URL: ${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/cantaloupe/iiif/2
+      DRUPAL_DEFAULT_CANTALOUPE_URL: http://localhost/cantaloupe/iiif/2
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
-      DRUPAL_DEFAULT_FCREPO_URL: ${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/
+      DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.localhost/fcrepo/rest/
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
   fcrepo:
     image: islandora/fcrepo6
@@ -1211,8 +1450,7 @@ volumes:
       - ./drupal/rootfs/var/www/drupal/web/themes/custom:/var/www/drupal/web/themes/custom:z,rw,${CONSISTENCY}
 `)
 	writeTestFile(t, filepath.Join(projectDir, "conf", "traefik", "cantaloupe.yml"), "http: {}\n")
-	writeTestFile(t, filepath.Join(projectDir, "drupal", "Dockerfile"), `# syntax=docker/dockerfile:1.23.0
-ARG REPOSITORY
+	writeTestFile(t, filepath.Join(projectDir, "drupal", "Dockerfile"), `ARG REPOSITORY
 ARG TAG
 FROM ${REPOSITORY}/drupal:${TAG}
 
@@ -1221,7 +1459,7 @@ ARG TARGETARCH
 COPY --link rootfs /
 
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
     chown -R nginx:nginx /var/www/drupal && \
     cleanup.sh
 `)

@@ -5,15 +5,21 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
+	"gopkg.in/yaml.v3"
 )
 
 const (
 	FcrepoStateOn  = "on"
 	FcrepoStateOff = "off"
+
+	blazegraphDataVolumeName = "blazegraph-data"
+	blazegraphImageRef       = "islandora/blazegraph:main"
+	blazegraphServiceName    = "blazegraph"
 
 	IIIFCantaloupe       = "cantaloupe"
 	IIIFTriplet          = "triplet"
@@ -30,7 +36,25 @@ const (
 	DefaultISLEFileSystemURI = "private"
 	PublicISLEFileSystemURI  = "public"
 	PrivateISLEFileSystemURI = "private"
+	drupalFcrepoInternalURL  = "http://fcrepo:8080/fcrepo/rest/"
+
+	drupalRouterName = "drupal"
+	localDrupalHost  = "drupal.internal"
+	// LocalDrupalBaseURL is the internal Traefik route used by local Fcrepo
+	// clients that cannot reach the host machine's localhost.
+	LocalDrupalBaseURL            = "http://" + localDrupalHost
+	localDrupalHostRule           = "Host(`drupal.internal`)"
+	localDrupalHostMiddlewareName = "drupal-internal-host"
+	localDrupalRouterName         = "drupal-internal"
+	localDrupalRouterPriority     = 9000
+	workbenchClientRouterName     = "islandora-workbench-client"
+	workbenchClientUserAgentRule  = "HeaderRegexp(`User-Agent`, `(?i)^Islandora Workbench$`)"
+	workbenchClientRouterPriority = 100000
+	defaultDrupalHostRule         = "Host(`localhost`)"
 )
+
+// DefaultTrustedHostPatterns is the Drupal trusted-host regex for local sites.
+const DefaultTrustedHostPatterns = "^localhost$"
 
 var fedoraCleanupFiles = []string{
 	"context.context.all_media.yml",
@@ -145,9 +169,8 @@ func Apply(opts Options) error {
 		opts.DrupalRootfs = corecomponent.DefaultDrupalRootfs
 	}
 
-	composePath := filepath.Join(opts.Path, "docker-compose.yml")
 	if opts.Fcrepo == FcrepoStateOn {
-		if err := applyFcrepoOn(opts.Path); err != nil {
+		if err := applyFcrepoOn(opts.Path, opts.DrupalRootfs); err != nil {
 			return fmt.Errorf("apply fcrepo=on: %w", err)
 		}
 	} else {
@@ -157,11 +180,8 @@ func Apply(opts Options) error {
 	}
 
 	if opts.Blazegraph == FcrepoStateOn {
-		if err := setComposeEnv(composePath, "alpaca", "ALPACA_TRIPLESTORE_INDEXER_ENABLED", "true"); err != nil {
-			return err
-		}
-		if err := setComposeEnv(composePath, "drupal", "DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE", "islandora"); err != nil {
-			return err
+		if err := applyBlazegraphOn(opts.Path); err != nil {
+			return fmt.Errorf("apply blazegraph=on: %w", err)
 		}
 	} else {
 		if err := applyBlazegraphOff(opts.Path, opts.DrupalRootfs); err != nil {
@@ -178,9 +198,12 @@ func Apply(opts Options) error {
 		}
 	}
 	if opts.BotMitigation == coretraefik.BotMitigationStateOn {
-		if err := coretraefik.ApplyBotMitigation(opts.Path, opts.BotMitigation, isleBotMitigationOptions()); err != nil {
+		if err := ApplyBotMitigation(opts.Path, opts.BotMitigation); err != nil {
 			return fmt.Errorf("apply bot-mitigation=%s: %w", opts.BotMitigation, err)
 		}
+	}
+	if err := SyncLocalDrupalInternalIngress(opts.Path, opts.Fcrepo == FcrepoStateOn); err != nil {
+		return fmt.Errorf("sync local Drupal ingress: %w", err)
 	}
 
 	return nil
@@ -222,10 +245,323 @@ func drupalLayoutExists(projectDir, drupalRootfs string) bool {
 	return false
 }
 
-func isleBotMitigationOptions() coretraefik.BotMitigationOptions {
+func BotMitigationOptions() coretraefik.BotMitigationOptions {
 	return coretraefik.BotMitigationOptions{
 		RouterName:       "drupal",
 		RouterConfigPath: "conf/traefik/drupal.yml",
+	}
+}
+
+func ApplyBotMitigation(projectDir, state string) error {
+	if err := coretraefik.ApplyBotMitigation(projectDir, state, BotMitigationOptions()); err != nil {
+		return err
+	}
+	return updateWorkbenchClientBypass(projectDir, state == coretraefik.BotMitigationStateOn)
+}
+
+func SyncBotMitigationBypass(projectDir string) error {
+	path := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read bot mitigation router config: %w", err)
+	}
+	return updateWorkbenchClientBypass(projectDir, strings.Contains(string(data), "captcha-protect"))
+}
+
+func SyncLocalDrupalInternalIngress(projectDir string, enabled bool) error {
+	routerPath := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	if _, err := os.Stat(routerPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat local Drupal router config: %w", err)
+	}
+	if err := syncLocalDrupalTraefikAlias(projectDir, enabled); err != nil {
+		return err
+	}
+	return syncLocalDrupalRouter(projectDir, enabled)
+}
+
+func syncLocalDrupalTraefikAlias(projectDir string, enabled bool) error {
+	path := filepath.Join(projectDir, "docker-compose.yml")
+	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read docker-compose.yml: %w", err)
+	}
+	var root map[string]any
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return fmt.Errorf("parse docker-compose.yml: %w", err)
+	}
+	services := yamlMap(root["services"])
+	traefik := yamlMap(services["traefik"])
+	if traefik == nil {
+		return nil
+	}
+	networks := yamlMap(traefik["networks"])
+	defaultNetwork := yamlMap(networks["default"])
+	if defaultNetwork == nil && !enabled {
+		return nil
+	}
+	aliases := stringSlice(defaultNetwork["aliases"])
+	aliases = setStringPresent(aliases, localDrupalHost, enabled)
+	if !enabled && len(aliases) == len(stringSlice(defaultNetwork["aliases"])) {
+		return nil
+	}
+	doc, err := corecomponent.LoadYAMLDocument(data)
+	if err != nil {
+		return fmt.Errorf("load docker-compose.yml: %w", err)
+	}
+	if err := doc.SetValue(".services.traefik.networks.default.aliases", aliases); err != nil {
+		return fmt.Errorf("set Traefik local Drupal alias: %w", err)
+	}
+	updated, err := doc.Bytes()
+	if err != nil {
+		return fmt.Errorf("marshal docker-compose.yml: %w", err)
+	}
+	return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+}
+
+func syncLocalDrupalRouter(projectDir string, enabled bool) error {
+	path := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read local Drupal router config: %w", err)
+	}
+	doc, err := corecomponent.LoadYAMLDocument(data)
+	if err != nil {
+		return fmt.Errorf("parse local Drupal router config: %w", err)
+	}
+	routerPath := ".http.routers." + localDrupalRouterName
+	if !enabled {
+		if err := doc.DeletePath(routerPath); err != nil {
+			return err
+		}
+		if err := doc.DeletePath(".http.middlewares." + localDrupalHostMiddlewareName); err != nil {
+			return err
+		}
+		if err := deletePathIfEmptyYAMLMap(doc, ".http.middlewares"); err != nil {
+			return err
+		}
+		updated, err := doc.Bytes()
+		if err != nil {
+			return fmt.Errorf("marshal local Drupal router config: %w", err)
+		}
+		return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+	}
+	router, err := localDrupalRouter(data)
+	if err != nil {
+		return err
+	}
+	if err := doc.SetValue(routerPath, router); err != nil {
+		return err
+	}
+	if err := doc.DeletePath(".http.middlewares." + localDrupalHostMiddlewareName); err != nil {
+		return err
+	}
+	if err := deletePathIfEmptyYAMLMap(doc, ".http.middlewares"); err != nil {
+		return err
+	}
+	updated, err := doc.Bytes()
+	if err != nil {
+		return fmt.Errorf("marshal local Drupal router config: %w", err)
+	}
+	return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+}
+
+func updateWorkbenchClientBypass(projectDir string, enabled bool) error {
+	path := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read bot mitigation router config: %w", err)
+	}
+	doc, err := corecomponent.LoadYAMLDocument(data)
+	if err != nil {
+		return fmt.Errorf("parse bot mitigation router config: %w", err)
+	}
+	routerPath := ".http.routers." + workbenchClientRouterName
+	if !enabled {
+		if err := doc.DeletePath(routerPath); err != nil {
+			return err
+		}
+		updated, err := doc.Bytes()
+		if err != nil {
+			return fmt.Errorf("marshal bot mitigation router config: %w", err)
+		}
+		return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+	}
+	router, err := workbenchClientRouter(data)
+	if err != nil {
+		return err
+	}
+	if err := doc.SetValue(routerPath, router); err != nil {
+		return err
+	}
+	updated, err := doc.Bytes()
+	if err != nil {
+		return fmt.Errorf("marshal bot mitigation router config: %w", err)
+	}
+	return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+}
+
+func workbenchClientRouter(data []byte) (map[string]any, error) {
+	source, err := drupalRouter(data)
+	if err != nil {
+		return nil, err
+	}
+	rule := strings.TrimSpace(stringMapValue(source, "rule"))
+	if rule == "" {
+		rule = defaultDrupalHostRule
+	}
+	router := map[string]any{
+		"rule":     "(" + rule + ") && " + workbenchClientUserAgentRule,
+		"service":  "drupal",
+		"priority": workbenchClientRouterPriority,
+	}
+	for _, key := range []string{"entryPoints", "tls"} {
+		if value, ok := source[key]; ok {
+			router[key] = value
+		}
+	}
+	return router, nil
+}
+
+func localDrupalRouter(data []byte) (map[string]any, error) {
+	source, err := drupalRouter(data)
+	if err != nil {
+		return nil, err
+	}
+	router := map[string]any{
+		"rule":     localDrupalHostRule,
+		"service":  drupalRouterName,
+		"priority": localDrupalRouterPriority,
+	}
+	for _, key := range []string{"entryPoints", "tls"} {
+		if value, ok := source[key]; ok {
+			router[key] = value
+		}
+	}
+	return router, nil
+}
+
+func drupalRouter(data []byte) (map[string]any, error) {
+	var root map[string]any
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("parse Traefik router config: %w", err)
+	}
+	httpMap := yamlMap(root["http"])
+	routers := yamlMap(httpMap["routers"])
+	router := yamlMap(routers["drupal"])
+	if router == nil {
+		return map[string]any{}, nil
+	}
+	return router, nil
+}
+
+func stringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string{}, typed...)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if item != nil {
+				out = append(out, fmt.Sprint(item))
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func setStringPresent(values []string, target string, present bool) []string {
+	out := make([]string, 0, len(values)+1)
+	found := false
+	for _, value := range values {
+		if value == target {
+			found = true
+			if present {
+				out = append(out, value)
+			}
+			continue
+		}
+		out = append(out, value)
+	}
+	if present && !found {
+		out = append(out, target)
+	}
+	return out
+}
+
+func yamlMap(value any) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed
+	case map[any]any:
+		out := make(map[string]any, len(typed))
+		for key, value := range typed {
+			out[fmt.Sprint(key)] = value
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func deletePathIfEmptyYAMLMap(doc *corecomponent.YAMLDocument, path string) error {
+	if doc == nil {
+		return nil
+	}
+	data, err := doc.Bytes()
+	if err != nil {
+		return err
+	}
+	var root any
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return err
+	}
+	current := yamlMap(root)
+	for _, segment := range strings.Split(strings.TrimPrefix(path, "."), ".") {
+		if current == nil {
+			return nil
+		}
+		next, ok := current[segment]
+		if !ok {
+			return nil
+		}
+		current = yamlMap(next)
+	}
+	if len(current) != 0 {
+		return nil
+	}
+	return doc.DeletePath(path)
+}
+
+func stringMapValue(values map[string]any, key string) string {
+	if values == nil {
+		return ""
+	}
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch value := value.(type) {
+	case string:
+		return value
+	default:
+		return fmt.Sprint(value)
 	}
 }
 
@@ -320,7 +656,7 @@ func rewriteGitRootDockerfile(path string) error {
 		return fmt.Errorf("read Dockerfile: %w", err)
 	}
 	if strings.Contains(string(data), "COPY --link composer.json composer.lock /var/www/drupal/") &&
-		strings.Contains(string(data), "COPY --link drupal/rootfs/etc/ /etc/") {
+		strings.Contains(string(data), "COPY --link drupal/rootfs/opt/ /opt/") {
 		return nil
 	}
 
@@ -331,14 +667,13 @@ COPY --link composer.json composer.lock /var/www/drupal/
 COPY --link assets/ /var/www/drupal/assets/
 
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
     cleanup.sh
 
 COPY --link config/ /var/www/drupal/config/
 COPY --link recipes/ /var/www/drupal/recipes/
 COPY --link web/modules/custom/ /var/www/drupal/web/modules/custom/
 COPY --link web/themes/custom/ /var/www/drupal/web/themes/custom/
-COPY --link drupal/rootfs/etc/ /etc/
 COPY --link drupal/rootfs/opt/ /opt/
 
 RUN chown -R nginx:nginx /var/www/drupal && \
@@ -352,6 +687,9 @@ func dockerfileHeader(contents string) string {
 	out := []string{}
 	foundTargetArch := false
 	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "# syntax=") {
+			continue
+		}
 		out = append(out, line)
 		if strings.TrimSpace(line) == "ARG TARGETARCH" {
 			foundTargetArch = true
@@ -361,12 +699,16 @@ func dockerfileHeader(contents string) string {
 	if foundTargetArch {
 		return strings.Join(out, "\n")
 	}
-	return `# syntax=docker/dockerfile:1.23.0
-ARG REPOSITORY
-ARG TAG
+	return `ARG REPOSITORY=libops
+ARG TAG=1.30.3-php84
 FROM ${REPOSITORY}/drupal:${TAG}
 
-ARG TARGETARCH`
+ARG TARGETARCH
+
+ENV \
+    COMPOSER_ALLOW_SUPERUSER=1 \
+    COMPOSER_MEMORY_LIMIT=-1
+WORKDIR /var/www/drupal`
 }
 
 func writeGitRootDockerignore(path string) error {
@@ -427,7 +769,7 @@ func writeFilePreserveMode(path string, data []byte) error {
 	return os.WriteFile(path, data, mode) // #nosec G306 -- generated project files are non-secret.
 }
 
-func applyFcrepoOn(projectDir string) error {
+func applyFcrepoOn(projectDir, drupalRootfs string) error {
 	composePath := filepath.Join(projectDir, "docker-compose.yml")
 	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
@@ -453,16 +795,50 @@ func applyFcrepoOn(projectDir string) error {
 	for key, value := range map[string]string{
 		"DRUPAL_DEFAULT_FCREPO_HOST": "fcrepo",
 		"DRUPAL_DEFAULT_FCREPO_PORT": "8080",
-		"DRUPAL_DEFAULT_FCREPO_URL":  "${URI_SCHEME}://fcrepo.${DOMAIN}/fcrepo/rest/",
+		"DRUPAL_DEFAULT_FCREPO_URL":  drupalFcrepoInternalURL,
 	} {
 		if err := compose.SetServiceEnv("drupal", key, value); err != nil {
 			return err
 		}
 	}
+	if shouldUseLocalDrupalInternalURL(serviceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL")) {
+		if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_SITE_URL", publicSiteURLExpr); err != nil {
+			return err
+		}
+		if err := compose.SetServiceEnv("drupal", "DRUSH_OPTIONS_URI", LocalDrupalBaseURL); err != nil {
+			return err
+		}
+		if err := compose.SetServiceEnv("drupal", "DRUPAL_TRUSTED_HOST_PATTERNS", TrustedHostPatterns(coretraefik.DefaultIngressDomain, true)); err != nil {
+			return err
+		}
+	}
+	if err := compose.SetServiceEnv("fcrepo", "FCREPO_ALLOW_EXTERNAL_DRUPAL", fcrepoAllowedDrupalURL(firstServiceEnvValue(compose, "drupal", "DRUSH_OPTIONS_URI", "DRUPAL_DEFAULT_SITE_URL"))); err != nil {
+		return err
+	}
 	if err := compose.SetServiceEnv("alpaca", "ALPACA_FCREPO_INDEXER_ENABLED", "true"); err != nil {
 		return err
 	}
-	return compose.Save()
+	if err := compose.Save(); err != nil {
+		return err
+	}
+	configDir := corecomponent.ResolveDrupalLayout(projectDir, drupalRootfs).ConfigSyncDir()
+	return restoreFcrepoDrupalConfig(configDir)
+}
+
+func restoreFcrepoDrupalConfig(configDir string) error {
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	for _, name := range fedoraCleanupFiles {
+		data, err := readFcrepoAsset(name)
+		if err != nil {
+			return fmt.Errorf("read fcrepo config asset %s: %w", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, name), data, 0o644); err != nil { // #nosec G306 -- generated Drupal config is non-secret project configuration.
+			return fmt.Errorf("write %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 type fcrepoRestoreImages struct {
@@ -472,19 +848,19 @@ type fcrepoRestoreImages struct {
 
 func inferFcrepoRestoreImages(compose *corecomponent.ComposeFile) fcrepoRestoreImages {
 	repository, tag := inferIslandoraStackImageConvention(compose)
-	fcrepoName := "fcrepo6"
+	fcrepoImage := repository + "/fcrepo6:" + tag
 	if repository == "libops" {
-		fcrepoName = "fcrepo"
+		fcrepoImage = "libops/fcrepo:7"
 	}
 	return fcrepoRestoreImages{
-		Fcrepo:   repository + "/" + fcrepoName + ":" + tag,
-		Milliner: "islandora/milliner:" + tag,
+		Fcrepo:   fcrepoImage,
+		Milliner: "islandora/milliner:main",
 	}
 }
 
 func inferIslandoraStackImageConvention(compose *corecomponent.ComposeFile) (string, string) {
 	repository := "islandora"
-	tag := "${ISLANDORA_TAG}"
+	tag := "main"
 	for _, service := range []string{"fcrepo", "activemq", "alpaca", "init", "fits", "solr", "mariadb", "milliner"} {
 		block, ok := compose.ServiceBlock(service)
 		if !ok {
@@ -547,7 +923,7 @@ func fcrepoRestoreServiceBlock(image, commonMerge string) string {
       DB_HOST: mariadb
       DB_PORT: 3306
       FCREPO_ALLOW_EXTERNAL_DEFAULT: http://default/
-      FCREPO_ALLOW_EXTERNAL_DRUPAL: ${URI_SCHEME}://${DOMAIN}/
+      FCREPO_ALLOW_EXTERNAL_DRUPAL: http://localhost/
       FCREPO_PERSISTENCE_TYPE: mysql
     image: ` + image + `
     secrets:
@@ -569,6 +945,45 @@ func millinerRestoreServiceBlock(image, commonMerge string) string {
       - source: CERT_AUTHORITY
       - source: JWT_ADMIN_TOKEN
       - source: JWT_PUBLIC_KEY`
+}
+
+func applyBlazegraphOn(projectDir string) error {
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	compose, err := corecomponent.LoadComposeFile(composePath)
+	if err != nil {
+		return err
+	}
+	if !compose.HasVolume(blazegraphDataVolumeName) {
+		if err := compose.AddVolumeBlock(blazegraphDataVolumeName, "  "+blazegraphDataVolumeName+": {}"); err != nil {
+			return err
+		}
+	}
+	if !compose.HasService(blazegraphServiceName) {
+		block, err := blazegraphRestoreServiceBlock(composePath)
+		if err != nil {
+			return err
+		}
+		if err := compose.AddServiceBlock(blazegraphServiceName, block); err != nil {
+			return err
+		}
+	}
+	if err := compose.SetServiceScalar(blazegraphServiceName, "image", blazegraphImageRef); err != nil {
+		return err
+	}
+	if err := compose.SetServiceEnv("alpaca", "ALPACA_TRIPLESTORE_INDEXER_ENABLED", "true"); err != nil {
+		return err
+	}
+	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE", "islandora"); err != nil {
+		return err
+	}
+	return compose.Save()
+}
+
+func blazegraphRestoreServiceBlock(composePath string) (string, error) {
+	return renderApplyAsset("blazegraph-service.yml", map[string]string{
+		"BLAZEGRAPH_IMAGE": blazegraphImageRef,
+		"COMMON_MERGE":     commonMergeLine(composePath),
+	})
 }
 
 func applyFcrepoOff(projectDir, drupalRootfs, targetScheme string) error {
@@ -608,6 +1023,16 @@ func updateComposeForFcrepoOff(composePath string) error {
 	if err := compose.DeleteService("milliner"); err != nil {
 		return err
 	}
+	if serviceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL") == LocalDrupalBaseURL {
+		if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_SITE_URL", publicSiteURLExpr); err != nil {
+			return err
+		}
+	}
+	if serviceEnvValue(compose, "drupal", "DRUSH_OPTIONS_URI") == LocalDrupalBaseURL {
+		if err := compose.SetServiceEnv("drupal", "DRUSH_OPTIONS_URI", publicSiteURLExpr); err != nil {
+			return err
+		}
+	}
 	for _, key := range []string{
 		"DRUPAL_DEFAULT_FCREPO_HOST",
 		"DRUPAL_DEFAULT_FCREPO_PORT",
@@ -626,6 +1051,96 @@ func updateComposeForFcrepoOff(composePath string) error {
 	return compose.Save()
 }
 
+func shouldUseLocalDrupalInternalURL(siteURL string) bool {
+	siteURL = strings.TrimSpace(siteURL)
+	if siteURL == "" {
+		return true
+	}
+	host := serviceURLHost(siteURL)
+	return host == "" || host == "localhost" || host == "127.0.0.1"
+}
+
+// TrustedHostPatterns returns comma-separated Drupal trusted host regexes.
+func TrustedHostPatterns(domain string, includeLocalDrupal bool) string {
+	patterns := []string{trustedHostPattern(domain)}
+	if includeLocalDrupal {
+		patterns = append(patterns, trustedHostPattern(localDrupalHost))
+	}
+	return strings.Join(uniqueStrings(patterns), ",")
+}
+
+func trustedHostPattern(domain string) string {
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		domain = coretraefik.DefaultIngressDomain
+	}
+	if domain == coretraefik.DefaultIngressDomain {
+		return DefaultTrustedHostPatterns
+	}
+	return "^" + regexp.QuoteMeta(domain) + "$"
+}
+
+func uniqueStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func fcrepoAllowedDrupalURL(siteURL string) string {
+	siteURL = strings.TrimRight(strings.TrimSpace(siteURL), "/")
+	if siteURL == "" {
+		siteURL = publicSiteURLExpr
+	}
+	return siteURL + "/"
+}
+
+func firstServiceEnvValue(compose *corecomponent.ComposeFile, service string, keys ...string) string {
+	for _, key := range keys {
+		value := serviceEnvValue(compose, service, key)
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func serviceEnvValue(compose *corecomponent.ComposeFile, service, key string) string {
+	if compose == nil {
+		return ""
+	}
+	block, ok := compose.ServiceBlock(service)
+	if !ok {
+		return ""
+	}
+	for _, line := range strings.Split(block, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, key+":") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(trimmed, key+":"))
+		return strings.Trim(value, `"'`)
+	}
+	return ""
+}
+
+func serviceURLHost(value string) string {
+	value = strings.TrimSpace(value)
+	scheme, rest, ok := strings.Cut(value, "://")
+	if !ok || strings.TrimSpace(scheme) == "" {
+		return ""
+	}
+	host, _, _ := strings.Cut(rest, "/")
+	host, _, _ = strings.Cut(host, ":")
+	return strings.ToLower(strings.TrimSpace(host))
+}
+
 func updateComposeForBlazegraphOff(composePath string) error {
 	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
@@ -641,17 +1156,6 @@ func updateComposeForBlazegraphOff(composePath string) error {
 		return err
 	}
 	if err := compose.SetServiceEnv("alpaca", "ALPACA_TRIPLESTORE_INDEXER_ENABLED", "false"); err != nil {
-		return err
-	}
-	return compose.Save()
-}
-
-func setComposeEnv(composePath, serviceName, key, value string) error {
-	compose, err := corecomponent.LoadComposeFile(composePath)
-	if err != nil {
-		return err
-	}
-	if err := compose.SetServiceEnv(serviceName, key, value); err != nil {
 		return err
 	}
 	return compose.Save()

@@ -1,0 +1,10 @@
+http:
+  services:
+    solr:
+      loadBalancer:
+        servers:
+          - url: http://solr:8983
+  routers:
+    solr:
+      rule: Host(`solr.localhost`)
+      service: solr

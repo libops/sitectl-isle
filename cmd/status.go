@@ -2,15 +2,16 @@ package cmd
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
-	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
+	"github.com/libops/sitectl/pkg/healthcheck"
+	"github.com/libops/sitectl/pkg/helpers"
 	"github.com/libops/sitectl/pkg/plugin"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
@@ -155,10 +156,8 @@ func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string
 				disposition = dispositionFromDetectedState(state)
 				sdkStatus = nil
 			}
-		case coretraefik.ReverseProxyName:
-			if trustedIPs := currentReverseProxyTrustedIPs(siteCtx); trustedIPs != "" {
-				followUps["trusted-ip"] = trustedIPs
-			}
+		case coretraefik.IngressName:
+			followUps = currentIngressFollowUps(siteCtx)
 		default:
 			if createpkg.IsDerivativeService(sdkStatuses[i].Name) {
 				disposition = derivativeServiceDisposition(state)
@@ -174,69 +173,120 @@ func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string
 		})
 	}
 
-	prodTLS, err := traefikconfig.DetectProd(siteCtx.ProjectDir)
-	if err != nil {
-		return nil, err
-	}
-	views = append(views, componentView{
-		Definition:  definitions["isle-tls"],
-		Name:        "isle-tls",
-		State:       renderTLSDetectedState(prodTLS),
-		Disposition: dispositionFromDetectedState(renderTLSDetectedState(prodTLS)),
-		Detail:      renderTLSDetail(prodTLS),
-		DriftDetail: prodTLS.Detail,
-		FollowUpValues: map[string]string{
-			"tls-mode": strings.TrimSpace(prodTLS.Mode),
-		},
-		Extra: &prodTLS,
-	})
-
-	overridePath := resolveEnvironmentOverridePath(siteCtx)
-	devTLS, err := traefikconfig.DetectOverride(siteCtx.ProjectDir, overridePath)
-	if err != nil {
-		return nil, err
-	}
-	views = append(views, componentView{
-		Definition:  definitions["isle-tls-override"],
-		Name:        "isle-tls-override",
-		State:       renderTLSDetectedState(devTLS),
-		Disposition: dispositionFromDetectedState(renderTLSDetectedState(devTLS)),
-		Detail:      renderTLSDetail(devTLS),
-		DriftDetail: devTLS.Detail,
-		FollowUpValues: map[string]string{
-			"tls-mode": strings.TrimSpace(devTLS.Mode),
-		},
-		Extra: &devTLS,
-	})
-
 	return views, nil
 }
 
-func currentReverseProxyTrustedIPs(siteCtx *config.Context) string {
-	inspection, err := coretraefik.InspectReverseProxy(siteCtx)
+func currentIngressTrustedIPs(siteCtx *config.Context) string {
+	return currentIngressFollowUps(siteCtx)["trusted-ip"]
+}
+
+func currentIngressFollowUps(siteCtx *config.Context) map[string]string {
+	followUps := map[string]string{}
+	if siteCtx == nil {
+		return followUps
+	}
+	compose, err := corecomponent.LoadComposeFile(filepath.Join(siteCtx.ProjectDir, "docker-compose.yml"))
 	if err != nil {
+		return followUps
+	}
+	command := composeServiceCommand(compose, "traefik")
+	projectEnv := healthcheck.ProjectEnv(siteCtx)
+	followUps["mode"] = detectIngressMode(command)
+	if domain := domainFromTraefikRoute(siteCtx, projectEnv); domain != "" {
+		followUps["domain"] = domain
+	}
+	if domain := domainFromServiceURL(composeServiceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL"), projectEnv); domain != "" && followUps["domain"] == "" {
+		followUps["domain"] = domain
+	}
+	if followUps["domain"] == "" {
+		followUps["domain"] = strings.TrimSpace(projectEnv["DOMAIN"])
+	}
+	if email := helpers.FirstNonEmpty(
+		commandValueByPrefix(command, "--certificatesResolvers.letsencrypt.acme.email="),
+		commandValueByPrefix(command, "--certificatesresolvers.letsencrypt.acme.email="),
+	); email != "" {
+		followUps["acme-email"] = email
+	}
+	if trustedIPs := helpers.FirstNonEmpty(
+		commandValueByPrefix(command, "--entryPoints.http.forwardedHeaders.trustedIPs="),
+		commandValueByPrefix(command, "--entrypoints.http.forwardedHeaders.trustedIPs="),
+	); trustedIPs != "" {
+		followUps["trusted-ip"] = trustedIPs
+	}
+	for _, item := range []struct {
+		key string
+		env string
+	}{
+		{key: "max-upload-size", env: "NGINX_CLIENT_MAX_BODY_SIZE"},
+		{key: "upload-timeout", env: "NGINX_CLIENT_BODY_TIMEOUT"},
+	} {
+		if value := composeServiceEnvValue(compose, "drupal", item.env); value != "" {
+			followUps[item.key] = value
+		}
+	}
+	return followUps
+}
+
+func domainFromTraefikRoute(siteCtx *config.Context, projectEnv map[string]string) string {
+	publicURL, ok, err := healthcheck.PublicURLFromTraefik(siteCtx, healthcheck.TraefikRouteOptions{
+		AppService:    "drupal",
+		Router:        "drupal",
+		DefaultScheme: "http",
+		DefaultDomain: coretraefik.DefaultIngressDomain,
+	})
+	if err != nil || !ok {
 		return ""
 	}
-	entrypoints := make([]string, 0, len(inspection.Traefik))
-	for entrypoint := range inspection.Traefik {
-		entrypoints = append(entrypoints, entrypoint)
+	return domainFromServiceURL(publicURL, projectEnv)
+}
+
+func detectIngressMode(command string) string {
+	if commandValueByPrefix(command, "--certificatesResolvers.letsencrypt.acme.email=") != "" ||
+		commandValueByPrefix(command, "--certificatesresolvers.letsencrypt.acme.email=") != "" {
+		return coretraefik.IngressModeHTTPSLetsEncrypt
 	}
-	sort.Strings(entrypoints)
-	current := ""
-	for _, entrypoint := range entrypoints {
-		value := corecomponent.JoinFollowUpValues(inspection.Traefik[entrypoint])
-		if value == "" {
-			continue
-		}
-		if current == "" {
-			current = value
-			continue
-		}
-		if value != current {
-			return ""
+	for _, line := range composeStringLines(command) {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "--entryPoints.https.address=") || strings.HasPrefix(line, "--entrypoints.https.address=") {
+			return coretraefik.IngressModeHTTPSDefault
 		}
 	}
-	return current
+	return coretraefik.IngressModeHTTP
+}
+
+func domainFromServiceURL(value string, env map[string]string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || strings.TrimSpace(parsed.Host) == "" {
+		return ""
+	}
+	host := os.Expand(strings.TrimSpace(parsed.Host), func(name string) string {
+		return strings.TrimSpace(env[name])
+	})
+	if strings.Contains(host, "$") {
+		return ""
+	}
+	return strings.TrimSpace(host)
+}
+
+func commandValueByPrefix(command, prefix string) string {
+	for _, line := range composeStringLines(command) {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "- ")
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
+}
+
+func composeStringLines(value string) []string {
+	return strings.FieldsFunc(value, func(r rune) bool {
+		return r == '\n' || r == ' '
+	})
 }
 
 func dispositionFromDetectedState(state corecomponent.DetectedState) corecomponent.Disposition {
@@ -302,6 +352,31 @@ func currentIIIFUpstreamURL(projectDir string) string {
 	return composeServiceEnvValue(compose, "traefik", "IIIF_UPSTREAM_URL")
 }
 
+func composeServiceCommand(compose *corecomponent.ComposeFile, service string) string {
+	if compose == nil {
+		return ""
+	}
+	block, ok := compose.ServiceBlock(service)
+	if !ok {
+		return ""
+	}
+	lines := strings.Split(block, "\n")
+	commandIdx, ok := findComposeMapKey(lines, 1, "command", 4)
+	if !ok {
+		return ""
+	}
+	line := strings.TrimSpace(lines[commandIdx])
+	if strings.HasPrefix(line, "command: ") && !strings.HasSuffix(line, "|") && !strings.HasSuffix(line, ">") && !strings.HasSuffix(line, "|-") && !strings.HasSuffix(line, ">-") {
+		return strings.TrimSpace(strings.TrimPrefix(line, "command: "))
+	}
+	end := findComposeBlockEnd(lines, commandIdx, 4)
+	commandLines := make([]string, 0, end-commandIdx-1)
+	for i := commandIdx + 1; i < end; i++ {
+		commandLines = append(commandLines, strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "- ")))
+	}
+	return strings.Join(commandLines, "\n")
+}
+
 func composeServiceEnvValue(compose *corecomponent.ComposeFile, service, key string) string {
 	if compose == nil {
 		return ""
@@ -337,6 +412,37 @@ func composeServiceEnvValue(compose *corecomponent.ComposeFile, service, key str
 	return ""
 }
 
+func findComposeMapKey(lines []string, start int, key string, indent int) (int, bool) {
+	prefix := strings.Repeat(" ", indent) + key + ":"
+	for i := start; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		currentIndent := leadingSpaces(line)
+		if currentIndent < indent {
+			break
+		}
+		if currentIndent == indent && strings.HasPrefix(line, prefix) {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func findComposeBlockEnd(lines []string, start int, indent int) int {
+	for i := start + 1; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if leadingSpaces(line) <= indent {
+			return i
+		}
+	}
+	return len(lines)
+}
+
 func leadingSpaces(value string) int {
 	return len(value) - len(strings.TrimLeft(value, " "))
 }
@@ -349,31 +455,6 @@ func resolveEnvironmentOverridePath(siteCtx *config.Context) string {
 		return path
 	}
 	return filepath.Join(siteCtx.ProjectDir, "docker-compose.local.yml")
-}
-
-func renderTLSDetectedState(status traefikconfig.Status) corecomponent.DetectedState {
-	if status.Drifted {
-		return corecomponent.StateDrifted
-	}
-	if status.Enabled {
-		return corecomponent.DetectedState(corecomponent.StateOn)
-	}
-	return corecomponent.DetectedState(corecomponent.StateOff)
-}
-
-func renderTLSDetail(status traefikconfig.Status) string {
-	if status.Drifted {
-		return strings.TrimSpace(status.Detail)
-	}
-	switch status.Mode {
-	case "", traefikconfig.ModeInherited:
-		return strings.TrimSpace(status.Detail)
-	default:
-		if strings.TrimSpace(status.Detail) == "" {
-			return "mode=" + status.Mode
-		}
-		return fmt.Sprintf("mode=%s, %s", status.Mode, strings.TrimSpace(status.Detail))
-	}
 }
 
 func resolveStatusContextForPath(path string) (*config.Context, error) {

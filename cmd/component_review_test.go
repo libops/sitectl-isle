@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
-	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
+	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
 )
 
@@ -43,6 +43,7 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 	oldInput := componentReviewInput
 	oldPromptState := componentReviewPromptState
 	oldPromptChoice := componentReviewPromptChoice
+	oldYolo := componentReviewYolo
 	t.Cleanup(func() {
 		statusPath = oldStatusPath
 		statusDrupalRootfs = oldDrupalRootfs
@@ -50,26 +51,24 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 		componentReviewInput = oldInput
 		componentReviewPromptState = oldPromptState
 		componentReviewPromptChoice = oldPromptChoice
+		componentReviewYolo = oldYolo
 	})
 
 	statusPath = projectDir
 	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentReviewYolo = true
 
 	states := map[string]corecomponent.State{
-		"fcrepo":            corecomponent.StateOff,
-		"blazegraph":        corecomponent.StateOn,
-		"iiif":              corecomponent.StateOff,
-		"iiif-topology":     corecomponent.StateOn,
-		"reverse-proxy":     corecomponent.StateOff,
-		"upload-limits":     corecomponent.StateOff,
-		"dev-mode":          corecomponent.StateOff,
-		"isle-tls":          corecomponent.StateOn,
-		"isle-tls-override": corecomponent.StateOn,
+		"fcrepo":        corecomponent.StateOff,
+		"blazegraph":    corecomponent.StateOn,
+		"iiif":          corecomponent.StateOff,
+		"iiif-topology": corecomponent.StateOn,
+		"dev-mode":      corecomponent.StateOff,
+		"ingress":       corecomponent.StateOn,
 	}
 	modes := map[string]string{
-		"fcrepo-isle-file-system-uri": createpkg.PrivateISLEFileSystemURI,
-		"isle-tls-tls-mode":           traefikconfig.ModeLetsEncrypt,
-		"isle-tls-override-tls-mode":  traefikconfig.ModeHTTP,
+		"isle-file-system-uri": createpkg.PrivateISLEFileSystemURI,
+		"mode":                 coretraefik.IngressModeHTTPSLetsEncrypt,
 	}
 
 	var got createpkg.Options
@@ -86,10 +85,23 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 	inputCalls := 0
 	componentReviewInput = func(question ...string) (string, error) {
 		inputCalls++
-		if inputCalls == 1 {
+		joined := strings.ToLower(strings.Join(question, "\n"))
+		switch {
+		case strings.Contains(joined, "continue?"):
+			return "y", nil
+		case strings.Contains(joined, "trusted proxy"):
+			return "", nil
+		case strings.Contains(joined, "upstream"):
 			return "http://cantaloupe.example:8182", nil
+		case strings.Contains(joined, "domain"):
+			return "repo.example.org", nil
+		case strings.Contains(joined, "acme"):
+			return "admin@example.org", nil
+		case strings.Contains(joined, "max upload"), strings.Contains(joined, "upload/read timeout"):
+			return "", nil
+		default:
+			return "y", nil
 		}
-		return "y", nil
 	}
 
 	var out bytes.Buffer
@@ -119,98 +131,29 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 		t.Fatalf("expected iiif upstream url, got %q", got.IIIFUpstreamURL)
 	}
 
-	envText, err := os.ReadFile(filepath.Join(projectDir, ".env"))
+	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
 	if err != nil {
-		t.Fatalf("ReadFile(.env) error = %v", err)
+		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
 	}
-	if !strings.Contains(string(envText), "URI_SCHEME=\"https\"") || !strings.Contains(string(envText), "TLS_PROVIDER=\"letsencrypt\"") {
-		t.Fatalf("expected prod letsencrypt settings, got:\n%s", string(envText))
+	if !strings.Contains(string(composeText), `DRUPAL_ENABLE_HTTPS: "true"`) ||
+		!strings.Contains(string(composeText), `DRUPAL_DEFAULT_SITE_URL: "https://repo.example.org"`) ||
+		!strings.Contains(string(composeText), "--certificatesResolvers.letsencrypt.acme.email=admin@example.org") {
+		t.Fatalf("expected prod letsencrypt settings, got:\n%s", string(composeText))
 	}
-
-	devOverride, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.local.yml"))
+	routerText, err := os.ReadFile(filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
 	if err != nil {
-		t.Fatalf("ReadFile(docker-compose.local.yml) error = %v", err)
+		t.Fatalf("ReadFile(drupal router) error = %v", err)
 	}
-	if !strings.Contains(string(devOverride), "DRUPAL_ENABLE_HTTPS: \"false\"") {
-		t.Fatalf("expected dev http override, got:\n%s", string(devOverride))
+	if !strings.Contains(string(routerText), "certResolver: letsencrypt") {
+		t.Fatalf("expected prod letsencrypt router, got:\n%s", string(routerText))
 	}
 
 	rendered := out.String()
 	if !strings.Contains(rendered, "iiif-topology: distributed (http://cantaloupe.example:8182)") {
 		t.Fatalf("expected review output to include distributed iiif decision, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "isle-tls: enabled (letsencrypt)") {
-		t.Fatalf("expected review output to include prod tls decision, got:\n%s", rendered)
-	}
-	if !strings.Contains(rendered, "isle-tls-override: enabled (http)") {
-		t.Fatalf("expected review output to include dev tls decision, got:\n%s", rendered)
-	}
-}
-
-func TestRunComponentReviewUsesDetectedTLSModeAsPromptDefault(t *testing.T) {
-	projectDir := t.TempDir()
-	writeISLEOnFixture(t, projectDir)
-	if err := traefikconfig.ApplyProd(projectDir, traefikconfig.ModeLetsEncrypt); err != nil {
-		t.Fatalf("ApplyProd() error = %v", err)
-	}
-	if err := traefikconfig.ApplyOverride(projectDir, filepath.Join(projectDir, "docker-compose.local.yml"), true, traefikconfig.ModeHTTP); err != nil {
-		t.Fatalf("ApplyDev() error = %v", err)
-	}
-
-	oldStatusPath := statusPath
-	oldDrupalRootfs := statusDrupalRootfs
-	oldApply := componentApplyOptions
-	oldInput := componentReviewInput
-	oldPromptState := componentReviewPromptState
-	oldPromptChoice := componentReviewPromptChoice
-	t.Cleanup(func() {
-		statusPath = oldStatusPath
-		statusDrupalRootfs = oldDrupalRootfs
-		componentApplyOptions = oldApply
-		componentReviewInput = oldInput
-		componentReviewPromptState = oldPromptState
-		componentReviewPromptChoice = oldPromptChoice
-	})
-
-	statusPath = projectDir
-	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
-	componentApplyOptions = func(opts createpkg.Options) error { return nil }
-	componentReviewInput = func(question ...string) (string, error) { return "y", nil }
-
-	var promptDefaults []string
-	componentReviewPromptState = func(name string, guidance corecomponent.StateGuidance, input corecomponent.InputFunc) (corecomponent.State, error) {
-		switch name {
-		case "isle-tls", "isle-tls-override":
-			return corecomponent.StateOn, nil
-		case "iiif-topology":
-			return corecomponent.StateOff, nil
-		case "reverse-proxy":
-			return corecomponent.StateOff, nil
-		case "upload-limits":
-			return corecomponent.StateOff, nil
-		case "dev-mode":
-			return corecomponent.StateOff, nil
-		default:
-			return corecomponent.StateOn, nil
-		}
-	}
-	componentReviewPromptChoice = func(name string, choices []corecomponent.Choice, defaultValue string, input corecomponent.InputFunc, sections ...string) (string, error) {
-		promptDefaults = append(promptDefaults, name+"="+defaultValue)
-		return defaultValue, nil
-	}
-
-	if err := runComponentReview(newComponentReviewTestCommand()); err != nil {
-		t.Fatalf("runComponentReview() error = %v", err)
-	}
-
-	if len(promptDefaults) != 2 {
-		t.Fatalf("expected two tls mode prompts, got %v", promptDefaults)
-	}
-	if promptDefaults[0] != "isle-tls-tls-mode=letsencrypt" {
-		t.Fatalf("expected prod default letsencrypt, got %v", promptDefaults)
-	}
-	if promptDefaults[1] != "isle-tls-override-tls-mode=http" {
-		t.Fatalf("expected dev default http, got %v", promptDefaults)
+	if !strings.Contains(rendered, "ingress: enabled (https-letsencrypt)") {
+		t.Fatalf("expected review output to include ingress decision, got:\n%s", rendered)
 	}
 }
 
@@ -327,10 +270,9 @@ func TestRunComponentReviewReportTableFormat(t *testing.T) {
 	}
 }
 
-func TestRunComponentReviewReportJSONFormatIncludesTLSDetails(t *testing.T) {
+func TestRunComponentReviewReportJSONFormatIncludesIngressDetails(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
-	writeFileForTest(t, filepath.Join(projectDir, ".env"), "URI_SCHEME=\"https\"\nTLS_PROVIDER=\"letsencrypt\"\n")
 	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
 services:
   alpaca:
@@ -338,10 +280,11 @@ services:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   drupal:
     environment:
       DRUPAL_DEFAULT_FCREPO_URL: https://fcrepo.example/fcrepo/rest/
+      DRUPAL_DEFAULT_SITE_URL: https://repo.example.org
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
       DRUPAL_ENABLE_HTTPS: "true"
   fcrepo:
@@ -349,15 +292,14 @@ services:
   traefik:
     command: >-
       --ping=true
-      --entrypoints.https.http.tls.certResolver=letsencrypt
-      --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      --entryPoints.http.address=:80
+      --entryPoints.https.address=:443
+      --certificatesResolvers.letsencrypt.acme.email=admin@example.org
 volumes:
   blazegraph-data: {}
   fcrepo-data: {}
 `)
-	if err := traefikconfig.ApplyOverride(projectDir, filepath.Join(projectDir, "docker-compose.local.yml"), true, traefikconfig.ModeHTTP); err != nil {
-		t.Fatalf("ApplyDev() error = %v", err)
-	}
+	writeFileForTest(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"), "http:\n  services:\n    drupal:\n      loadBalancer:\n        servers:\n          - url: http://drupal:80\n  routers:\n    drupal:\n      rule: Host(`repo.example.org`)\n      service: drupal\n      tls:\n        certResolver: letsencrypt\n")
 
 	oldStatusPath := statusPath
 	oldDrupalRootfs := statusDrupalRootfs
@@ -391,32 +333,19 @@ volumes:
 		t.Fatalf("Unmarshal() error = %v\noutput:\n%s", err, out.String())
 	}
 
-	var foundProd bool
-	var foundDev bool
+	var foundIngress bool
 	for _, row := range rows {
 		switch row["name"] {
-		case "isle-tls":
-			foundProd = true
-			if row["detected_mode"] != "mode=letsencrypt, docker-compose.yml + .env" {
-				t.Fatalf("expected prod tls mode details, got %#v", row["detected_mode"])
-			}
+		case "ingress":
+			foundIngress = true
 			followUps, _ := row["follow_ups"].(map[string]any)
-			if followUps["tls-mode"] != "letsencrypt" {
-				t.Fatalf("expected prod follow-up tls-mode, got %#v", row["follow_ups"])
-			}
-		case "isle-tls-override":
-			foundDev = true
-			if row["detected_mode"] != "mode=http, docker-compose.local.yml" {
-				t.Fatalf("expected dev tls mode details, got %#v", row["detected_mode"])
-			}
-			followUps, _ := row["follow_ups"].(map[string]any)
-			if followUps["tls-mode"] != "http" {
-				t.Fatalf("expected dev follow-up tls-mode, got %#v", row["follow_ups"])
+			if followUps["mode"] != coretraefik.IngressModeHTTPSLetsEncrypt || followUps["domain"] != "repo.example.org" || followUps["acme-email"] != "admin@example.org" {
+				t.Fatalf("expected ingress follow-ups, got %#v", row["follow_ups"])
 			}
 		}
 	}
-	if !foundProd || !foundDev {
-		t.Fatalf("expected tls rows in json output, got %#v", rows)
+	if !foundIngress {
+		t.Fatalf("expected ingress row in json output, got %#v", rows)
 	}
 }
 

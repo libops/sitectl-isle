@@ -46,19 +46,21 @@ var (
 )
 
 const (
-	defaultTemplateRepo   = "https://github.com/islandora-devops/isle-site-template"
+	defaultTemplateRepo   = "https://github.com/libops/isle"
 	defaultTemplateBranch = "main"
 )
 
 type createRequest struct {
 	plugin.ComposeCreateRequest
-	Apply                  createpkg.Options
-	ReverseProxyState      corecomponent.State
-	ReverseProxyTrustedIPs string
-	UploadLimitsState      corecomponent.State
-	MaxUploadSize          string
-	UploadTimeout          string
-	DevModeState           corecomponent.State
+	Apply             createpkg.Options
+	IngressState      corecomponent.State
+	IngressMode       string
+	IngressDomain     string
+	IngressACMEEmail  string
+	IngressTrustedIPs string
+	MaxUploadSize     string
+	UploadTimeout     string
+	DevModeState      corecomponent.State
 }
 
 type createRunner struct{}
@@ -83,7 +85,7 @@ func (createRunner) Run(cmd *cobra.Command) error {
 func createDefinition() plugin.CreateSpec {
 	return plugin.CreateSpec{
 		Name:                "default",
-		Description:         "Create a new ISLE site from the upstream template",
+		Description:         "Create a new ISLE site from the LibOps ISLE template",
 		Default:             true,
 		MinCPUCores:         4,
 		MinMemory:           "8 GiB",
@@ -91,13 +93,36 @@ func createDefinition() plugin.CreateSpec {
 		DockerComposeRepo:   defaultTemplateRepo,
 		DockerComposeBranch: defaultTemplateBranch,
 		DockerComposeBuild: []string{
-			"mkdir -p ./certs",
-			"id -u > ./certs/UID",
 			"if [ -d drupal/rootfs ]; then find drupal/rootfs -type d -exec chmod 755 {} \\; ; fi",
 			"docker compose pull --ignore-buildable --ignore-pull-failures",
-			"docker compose build --pull",
+			"docker compose build",
 		},
-		DockerComposeInit: []string{"if [ -x ./scripts/init.sh ]; then ./scripts/init.sh; fi"},
+		Images: []plugin.ComposeImageSpec{
+			{Service: "drupal", Image: "islandora.io/isle-site-template:local", BuildPolicy: plugin.BuildPolicyIfNotPresent},
+		},
+		DockerComposeInit: []string{
+			"mkdir -p ./certs",
+			"docker compose run --rm init",
+			"chown -R \"$(id -u):$(id -g)\" ./certs ./secrets > /dev/null 2>&1 || sudo chown -R \"$(id -u):$(id -g)\" ./certs ./secrets > /dev/null 2>&1 || true",
+			"id -u > ./certs/UID",
+		},
+		InitArtifacts: []plugin.InitArtifact{
+			{Path: "certs/cert.pem"},
+			{Path: "certs/privkey.pem"},
+			{Path: "certs/rootCA.pem"},
+			{Path: "certs/rootCA-key.pem"},
+			{Path: "certs/UID", ValueFrom: plugin.InitArtifactValueFromHostUID},
+			{Path: "secrets/ACTIVEMQ_PASSWORD"},
+			{Path: "secrets/ACTIVEMQ_WEB_ADMIN_PASSWORD"},
+			{Path: "secrets/DB_ROOT_PASSWORD"},
+			{Path: "secrets/DRUPAL_DEFAULT_ACCOUNT_PASSWORD"},
+			{Path: "secrets/DRUPAL_DEFAULT_DB_PASSWORD"},
+			{Path: "secrets/DRUPAL_DEFAULT_SALT"},
+			{Path: "secrets/FCREPO_DB_PASSWORD"},
+			{Path: "secrets/JWT_ADMIN_TOKEN"},
+			{Path: "secrets/JWT_PUBLIC_KEY"},
+			{Path: "secrets/JWT_PRIVATE_KEY"},
+		},
 		DockerComposeUp:   []string{"docker compose up --remove-orphans -d"},
 		DockerComposeDown: []string{"docker compose down"},
 		DockerComposeRollout: []string{
@@ -167,17 +192,19 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 	if decision, ok := resolved.Decisions["bot-mitigation"]; ok {
 		opts.BotMitigation = string(decision.State)
 	}
-	var reverseProxyState corecomponent.State
-	var reverseProxyTrustedIPs string
-	if decision, ok := resolved.Decisions[coretraefik.ReverseProxyName]; ok {
-		reverseProxyState = decision.State
-		reverseProxyTrustedIPs = strings.TrimSpace(decision.Options["trusted-ip"])
-	}
-	var uploadLimitsState corecomponent.State
+	var ingressState corecomponent.State
+	var ingressMode string
+	var ingressDomain string
+	var ingressACMEEmail string
+	var ingressTrustedIPs string
 	var maxUploadSize string
 	var uploadTimeout string
-	if decision, ok := resolved.Decisions[coretraefik.UploadLimitsName]; ok {
-		uploadLimitsState = decision.State
+	if decision, ok := resolved.Decisions[coretraefik.IngressName]; ok {
+		ingressState = decision.State
+		ingressMode = strings.TrimSpace(decision.Options["mode"])
+		ingressDomain = strings.TrimSpace(decision.Options["domain"])
+		ingressACMEEmail = strings.TrimSpace(decision.Options["acme-email"])
+		ingressTrustedIPs = strings.TrimSpace(decision.Options["trusted-ip"])
 		maxUploadSize = strings.TrimSpace(decision.Options["max-upload-size"])
 		uploadTimeout = strings.TrimSpace(decision.Options["upload-timeout"])
 	}
@@ -206,14 +233,16 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 		opts.DrupalRootfs = corecomponent.DefaultDrupalRootfs
 	}
 	return createRequest{
-		ComposeCreateRequest:   resolved,
-		Apply:                  opts,
-		ReverseProxyState:      reverseProxyState,
-		ReverseProxyTrustedIPs: reverseProxyTrustedIPs,
-		UploadLimitsState:      uploadLimitsState,
-		MaxUploadSize:          maxUploadSize,
-		UploadTimeout:          uploadTimeout,
-		DevModeState:           devModeState,
+		ComposeCreateRequest: resolved,
+		Apply:                opts,
+		IngressState:         ingressState,
+		IngressMode:          ingressMode,
+		IngressDomain:        ingressDomain,
+		IngressACMEEmail:     ingressACMEEmail,
+		IngressTrustedIPs:    ingressTrustedIPs,
+		MaxUploadSize:        maxUploadSize,
+		UploadTimeout:        uploadTimeout,
+		DevModeState:         devModeState,
 	}, nil
 }
 
@@ -258,13 +287,13 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		return err
 	}
 	fmt.Fprintln(progress)
-	cloned, err := ensureClonedCheckout(progress, req.TemplateRepo, req.TemplateBranch, ctx.ProjectDir)
-	if err != nil {
-		return err
-	}
 	req.ContextName = ctx.Name
 	req.Path = ctx.ProjectDir
 	req.Apply.Path = ctx.ProjectDir
+	cloned, err := ensureClonedCheckout(progress, req)
+	if err != nil {
+		return err
+	}
 	if cloned {
 		if err := createBootstrapCheckout(progress, ctx.ProjectDir); err != nil {
 			return err
@@ -279,11 +308,7 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		printCreateFailureSummary(summary, req)
 		return err
 	}
-	if err := applyCreateReverseProxy(ctx, req); err != nil {
-		printCreateFailureSummary(summary, req)
-		return err
-	}
-	if err := applyCreateUploadLimits(ctx, req); err != nil {
+	if err := applyCreateIngress(ctx, req); err != nil {
 		printCreateFailureSummary(summary, req)
 		return err
 	}
@@ -312,26 +337,32 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	return nil
 }
 
-func applyCreateUploadLimits(ctx *config.Context, req createRequest) error {
-	if req.UploadLimitsState == "" {
+func applyCreateIngress(ctx *config.Context, req createRequest) error {
+	if req.IngressState == "" {
 		return nil
 	}
-	component, err := isleUploadLimitsComponent()
+	component, err := isleIngressComponent()
 	if err != nil {
 		return err
 	}
 	manager := corecomponent.NewManager(ctx)
-	spec := component.SpecForWithOptions(req.UploadLimitsState, map[string]string{
+	values := map[string]string{
+		"mode":            strings.TrimSpace(req.IngressMode),
+		"domain":          strings.TrimSpace(req.IngressDomain),
+		"acme-email":      strings.TrimSpace(req.IngressACMEEmail),
+		"trusted-ip":      strings.TrimSpace(req.IngressTrustedIPs),
 		"max-upload-size": strings.TrimSpace(req.MaxUploadSize),
 		"upload-timeout":  strings.TrimSpace(req.UploadTimeout),
-	})
-	switch req.UploadLimitsState {
+	}
+	spec := component.SpecForWithOptions(req.IngressState, values)
+	switch req.IngressState {
 	case corecomponent.StateOn:
-		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
-	case corecomponent.StateOff:
-		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+		if err := manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+		return applyISLEIngressFiles(ctx, values)
 	default:
-		return fmt.Errorf("unsupported upload limits state %q", req.UploadLimitsState)
+		return fmt.Errorf("unsupported ingress state %q", req.IngressState)
 	}
 }
 
@@ -347,33 +378,17 @@ func applyCreateDevMode(ctx *config.Context, req createRequest) error {
 	spec := component.SpecForWithOptions(req.DevModeState, nil)
 	switch req.DevModeState {
 	case corecomponent.StateOn:
-		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+		if err := manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+		return applyISLEDevMode(ctx, true)
 	case corecomponent.StateOff:
-		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+		if err := manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+		return applyISLEDevMode(ctx, false)
 	default:
 		return fmt.Errorf("unsupported dev mode state %q", req.DevModeState)
-	}
-}
-
-func applyCreateReverseProxy(ctx *config.Context, req createRequest) error {
-	if req.ReverseProxyState == "" {
-		return nil
-	}
-	component, err := isleReverseProxyComponent()
-	if err != nil {
-		return err
-	}
-	manager := corecomponent.NewManager(ctx)
-	spec := component.SpecForWithOptions(req.ReverseProxyState, map[string]string{
-		"trusted-ip": strings.TrimSpace(req.ReverseProxyTrustedIPs),
-	})
-	switch req.ReverseProxyState {
-	case corecomponent.StateOn:
-		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
-	case corecomponent.StateOff:
-		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
-	default:
-		return fmt.Errorf("unsupported reverse proxy state %q", req.ReverseProxyState)
 	}
 }
 
@@ -413,7 +428,6 @@ func ensureCreateContext(sdk *plugin.SDK, req createRequest) (*config.Context, e
 }
 
 func runStartup(out io.Writer, ctx *config.Context) error {
-	commandLabel, commandName, commandArgs := startupCommand()
 	cleanupLabel, _, _ := cleanupCommand()
 	logPath, err := startupLogPath(ctx.Name)
 	if err != nil {
@@ -431,7 +445,7 @@ func runStartup(out io.Writer, ctx *config.Context) error {
 
 	fmt.Fprintln(out, corecomponent.RenderSection(
 		"Islandora install is now running",
-		fmt.Sprintf(`ISLE will now run %s from the checked out template.
+		fmt.Sprintf(`ISLE will now run the plugin-owned init and up commands from the checked out template.
 While this runs, Docker will pull images over the network and build the Drupal container locally before Docker Compose starts the stack.
 
 Once docker compose brings the containers up, the Islandora Drupal site will install automatically and be configured using the Islandora starter site.
@@ -443,12 +457,24 @@ If you need to cancel, press Ctrl+C, then run:
   cd %s
   %s
 
-This will completely stop and destroy the setup.`, commandLabel, shellPath(ctx.ProjectDir), cleanupLabel),
+This will completely stop and destroy the setup.`, shellPath(ctx.ProjectDir), cleanupLabel),
 	))
 	fmt.Fprintln(out)
 
 	if err := runWithSpinner(out, "Starting the Islandora stack", func() error {
-		return createRunProjectCommand(ctx.ProjectDir, logFile, logFile, commandName, commandArgs...)
+		for _, commandText := range startupCommands() {
+			commandText = strings.TrimSpace(commandText)
+			if commandText == "" {
+				continue
+			}
+			if _, err := fmt.Fprintf(logFile, "Running %s\n", commandText); err != nil {
+				return err
+			}
+			if err := createRunProjectCommand(ctx.ProjectDir, logFile, logFile, "bash", "-lc", commandText); err != nil {
+				return fmt.Errorf("run %s: %w", commandText, err)
+			}
+		}
+		return nil
 	}); err != nil {
 		tail, tailErr := tailLines(logPath, 20)
 		fmt.Fprintln(out)
@@ -459,7 +485,7 @@ This will completely stop and destroy the setup.`, commandLabel, shellPath(ctx.P
 		if tailErr == nil && strings.TrimSpace(tail) != "" {
 			fmt.Fprintln(out, tail)
 		}
-		return fmt.Errorf("run %s: %w", commandLabel, err)
+		return fmt.Errorf("run ISLE startup commands: %w", err)
 	}
 
 	fmt.Fprintln(out)
@@ -539,20 +565,14 @@ func checkPrereqs(out io.Writer) error {
 		}
 		fmt.Fprintln(out, corecomponent.RenderChecklistItem(check.label, "ok", ""))
 	}
-	if _, err := createLookPath("make"); err != nil {
-		fmt.Fprintln(out, corecomponent.RenderChecklistItem(
-			"make is installed",
-			"fallback",
-			"missing, so create will run bash ./scripts/up.sh instead",
-		))
-	} else {
-		fmt.Fprintln(out, corecomponent.RenderChecklistItem("make is installed", "ok", ""))
-	}
 	fmt.Fprintln(out)
 	return nil
 }
 
-func ensureClonedCheckout(out io.Writer, repoURL, branch, projectDir string) (bool, error) {
+func ensureClonedCheckout(out io.Writer, req createRequest) (bool, error) {
+	repoURL := strings.TrimSpace(req.TemplateRepo)
+	branch := strings.TrimSpace(req.TemplateBranch)
+	projectDir := strings.TrimSpace(req.Path)
 	if repoURL == "" {
 		return false, fmt.Errorf("template repo cannot be empty")
 	}
@@ -642,7 +662,15 @@ func runCheckCommand(name string, args ...string) error {
 }
 
 func startupCommand() (string, string, []string) {
-	return "bash ./scripts/up.sh", "bash", []string{"./scripts/up.sh"}
+	return "ISLE startup commands", "bash", []string{"-lc", strings.Join(startupCommands(), " && ")}
+}
+
+func startupCommands() []string {
+	spec := createDefinition()
+	commands := append([]string{}, spec.DockerComposeInit...)
+	commands = append(commands, spec.DockerComposeBuild...)
+	commands = append(commands, spec.DockerComposeUp...)
+	return commands
 }
 
 func cleanupCommand() (string, string, []string) {
@@ -779,8 +807,7 @@ func buildRecreateCommand(req createRequest) string {
 		`--iiif=` + iiifDispositionFlagValue(req.Apply.IIIF),
 		`--iiif-topology=` + iiifTopologyDispositionFlagValue(req.Apply.IIIFTopology),
 		`--codebase=` + codebaseDispositionFlagValue(req.Apply.Codebase),
-		`--reverse-proxy=` + string(corecomponent.StateToDisposition(req.ReverseProxyState)),
-		`--upload-limits=` + string(corecomponent.StateToDisposition(req.UploadLimitsState)),
+		`--ingress=` + string(corecomponent.StateToDisposition(req.IngressState)),
 		`--dev-mode=` + string(corecomponent.StateToDisposition(req.DevModeState)),
 		`--bot-mitigation=` + req.Apply.BotMitigation,
 		`--isle-file-system-uri=` + shellDoubleQuote(req.Apply.ISLEFileSystemURI),
@@ -788,12 +815,17 @@ func buildRecreateCommand(req createRequest) string {
 	if req.Apply.IIIFTopology == createpkg.IIIFTopologyExternal {
 		args = append(args, `--iiif-upstream-url=`+shellDoubleQuote(req.Apply.IIIFUpstreamURL))
 	}
-	if req.ReverseProxyState == corecomponent.StateOn {
-		for _, trustedIP := range corecomponent.SplitFollowUpValues(req.ReverseProxyTrustedIPs) {
+	if req.IngressState == corecomponent.StateOn {
+		args = append(args,
+			`--mode=`+shellDoubleQuote(helpers.FirstNonEmpty(req.IngressMode, coretraefik.IngressModeHTTP)),
+			`--domain=`+shellDoubleQuote(helpers.FirstNonEmpty(req.IngressDomain, coretraefik.DefaultIngressDomain)),
+		)
+		if strings.TrimSpace(req.IngressACMEEmail) != "" {
+			args = append(args, `--acme-email=`+shellDoubleQuote(req.IngressACMEEmail))
+		}
+		for _, trustedIP := range corecomponent.SplitFollowUpValues(req.IngressTrustedIPs) {
 			args = append(args, `--trusted-ip=`+shellDoubleQuote(trustedIP))
 		}
-	}
-	if req.UploadLimitsState == corecomponent.StateOn {
 		args = append(args,
 			`--max-upload-size=`+shellDoubleQuote(uploadLimitValue(map[string]string{"max-upload-size": req.MaxUploadSize}, "max-upload-size")),
 			`--upload-timeout=`+shellDoubleQuote(uploadLimitValue(map[string]string{"upload-timeout": req.UploadTimeout}, "upload-timeout")),

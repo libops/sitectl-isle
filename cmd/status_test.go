@@ -66,8 +66,8 @@ func TestStatusCommandReportsOn(t *testing.T) {
 	if !strings.Contains(rendered, "IIIF-TOPOLOGY") || !strings.Contains(rendered, "Current disposition: `disabled`") {
 		t.Fatalf("expected iiif topology local, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "ISLE-TLS") || !strings.Contains(rendered, "Detected mode: mode=http") {
-		t.Fatalf("expected isle-tls off, got:\n%s", rendered)
+	if !strings.Contains(rendered, "INGRESS") || !strings.Contains(rendered, "Ingress mode: http") {
+		t.Fatalf("expected ingress http, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "If enabled:") || !strings.Contains(rendered, "If disabled:") {
 		t.Fatalf("expected transition guidance, got:\n%s", rendered)
@@ -122,8 +122,8 @@ func TestStatusCommandReportsOff(t *testing.T) {
 	if !strings.Contains(rendered, "IIIF-TOPOLOGY") || !strings.Contains(rendered, "Current disposition: `disabled`") {
 		t.Fatalf("expected iiif topology local, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "ISLE-TLS-OVERRIDE") || !strings.Contains(rendered, "docker-compose.local.yml has no service overrides") {
-		t.Fatalf("expected isle-tls-override off, got:\n%s", rendered)
+	if !strings.Contains(rendered, "INGRESS") || !strings.Contains(rendered, "Ingress mode: http") {
+		t.Fatalf("expected ingress http, got:\n%s", rendered)
 	}
 }
 
@@ -348,13 +348,10 @@ func TestResolveStatusContextUsesDotContextAsCWD(t *testing.T) {
 	}
 }
 
-func TestStatusCommandReportsProdAndDevTLSModes(t *testing.T) {
+func TestStatusCommandReportsIngressLetsEncryptMode(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
 
-	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte("URI_SCHEME=\"https\"\nTLS_PROVIDER=\"letsencrypt\"\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile(.env) error = %v", err)
-	}
 	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
 services:
   alpaca:
@@ -362,10 +359,11 @@ services:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   drupal:
     environment:
       DRUPAL_DEFAULT_FCREPO_URL: https://fcrepo.example/fcrepo/rest/
+      DRUPAL_DEFAULT_SITE_URL: https://repo.example.org
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
       DRUPAL_ENABLE_HTTPS: "true"
   fcrepo:
@@ -375,32 +373,17 @@ services:
   traefik:
     command: >-
       --ping=true
-      --entrypoints.https.http.tls.certResolver=letsencrypt
-      --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      --entryPoints.http.address=:80
+      --entryPoints.https.address=:443
+      --certificatesResolvers.letsencrypt.acme.email=admin@example.org
 volumes:
   blazegraph-data: {}
   fcrepo-data: {}
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.local.yml"), []byte(`
-services:
-  drupal:
-    environment:
-      DRUPAL_ENABLE_HTTPS: "false"
-      DRUPAL_DEFAULT_CANTALOUPE_URL: ${SITE_URL:-http://${DOMAIN}}/cantaloupe/iiif/2
-      DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.${DOMAIN}/fcrepo/rest/
-      DRUSH_OPTIONS_URI: ${SITE_URL:-http://${DOMAIN}}
-  fcrepo:
-    environment:
-      FCREPO_ALLOW_EXTERNAL_DRUPAL: http://${DOMAIN}/
-  traefik:
-    environment:
-      DEVELOPMENT_ENVIRONMENT: "true"
-      TLS_PROVIDER: self-managed
-      URI_SCHEME: http
-`), 0o644); err != nil {
-		t.Fatalf("WriteFile(local compose) error = %v", err)
+	if err := os.WriteFile(filepath.Join(projectDir, "conf", "traefik", "drupal.yml"), []byte("http:\n  services:\n    drupal:\n      loadBalancer:\n        servers:\n          - url: http://drupal:80\n  routers:\n    drupal:\n      rule: Host(`repo.example.org`)\n      service: drupal\n      tls:\n        certResolver: letsencrypt\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(drupal router) error = %v", err)
 	}
 
 	oldStatusPath := statusPath
@@ -424,17 +407,86 @@ services:
 	}
 
 	rendered := out.String()
-	if !strings.Contains(rendered, "ISLE-TLS") || !strings.Contains(rendered, "Detected mode: mode=letsencrypt") {
-		t.Fatalf("expected prod letsencrypt mode, got:\n%s", rendered)
+	if !strings.Contains(rendered, "INGRESS") || !strings.Contains(rendered, "Ingress mode: https-letsencrypt") {
+		t.Fatalf("expected ingress letsencrypt mode, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "TLS mode: letsencrypt") {
-		t.Fatalf("expected prod tls follow-up, got:\n%s", rendered)
+	if !strings.Contains(rendered, "Domain: repo.example.org") || !strings.Contains(rendered, "ACME email: admin@example.org") {
+		t.Fatalf("expected ingress follow-ups, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "ISLE-TLS-OVERRIDE") || !strings.Contains(rendered, "Detected mode: mode=http") {
-		t.Fatalf("expected dev http override mode, got:\n%s", rendered)
+}
+
+func TestCurrentIngressFollowUpsUsesLegacyDomainEnv(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		siteURL    string
+		wantDomain string
+	}{
+		{
+			name:       "expanded-site-url",
+			siteURL:    "http://${DOMAIN}",
+			wantDomain: "sandbox.islandora.ca",
+		},
+		{
+			name:       "env-fallback",
+			siteURL:    "",
+			wantDomain: "sandbox.islandora.ca",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			projectDir := t.TempDir()
+			siteURLEnvironment := ""
+			if tt.siteURL != "" {
+				siteURLEnvironment = "\n      DRUPAL_DEFAULT_SITE_URL: " + tt.siteURL
+			}
+			writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+services:
+  drupal:
+    environment:`+siteURLEnvironment+`
+  traefik:
+    command:
+      - --entryPoints.http.address=:80
+`)
+			writeFileForTest(t, filepath.Join(projectDir, ".env"), "DOMAIN=sandbox.islandora.ca\n")
+
+			got := currentIngressFollowUps(&config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal})
+			if got["domain"] != tt.wantDomain {
+				t.Fatalf("expected domain %q, got %#v", tt.wantDomain, got)
+			}
+		})
 	}
-	if !strings.Contains(rendered, "TLS mode: http") {
-		t.Fatalf("expected dev tls follow-up, got:\n%s", rendered)
+}
+
+func TestCurrentIngressFollowUpsPrefersTraefikRouteDomain(t *testing.T) {
+	projectDir := t.TempDir()
+	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+services:
+  drupal:
+    environment:
+      DRUPAL_DEFAULT_SITE_URL: `+createpkg.LocalDrupalBaseURL+`
+  traefik:
+    command:
+      - --entryPoints.http.address=:80
+`)
+	writeFileForTest(t, filepath.Join(projectDir, ".env"), "DOMAIN=sandbox.islandora.ca\n")
+	if err := os.MkdirAll(filepath.Join(projectDir, "conf", "traefik"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(conf/traefik) error = %v", err)
+	}
+	writeFileForTest(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"), `
+http:
+  services:
+    drupal:
+      loadBalancer:
+        servers:
+          - url: http://drupal:80
+  routers:
+    drupal:
+      rule: Host(`+"`"+`localhost`+"`"+`)
+      service: drupal
+`)
+
+	got := currentIngressFollowUps(&config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal})
+	if got["domain"] != "localhost" {
+		t.Fatalf("expected Traefik route domain localhost, got %#v", got)
 	}
 }
 
@@ -490,13 +542,15 @@ services:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"
       ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"
   blazegraph:
-    image: islandora/blazegraph
+    image: islandora/blazegraph:main
   drupal:
     environment:
-      DRUPAL_DEFAULT_CANTALOUPE_URL: ${SITE_URL:-http://${DOMAIN}}/cantaloupe/iiif/2
+      DRUPAL_DEFAULT_CANTALOUPE_URL: http://localhost/cantaloupe/iiif/2
       DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.example/fcrepo/rest/
+      DRUPAL_DEFAULT_SITE_URL: http://localhost
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: islandora
       DRUPAL_ENABLE_HTTPS: "false"
+      DRUSH_OPTIONS_URI: http://localhost
   cantaloupe:
     image: islandora/cantaloupe
   fcrepo:
@@ -506,6 +560,10 @@ services:
   traefik:
     environment:
       CANTALOUPE_UPSTREAM_URL: http://cantaloupe:8182
+    command:
+      - --entryPoints.http.address=:80
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
 volumes:
   blazegraph-data: {}
   cantaloupe-data: {}
@@ -513,16 +571,13 @@ volumes:
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, ".env"), []byte("URI_SCHEME=\"http\"\nTLS_PROVIDER=\"self-managed\"\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile(.env) error = %v", err)
-	}
 	if err := os.MkdirAll(filepath.Join(projectDir, "conf", "traefik"), 0o755); err != nil {
 		t.Fatalf("MkdirAll(conf/traefik) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "conf", "traefik", "cantaloupe.yml"), []byte("http:\n  middlewares:\n    cantaloupe-strip-prefix:\n      stripPrefix:\n        prefixes:\n          - /cantaloupe\n    cantaloupe-custom-request-headers:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-Path: /cantaloupe\n    cantaloupe:\n      chain:\n        middlewares:\n          - cantaloupe-strip-prefix\n          - cantaloupe-custom-request-headers\n\n  services:\n    cantaloupe:\n      loadBalancer:\n        servers:\n          - url: {{ env \"CANTALOUPE_UPSTREAM_URL\" }}\n  routers:\n    cantaloupe:\n      rule: Host(`{{ env \"DOMAIN\" }}`) && PathPrefix(`/cantaloupe`)\n      middlewares:\n        - cantaloupe\n      service: cantaloupe\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectDir, "conf", "traefik", "cantaloupe.yml"), []byte("http:\n  middlewares:\n    cantaloupe-strip-prefix:\n      stripPrefix:\n        prefixes:\n          - /cantaloupe\n    cantaloupe-custom-request-headers:\n      headers:\n        customRequestHeaders:\n          X-Forwarded-Path: /cantaloupe\n    cantaloupe:\n      chain:\n        middlewares:\n          - cantaloupe-strip-prefix\n          - cantaloupe-custom-request-headers\n\n  services:\n    cantaloupe:\n      loadBalancer:\n        servers:\n          - url: {{ env \"CANTALOUPE_UPSTREAM_URL\" }}\n  routers:\n    cantaloupe:\n      rule: Host(`localhost`) && PathPrefix(`/cantaloupe`)\n      middlewares:\n        - cantaloupe\n      service: cantaloupe\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(conf/traefik/cantaloupe.yml) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "conf", "traefik", "drupal.yml"), []byte("http:\n  services:\n    drupal:\n      loadBalancer:\n        servers:\n          - url: http://drupal:80\n  routers:\n    drupal:\n      rule: Host(`{{ env \"DOMAIN\" }}`)\n      service: drupal\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectDir, "conf", "traefik", "drupal.yml"), []byte("http:\n  services:\n    drupal:\n      loadBalancer:\n        servers:\n          - url: http://drupal:80\n  routers:\n    drupal:\n      rule: Host(`localhost`)\n      service: drupal\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(conf/traefik/drupal.yml) error = %v", err)
 	}
 

@@ -1,0 +1,4 @@
+  blazegraph:
+{{COMMON_MERGE}}    image: {{BLAZEGRAPH_IMAGE}}
+    volumes:
+      - blazegraph-data:/data:rw

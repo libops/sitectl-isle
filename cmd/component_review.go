@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
-	"github.com/libops/sitectl-isle/pkg/traefikconfig"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
+	"github.com/libops/sitectl/pkg/helpers"
 	coredevmode "github.com/libops/sitectl/pkg/services/devmode"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
@@ -30,6 +30,8 @@ type componentReviewDecision struct {
 	Disposition   corecomponent.Disposition
 	State         corecomponent.State
 	TLSMode       string
+	Domain        string
+	ACMEEmail     string
 	FileSystemURI string
 	UpstreamURL   string
 	TrustedIPs    string
@@ -163,7 +165,9 @@ func mergeCurrentComponentReviewDecisions(ctx *config.Context, drupalRootfs stri
 		decision := componentReviewDecision{
 			Disposition:   status.Disposition,
 			State:         corecomponent.DispositionToState(status.Disposition),
-			TLSMode:       strings.TrimSpace(status.FollowUpValues["tls-mode"]),
+			TLSMode:       strings.TrimSpace(helpers.FirstNonEmpty(status.FollowUpValues["mode"], status.FollowUpValues["tls-mode"])),
+			Domain:        strings.TrimSpace(status.FollowUpValues["domain"]),
+			ACMEEmail:     strings.TrimSpace(status.FollowUpValues["acme-email"]),
 			FileSystemURI: strings.TrimSpace(status.FollowUpValues["isle-file-system-uri"]),
 			UpstreamURL:   strings.TrimSpace(status.FollowUpValues["upstream-url"]),
 			TrustedIPs:    strings.TrimSpace(status.FollowUpValues["trusted-ip"]),
@@ -210,7 +214,9 @@ func convertComponentReviewDecisions(raw map[string]promptReviewDecision) map[st
 		decisions[name] = componentReviewDecision{
 			Disposition:   decision.Disposition,
 			State:         decision.State,
-			TLSMode:       strings.TrimSpace(decision.Options["tls-mode"]),
+			TLSMode:       strings.TrimSpace(helpers.FirstNonEmpty(decision.Options["mode"], decision.Options["tls-mode"])),
+			Domain:        strings.TrimSpace(decision.Options["domain"]),
+			ACMEEmail:     strings.TrimSpace(decision.Options["acme-email"]),
 			FileSystemURI: strings.TrimSpace(decision.Options["isle-file-system-uri"]),
 			UpstreamURL:   strings.TrimSpace(decision.Options["upstream-url"]),
 			TrustedIPs:    strings.TrimSpace(decision.Options["trusted-ip"]),
@@ -264,16 +270,7 @@ func applyComponentReview(ctx *config.Context, drupalRootfs, pathOverride string
 	if err := componentApplyOptions(opts); err != nil {
 		return err
 	}
-	if err := traefikconfig.ApplyProd(ctx.ProjectDir, reviewResolvedTLSMode("isle-tls", decisions["isle-tls"])); err != nil {
-		return err
-	}
-	if err := traefikconfig.ApplyOverride(ctx.ProjectDir, resolveEnvironmentOverridePath(ctx), decisions["isle-tls-override"].State == corecomponent.StateOn, reviewResolvedTLSMode("isle-tls-override", decisions["isle-tls-override"])); err != nil {
-		return err
-	}
-	if err := applyReverseProxyReviewDecision(ctx, decisions[coretraefik.ReverseProxyName]); err != nil {
-		return err
-	}
-	if err := applyUploadLimitsReviewDecision(ctx, decisions[coretraefik.UploadLimitsName]); err != nil {
+	if err := applyIngressReviewDecision(ctx, decisions[coretraefik.IngressName]); err != nil {
 		return err
 	}
 	if err := applyDevModeReviewDecision(ctx, decisions[coredevmode.Name]); err != nil {
@@ -285,26 +282,34 @@ func applyComponentReview(ctx *config.Context, drupalRootfs, pathOverride string
 	return ctx.EnsureTrackedComposeOverrideSymlink()
 }
 
-func applyUploadLimitsReviewDecision(ctx *config.Context, decision componentReviewDecision) error {
+func applyIngressReviewDecision(ctx *config.Context, decision componentReviewDecision) error {
 	if decision.State == "" {
 		return nil
 	}
-	component, err := isleUploadLimitsComponent()
+	component, err := isleIngressComponent()
 	if err != nil {
 		return err
 	}
 	manager := corecomponent.NewManager(ctx)
 	spec := component.SpecForWithOptions(decision.State, map[string]string{
+		"mode":            strings.TrimSpace(decision.TLSMode),
+		"domain":          strings.TrimSpace(decision.Domain),
+		"acme-email":      strings.TrimSpace(decision.ACMEEmail),
+		"trusted-ip":      strings.TrimSpace(decision.TrustedIPs),
 		"max-upload-size": strings.TrimSpace(decision.MaxUploadSize),
 		"upload-timeout":  strings.TrimSpace(decision.UploadTimeout),
 	})
 	switch decision.State {
 	case corecomponent.StateOn:
-		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
-	case corecomponent.StateOff:
-		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+		if err := manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+		return applyISLEIngressFiles(ctx, map[string]string{
+			"mode":   strings.TrimSpace(decision.TLSMode),
+			"domain": strings.TrimSpace(decision.Domain),
+		})
 	default:
-		return fmt.Errorf("unsupported upload limits state %q", decision.State)
+		return fmt.Errorf("unsupported ingress state %q", decision.State)
 	}
 }
 
@@ -320,33 +325,17 @@ func applyDevModeReviewDecision(ctx *config.Context, decision componentReviewDec
 	spec := component.SpecForWithOptions(decision.State, nil)
 	switch decision.State {
 	case corecomponent.StateOn:
-		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+		if err := manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+		return applyISLEDevMode(ctx, true)
 	case corecomponent.StateOff:
-		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
+		if err := manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+			return err
+		}
+		return applyISLEDevMode(ctx, false)
 	default:
 		return fmt.Errorf("unsupported dev mode state %q", decision.State)
-	}
-}
-
-func applyReverseProxyReviewDecision(ctx *config.Context, decision componentReviewDecision) error {
-	if decision.State == "" {
-		return nil
-	}
-	component, err := isleReverseProxyComponent()
-	if err != nil {
-		return err
-	}
-	manager := corecomponent.NewManager(ctx)
-	spec := component.SpecForWithOptions(decision.State, map[string]string{
-		"trusted-ip": strings.TrimSpace(decision.TrustedIPs),
-	})
-	switch decision.State {
-	case corecomponent.StateOn:
-		return manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
-	case corecomponent.StateOff:
-		return manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true})
-	default:
-		return fmt.Errorf("unsupported reverse proxy state %q", decision.State)
 	}
 }
 
@@ -402,21 +391,4 @@ func reviewPromptDecisionLabel(decision promptReviewDecision) string {
 		return string(decision.Disposition)
 	}
 	return string(corecomponent.StateToDisposition(decision.State))
-}
-
-func reviewResolvedTLSMode(name string, decision componentReviewDecision) string {
-	if decision.State != corecomponent.StateOn {
-		if name == "isle-tls" {
-			return traefikconfig.ModeHTTP
-		}
-		return traefikconfig.ModeInherited
-	}
-	if strings.TrimSpace(decision.TLSMode) != "" {
-		return decision.TLSMode
-	}
-	mode, err := defaultTLSPromptMode(name)
-	if err != nil {
-		return ""
-	}
-	return mode
 }

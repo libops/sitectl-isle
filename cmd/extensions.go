@@ -110,7 +110,6 @@ func init() {
 	addCodebaseRootfsFlags(componentExtensionSetCmd, &statusCodebaseRootfs, &statusDrupalRootfs, createpkg.DefaultDrupalRootfs)
 	componentExtensionSetCmd.Flags().StringVar(&componentSetState, "state", "", "Explicit state override")
 	componentExtensionSetCmd.Flags().StringVar(&componentSetDisposition, "disposition", "", "Explicit disposition override")
-	componentExtensionSetCmd.Flags().StringVar(&componentSetTLSMode, "tls-mode", "", "TLS mode override")
 	componentExtensionSetCmd.Flags().BoolVar(&componentSetYolo, "yolo", false, "Apply without confirmation")
 	addComponentSetFollowUpFlags(componentExtensionSetCmd, managedComponentDefinitions())
 
@@ -129,11 +128,6 @@ func renderISLEDebugBody(runCtx context.Context, ctx *config.Context, drupalRoot
 		{Label: "Project dir", Value: ctx.ProjectDir},
 		{Label: "Environment", Value: ctx.Environment},
 		{Label: "Compose override", Value: resolveEnvironmentOverridePath(ctx)},
-	}
-
-	envPath := filepath.Join(ctx.ProjectDir, ".env")
-	if envSummary := renderInterestingEnv(envPath); envSummary != "" {
-		rows = append(rows, debugui.Row{Label: "Environment", Value: envSummary})
 	}
 
 	overrideSummary, err := renderOverrideEnvSummary(resolveEnvironmentOverridePath(ctx))
@@ -218,34 +212,6 @@ func renderISLEComponentRows(ctx *config.Context, drupalRootfs string) []debugui
 		rows[0].Value = debugui.Status("warning")
 	}
 	return rows
-}
-
-func renderInterestingEnv(path string) string {
-	data, err := os.ReadFile(path) // #nosec G304 -- env path is resolved inside the selected ISLE project.
-	if err != nil {
-		return ""
-	}
-
-	keys := []string{"DOMAIN", "BASE_DOMAIN", "URI_SCHEME", "TLS_PROVIDER"}
-	values := make([]string, 0, len(keys))
-	for _, line := range strings.Split(string(data), "\n") {
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		for _, interesting := range keys {
-			if key != interesting {
-				continue
-			}
-			values = append(values, fmt.Sprintf("%s=%s", key, strings.Trim(strings.TrimSpace(value), `"`)))
-		}
-	}
-	if len(values) == 0 {
-		return ""
-	}
-	sort.Strings(values)
-	return strings.Join(values, ", ")
 }
 
 func renderOverrideEnvSummary(path string) (string, error) {

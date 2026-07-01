@@ -259,18 +259,7 @@ func derivativeServiceBlock(composePath string, spec DerivativeServiceSpec) (str
 }
 
 func renderDerivativeAsset(name string, replacements map[string]string) (string, error) {
-	data, err := derivativeAssets.ReadFile("assets/derivatives/" + name)
-	if err != nil {
-		return "", err
-	}
-	contents := string(data)
-	for key, value := range replacements {
-		if value == "" {
-			contents = strings.ReplaceAll(contents, "{{"+key+"}}\n", "")
-		}
-		contents = strings.ReplaceAll(contents, "{{"+key+"}}", value)
-	}
-	return strings.TrimRight(contents, "\n"), nil
+	return renderEmbeddedAsset(derivativeAssets, "assets/derivatives/"+name, replacements)
 }
 
 func dockerComposeDevPath(projectDir string) string {

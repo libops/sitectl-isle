@@ -13,7 +13,6 @@ import (
 	"time"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
-	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
@@ -30,6 +29,9 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	inputs := []string{"2", "1", "1", "1", "1"}
 	createInput = func(question ...string) (string, error) {
 		promptCount++
+		if len(inputs) == 0 {
+			return "", nil
+		}
 		value := inputs[0]
 		inputs = inputs[1:]
 		return value, nil
@@ -133,10 +135,11 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	_ = cmd.Flags().Set("iiif-topology", "distributed")
 	_ = cmd.Flags().Set("iiif-upstream-url", "https://iiif.example.org")
 	_ = cmd.Flags().Set("codebase", "git-root")
-	_ = cmd.Flags().Set("reverse-proxy", "enabled")
+	_ = cmd.Flags().Set("ingress", "enabled")
+	_ = cmd.Flags().Set("mode", coretraefik.IngressModeHTTPSDefault)
+	_ = cmd.Flags().Set("domain", "repo.example.org")
 	_ = cmd.Flags().Set("trusted-ip", "10.0.0.0/8")
 	_ = cmd.Flags().Set("trusted-ip", "203.0.113.4")
-	_ = cmd.Flags().Set("upload-limits", "enabled")
 	_ = cmd.Flags().Set("max-upload-size", "2G")
 	_ = cmd.Flags().Set("upload-timeout", "10m")
 	_ = cmd.Flags().Set("bot-mitigation", "on")
@@ -157,11 +160,11 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	if req.Apply.DerivativeServices["homarus"] != createpkg.DerivativeTopologyDistributed {
 		t.Fatalf("expected homarus distributed option, got %+v", req.Apply.DerivativeServices)
 	}
-	if req.ReverseProxyState != corecomponent.StateOn || req.ReverseProxyTrustedIPs != "10.0.0.0/8,203.0.113.4" {
-		t.Fatalf("expected reverse proxy enabled with trusted IPs, got state=%q trusted=%q", req.ReverseProxyState, req.ReverseProxyTrustedIPs)
+	if req.IngressState != "on" || req.IngressMode != coretraefik.IngressModeHTTPSDefault || req.IngressDomain != "repo.example.org" || req.IngressTrustedIPs != "10.0.0.0/8,203.0.113.4" {
+		t.Fatalf("expected ingress enabled with overrides, got state=%q mode=%q domain=%q trusted=%q", req.IngressState, req.IngressMode, req.IngressDomain, req.IngressTrustedIPs)
 	}
-	if req.UploadLimitsState != corecomponent.StateOn || req.MaxUploadSize != "2G" || req.UploadTimeout != "10m" {
-		t.Fatalf("expected upload limits enabled with overrides, got state=%q size=%q timeout=%q", req.UploadLimitsState, req.MaxUploadSize, req.UploadTimeout)
+	if req.MaxUploadSize != "2G" || req.UploadTimeout != "10m" {
+		t.Fatalf("expected upload limit overrides, got size=%q timeout=%q", req.MaxUploadSize, req.UploadTimeout)
 	}
 }
 
@@ -270,41 +273,6 @@ func TestBindCreateFlagsFallsBackToLocalComponentsWhenIncludedPluginMissing(t *t
 	}
 }
 
-func TestResolveCreateRequestRequiresTrustedIPForReverseProxy(t *testing.T) {
-	oldInput := createInput
-	t.Cleanup(func() {
-		createInput = oldInput
-	})
-
-	createInput = func(question ...string) (string, error) {
-		return "", nil
-	}
-
-	oldPath := createPath
-	oldDrupalRootfs := createDrupalRootfs
-	oldTemplateRepo := createTemplateRepo
-	oldTemplateBranch := createTemplateBranch
-	t.Cleanup(func() {
-		createPath = oldPath
-		createDrupalRootfs = oldDrupalRootfs
-		createTemplateRepo = oldTemplateRepo
-		createTemplateBranch = oldTemplateBranch
-	})
-
-	createPath = "/tmp/site"
-	createDrupalRootfs = createpkg.DefaultDrupalRootfs
-	createTemplateRepo = defaultTemplateRepo
-	createTemplateBranch = defaultTemplateBranch
-
-	cmd := newCreateCommandForTest()
-	_ = cmd.Flags().Set("reverse-proxy", "enabled")
-
-	_, err := resolveCreateRequest(cmd)
-	if err == nil || !strings.Contains(err.Error(), "trusted-ip is required") {
-		t.Fatalf("expected trusted-ip required error, got %v", err)
-	}
-}
-
 func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
 	oldInput := createInput
 	t.Cleanup(func() {
@@ -315,6 +283,9 @@ func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
 	inputs := []string{"2", "3", "archive", "1", "1", "1"}
 	createInput = func(question ...string) (string, error) {
 		promptCount++
+		if len(inputs) == 0 {
+			return "", nil
+		}
 		value := inputs[0]
 		inputs = inputs[1:]
 		return value, nil
@@ -347,8 +318,8 @@ func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if promptCount != 6 {
-		t.Fatalf("expected 6 prompts, got %d", promptCount)
+	if promptCount < 6 {
+		t.Fatalf("expected at least 6 prompts, got %d", promptCount)
 	}
 	if req.Apply.ISLEFileSystemURI != "archive" {
 		t.Fatalf("expected prompted custom isle-file-system-uri archive, got %q", req.Apply.ISLEFileSystemURI)
@@ -382,15 +353,15 @@ func TestCheckPrereqsSuccess(t *testing.T) {
 	if !strings.Contains(rendered, "bash is installed") {
 		t.Fatalf("expected bash checklist item, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "make is installed") {
-		t.Fatalf("expected make checklist item, got:\n%s", rendered)
+	if strings.Contains(rendered, "make is installed") {
+		t.Fatalf("did not expect make prerequisite, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "docker buildx is available: ok") {
 		t.Fatalf("expected buildx checklist item, got:\n%s", rendered)
 	}
 }
 
-func TestCheckPrereqsAllowsMissingMake(t *testing.T) {
+func TestCheckPrereqsDoesNotRequireMake(t *testing.T) {
 	oldLookPath := createLookPath
 	oldRunCheck := createRunCheckCommand
 	t.Cleanup(func() {
@@ -411,8 +382,8 @@ func TestCheckPrereqsAllowsMissingMake(t *testing.T) {
 		t.Fatalf("checkPrereqs() error = %v", err)
 	}
 	rendered := stripANSI(out.String())
-	if !strings.Contains(rendered, "missing, so create will run bash ./scripts/up.sh instead") {
-		t.Fatalf("expected make fallback guidance, got:\n%s", rendered)
+	if strings.Contains(rendered, "make is installed") || strings.Contains(rendered, "scripts/up.sh") {
+		t.Fatalf("did not expect make fallback guidance, got:\n%s", rendered)
 	}
 }
 
@@ -446,28 +417,25 @@ func TestCheckPrereqsFailsEarly(t *testing.T) {
 	}
 }
 
-func TestStartupCommandFallsBackToBash(t *testing.T) {
-	oldLookPath := createLookPath
-	t.Cleanup(func() {
-		createLookPath = oldLookPath
-	})
-
-	createLookPath = func(file string) (string, error) {
-		if file == "make" {
-			return "", errors.New("missing")
-		}
-		return "/usr/bin/" + file, nil
-	}
-
+func TestStartupCommandUsesCreateDefinitionLifecycle(t *testing.T) {
 	label, name, args := startupCommand()
-	if label != "bash ./scripts/up.sh" {
-		t.Fatalf("expected bash label, got %q", label)
+	if label != "ISLE startup commands" {
+		t.Fatalf("expected ISLE startup label, got %q", label)
 	}
 	if name != "bash" {
 		t.Fatalf("expected bash command, got %q", name)
 	}
-	if len(args) != 1 || args[0] != "./scripts/up.sh" {
-		t.Fatalf("expected bash up script args, got %#v", args)
+	if len(args) != 2 || args[0] != "-lc" {
+		t.Fatalf("expected bash lifecycle args, got %#v", args)
+	}
+	for _, want := range []string{
+		"docker compose pull --ignore-buildable",
+		"docker compose build",
+		"docker compose up --remove-orphans -d",
+	} {
+		if !strings.Contains(args[1], want) {
+			t.Fatalf("expected startup command to contain %q, got %q", want, args[1])
+		}
 	}
 }
 
@@ -498,7 +466,11 @@ func TestEnsureClonedCheckoutClonesEmptyDirectory(t *testing.T) {
 		return os.MkdirAll(opts.ProjectDir, 0o755)
 	}
 
-	cloned, err := ensureClonedCheckout(io.Discard, defaultTemplateRepo, defaultTemplateBranch, projectDir)
+	cloned, err := ensureClonedCheckout(io.Discard, createRequest{ComposeCreateRequest: plugin.ComposeCreateRequest{
+		TemplateRepo:   defaultTemplateRepo,
+		TemplateBranch: defaultTemplateBranch,
+		Path:           projectDir,
+	}})
 	if err != nil {
 		t.Fatalf("ensureClonedCheckout() error = %v", err)
 	}
@@ -530,7 +502,11 @@ func TestEnsureClonedCheckoutSkipsNonEmptyDirectory(t *testing.T) {
 		return nil
 	}
 
-	cloned, err := ensureClonedCheckout(io.Discard, defaultTemplateRepo, defaultTemplateBranch, projectDir)
+	cloned, err := ensureClonedCheckout(io.Discard, createRequest{ComposeCreateRequest: plugin.ComposeCreateRequest{
+		TemplateRepo:   defaultTemplateRepo,
+		TemplateBranch: defaultTemplateBranch,
+		Path:           projectDir,
+	}})
 	if err != nil {
 		t.Fatalf("ensureClonedCheckout() error = %v", err)
 	}

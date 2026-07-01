@@ -179,7 +179,7 @@ func verifyIIIF(ctx context.Context, checker *healthcheck.DockerChecker, project
 		results = append(results, verifyBool("verify:iiif:triplet-service", tripletExists, "triplet service is present", "triplet service is absent", "re-run sitectl create with --iiif triplet"))
 		results = append(results, verifyBool("verify:iiif:cantaloupe-service", !cantaloupeExists, "cantaloupe service is absent", "cantaloupe service is present", "re-run sitectl create with --iiif triplet"))
 		if expectedTopology == verifyIIIFLocal {
-			results = append(results, verifyProjectFileContains(projectDir, "docker-compose.yml", `DRUPAL_DEFAULT_CANTALOUPE_URL: "${SITE_URL:-${URI_SCHEME:-http}://${DOMAIN}}/iiif/3"`, "verify:iiif:drupal-url"))
+			results = append(results, verifyProjectFileContains(projectDir, "docker-compose.yml", `DRUPAL_DEFAULT_CANTALOUPE_URL: "http://localhost/iiif/3"`, "verify:iiif:drupal-url"))
 			results = append(results, verifyProjectFileExists(projectDir, filepath.Join("conf", "triplet", "config.yaml"), "verify:iiif:triplet-config"))
 		}
 	case createpkg.IIIFCantaloupe:
@@ -219,7 +219,7 @@ func verifyBotMitigation(ctx context.Context, verifyCtx *config.Context, project
 		return []sitevalidate.Result{okVerifyResult("verify:bot-mitigation", "expected off")}
 	case coretraefik.BotMitigationStateOn:
 		if !botMitigationForwardedHeaderProbeEnabled(verifyCtx) {
-			return []sitevalidate.Result{okVerifyResult("verify:bot-mitigation", "configured; skipped X-Forwarded-For challenge probe because reverse-proxy trusted IPs are not configured")}
+			return []sitevalidate.Result{okVerifyResult("verify:bot-mitigation", "configured; skipped X-Forwarded-For challenge probe because ingress trusted IPs are not configured")}
 		}
 		return []sitevalidate.Result{checkBotMitigationChallenge(ctx, verifyCtx)}
 	default:
@@ -228,7 +228,7 @@ func verifyBotMitigation(ctx context.Context, verifyCtx *config.Context, project
 }
 
 func botMitigationForwardedHeaderProbeEnabled(verifyCtx *config.Context) bool {
-	return strings.TrimSpace(currentReverseProxyTrustedIPs(verifyCtx)) != ""
+	return strings.TrimSpace(currentIngressTrustedIPs(verifyCtx)) != ""
 }
 
 func localBotMitigationConfigured(projectDir string) (bool, bool) {
@@ -244,7 +244,7 @@ func localBotMitigationConfigured(projectDir string) (bool, bool) {
 }
 
 func checkBotMitigationChallenge(ctx context.Context, verifyCtx *config.Context) sitevalidate.Result {
-	target := healthcheck.PublicURLFromEnv(verifyCtx, "http", "islandora.io")
+	target := isleDrupalPublicURL(verifyCtx)
 	client, err := botMitigationHTTPClient(target, verifyCtx)
 	if err != nil {
 		return failedVerifyResult("verify:bot-mitigation", err.Error(), "")
