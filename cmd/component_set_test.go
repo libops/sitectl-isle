@@ -851,6 +851,42 @@ services:
 	}
 }
 
+func TestApplyISLEIngressFilesUsesInternalDrupalURLForLocalFcrepo(t *testing.T) {
+	projectDir := t.TempDir()
+	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+services:
+  drupal:
+    environment:
+      DRUPAL_DEFAULT_SITE_URL: http://localhost
+      DRUSH_OPTIONS_URI: http://localhost
+  fcrepo:
+    environment:
+      FCREPO_ALLOW_EXTERNAL_DRUPAL: http://localhost/
+    image: libops/fcrepo:7
+  traefik:
+    command: []
+`)
+
+	ctx := &config.Context{ProjectDir: projectDir}
+	if err := applyISLEIngressFiles(ctx, map[string]string{
+		"mode":   coretraefik.IngressModeHTTP,
+		"domain": "localhost",
+	}); err != nil {
+		t.Fatalf("applyISLEIngressFiles() error = %v", err)
+	}
+
+	compose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	for _, want := range []string{
+		`DRUPAL_DEFAULT_SITE_URL: "http://drupal.localhost"`,
+		`DRUSH_OPTIONS_URI: "http://drupal.localhost"`,
+		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.localhost/"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		}
+	}
+}
+
 func TestRunComponentSetIngressLetsEncryptRequiresACMEEmail(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)

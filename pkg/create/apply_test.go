@@ -29,7 +29,9 @@ services:
       DRUPAL_DEFAULT_FCREPO_HOST: fcrepo
       DRUPAL_DEFAULT_FCREPO_PORT: 8080
       DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.example/fcrepo/rest/
+      DRUPAL_DEFAULT_SITE_URL: http://drupal.localhost
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: temporary
+      DRUSH_OPTIONS_URI: http://drupal.localhost
   fcrepo:
     image: islandora/fcrepo6
   milliner:
@@ -78,6 +80,14 @@ volumes:
 	}
 	if strings.Contains(compose, "DRUPAL_DEFAULT_FCREPO_URL") {
 		t.Fatalf("expected fcrepo env removed, got:\n%s", compose)
+	}
+	for _, want := range []string{
+		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
+		`DRUSH_OPTIONS_URI: "http://localhost"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		}
 	}
 	if !strings.Contains(compose, `ALPACA_FCREPO_INDEXER_ENABLED: "false"`) && !strings.Contains(compose, "ALPACA_FCREPO_INDEXER_ENABLED: \"false\"") {
 		t.Fatalf("expected fcrepo indexer flag disabled, got:\n%s", compose)
@@ -180,6 +190,9 @@ volumes: {}
 		"image: islandora/milliner:main",
 		`ALPACA_FCREPO_INDEXER_ENABLED: "true"`,
 		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`,
+		`DRUPAL_DEFAULT_SITE_URL: "http://drupal.localhost"`,
+		`DRUSH_OPTIONS_URI: "http://drupal.localhost"`,
+		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.localhost/"`,
 	} {
 		if !strings.Contains(compose, want) {
 			t.Fatalf("expected restored compose to contain %q, got:\n%s", want, compose)

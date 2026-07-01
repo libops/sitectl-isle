@@ -456,6 +456,40 @@ services:
 	}
 }
 
+func TestCurrentIngressFollowUpsPrefersTraefikRouteDomain(t *testing.T) {
+	projectDir := t.TempDir()
+	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+services:
+  drupal:
+    environment:
+      DRUPAL_DEFAULT_SITE_URL: `+createpkg.LocalDrupalBaseURL+`
+  traefik:
+    command:
+      - --entryPoints.http.address=:80
+`)
+	writeFileForTest(t, filepath.Join(projectDir, ".env"), "DOMAIN=sandbox.islandora.ca\n")
+	if err := os.MkdirAll(filepath.Join(projectDir, "conf", "traefik"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(conf/traefik) error = %v", err)
+	}
+	writeFileForTest(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"), `
+http:
+  services:
+    drupal:
+      loadBalancer:
+        servers:
+          - url: http://drupal:80
+  routers:
+    drupal:
+      rule: Host(`+"`"+`localhost`+"`"+`)
+      service: drupal
+`)
+
+	got := currentIngressFollowUps(&config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal})
+	if got["domain"] != "localhost" {
+		t.Fatalf("expected Traefik route domain localhost, got %#v", got)
+	}
+}
+
 func TestRunIsleValidationAcceptsTripletIIIFConfig(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)

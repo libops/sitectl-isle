@@ -192,7 +192,10 @@ func currentIngressFollowUps(siteCtx *config.Context) map[string]string {
 	command := composeServiceCommand(compose, "traefik")
 	projectEnv := healthcheck.ProjectEnv(siteCtx)
 	followUps["mode"] = detectIngressMode(command)
-	if domain := domainFromServiceURL(composeServiceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL"), projectEnv); domain != "" {
+	if domain := domainFromTraefikRoute(siteCtx, projectEnv); domain != "" {
+		followUps["domain"] = domain
+	}
+	if domain := domainFromServiceURL(composeServiceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL"), projectEnv); domain != "" && followUps["domain"] == "" {
 		followUps["domain"] = domain
 	}
 	if followUps["domain"] == "" {
@@ -222,6 +225,19 @@ func currentIngressFollowUps(siteCtx *config.Context) map[string]string {
 		}
 	}
 	return followUps
+}
+
+func domainFromTraefikRoute(siteCtx *config.Context, projectEnv map[string]string) string {
+	publicURL, ok, err := healthcheck.PublicURLFromTraefik(siteCtx, healthcheck.TraefikRouteOptions{
+		AppService:    "drupal",
+		Router:        "drupal",
+		DefaultScheme: "http",
+		DefaultDomain: coretraefik.DefaultIngressDomain,
+	})
+	if err != nil || !ok {
+		return ""
+	}
+	return domainFromServiceURL(publicURL, projectEnv)
 }
 
 func detectIngressMode(command string) string {

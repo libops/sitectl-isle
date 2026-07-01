@@ -37,8 +37,11 @@ const (
 	PrivateISLEFileSystemURI = "private"
 	drupalFcrepoInternalURL  = "http://fcrepo:8080/fcrepo/rest/"
 
-	drupalRouterName              = "drupal"
-	localDrupalHost               = "drupal.localhost"
+	drupalRouterName = "drupal"
+	localDrupalHost  = "drupal.localhost"
+	// LocalDrupalBaseURL is the internal Traefik route used by local Fcrepo
+	// clients that cannot reach the host machine's localhost.
+	LocalDrupalBaseURL            = "http://" + localDrupalHost
 	localDrupalHostRule           = "Host(`drupal.localhost`)"
 	localDrupalRouterName         = "drupal-localhost"
 	localDrupalRouterPriority     = 9000
@@ -194,7 +197,7 @@ func Apply(opts Options) error {
 			return fmt.Errorf("apply bot-mitigation=%s: %w", opts.BotMitigation, err)
 		}
 	}
-	if err := SyncLocalDrupalInternalIngress(opts.Path, true); err != nil {
+	if err := SyncLocalDrupalInternalIngress(opts.Path, opts.Fcrepo == FcrepoStateOn); err != nil {
 		return fmt.Errorf("sync local Drupal ingress: %w", err)
 	}
 
@@ -752,6 +755,19 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 			return err
 		}
 	}
+	if shouldUseLocalDrupalInternalURL(serviceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL")) {
+		for key, value := range map[string]string{
+			"DRUPAL_DEFAULT_SITE_URL": LocalDrupalBaseURL,
+			"DRUSH_OPTIONS_URI":       LocalDrupalBaseURL,
+		} {
+			if err := compose.SetServiceEnv("drupal", key, value); err != nil {
+				return err
+			}
+		}
+	}
+	if err := compose.SetServiceEnv("fcrepo", "FCREPO_ALLOW_EXTERNAL_DRUPAL", fcrepoAllowedDrupalURL(serviceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL"))); err != nil {
+		return err
+	}
 	if err := compose.SetServiceEnv("alpaca", "ALPACA_FCREPO_INDEXER_ENABLED", "true"); err != nil {
 		return err
 	}
@@ -960,6 +976,16 @@ func updateComposeForFcrepoOff(composePath string) error {
 	if err := compose.DeleteService("milliner"); err != nil {
 		return err
 	}
+	if serviceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL") == LocalDrupalBaseURL {
+		if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_SITE_URL", publicSiteURLExpr); err != nil {
+			return err
+		}
+	}
+	if serviceEnvValue(compose, "drupal", "DRUSH_OPTIONS_URI") == LocalDrupalBaseURL {
+		if err := compose.SetServiceEnv("drupal", "DRUSH_OPTIONS_URI", publicSiteURLExpr); err != nil {
+			return err
+		}
+	}
 	for _, key := range []string{
 		"DRUPAL_DEFAULT_FCREPO_HOST",
 		"DRUPAL_DEFAULT_FCREPO_PORT",
@@ -976,6 +1002,53 @@ func updateComposeForFcrepoOff(composePath string) error {
 		return err
 	}
 	return compose.Save()
+}
+
+func shouldUseLocalDrupalInternalURL(siteURL string) bool {
+	siteURL = strings.TrimSpace(siteURL)
+	if siteURL == "" {
+		return true
+	}
+	host := serviceURLHost(siteURL)
+	return host == "" || host == "localhost" || host == "127.0.0.1"
+}
+
+func fcrepoAllowedDrupalURL(siteURL string) string {
+	siteURL = strings.TrimRight(strings.TrimSpace(siteURL), "/")
+	if siteURL == "" {
+		siteURL = publicSiteURLExpr
+	}
+	return siteURL + "/"
+}
+
+func serviceEnvValue(compose *corecomponent.ComposeFile, service, key string) string {
+	if compose == nil {
+		return ""
+	}
+	block, ok := compose.ServiceBlock(service)
+	if !ok {
+		return ""
+	}
+	for _, line := range strings.Split(block, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, key+":") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(trimmed, key+":"))
+		return strings.Trim(value, `"'`)
+	}
+	return ""
+}
+
+func serviceURLHost(value string) string {
+	value = strings.TrimSpace(value)
+	scheme, rest, ok := strings.Cut(value, "://")
+	if !ok || strings.TrimSpace(scheme) == "" {
+		return ""
+	}
+	host, _, _ := strings.Cut(rest, "/")
+	host, _, _ = strings.Cut(host, ":")
+	return strings.ToLower(strings.TrimSpace(host))
 }
 
 func updateComposeForBlazegraphOff(composePath string) error {

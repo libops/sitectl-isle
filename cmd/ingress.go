@@ -20,9 +20,6 @@ func applyISLEIngressFiles(ctx *config.Context, values map[string]string) error 
 	if ctx == nil {
 		return fmt.Errorf("context is nil")
 	}
-	if err := createpkg.SyncLocalDrupalInternalIngress(ctx.ProjectDir, ingressDomain(values) == coretraefik.DefaultIngressDomain); err != nil {
-		return err
-	}
 	if err := applyISLEFcrepoIngressEnv(ctx, values); err != nil {
 		return err
 	}
@@ -57,6 +54,10 @@ func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) er
 	if err != nil {
 		return err
 	}
+	localFcrepo := compose.HasService("fcrepo") && ingressDomain(values) == coretraefik.DefaultIngressDomain
+	if err := createpkg.SyncLocalDrupalInternalIngress(ctx.ProjectDir, localFcrepo); err != nil {
+		return err
+	}
 	if !compose.HasService("fcrepo") {
 		for _, key := range []string{
 			"DRUPAL_DEFAULT_FCREPO_HOST",
@@ -71,6 +72,19 @@ func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) er
 	}
 	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_FCREPO_URL", drupalFcrepoInternalURL); err != nil {
 		return err
+	}
+	if localFcrepo {
+		for key, value := range map[string]string{
+			"DRUPAL_DEFAULT_SITE_URL": createpkg.LocalDrupalBaseURL,
+			"DRUSH_OPTIONS_URI":       createpkg.LocalDrupalBaseURL,
+		} {
+			if err := compose.SetServiceEnv("drupal", key, value); err != nil {
+				return err
+			}
+		}
+		if err := compose.SetServiceEnv("fcrepo", "FCREPO_ALLOW_EXTERNAL_DRUPAL", createpkg.LocalDrupalBaseURL+"/"); err != nil {
+			return err
+		}
 	}
 	return compose.Save()
 }
