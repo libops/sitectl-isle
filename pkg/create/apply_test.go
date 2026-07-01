@@ -281,6 +281,9 @@ http:
 	if strings.Contains(router, "drupal-internal") || strings.Contains(router, "drupal-internal-host") {
 		t.Fatalf("expected local Drupal router removed, got:\n%s", router)
 	}
+	if strings.Contains(router, "middlewares: {}") {
+		t.Fatalf("expected empty middleware map pruned, got:\n%s", router)
+	}
 }
 
 func TestApplyBlazegraphOnRestoresServiceAndVolume(t *testing.T) {
