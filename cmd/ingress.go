@@ -58,6 +58,9 @@ func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) er
 	if err := createpkg.SyncLocalDrupalInternalIngress(ctx.ProjectDir, localFcrepo); err != nil {
 		return err
 	}
+	if err := compose.SetServiceEnv("drupal", "DRUPAL_TRUSTED_HOST_PATTERNS", createpkg.TrustedHostPatterns(ingressDomain(values), localFcrepo)); err != nil {
+		return err
+	}
 	if !compose.HasService("fcrepo") {
 		for _, key := range []string{
 			"DRUPAL_DEFAULT_FCREPO_HOST",

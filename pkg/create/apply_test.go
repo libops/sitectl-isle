@@ -192,6 +192,7 @@ volumes: {}
 		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`,
 		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
 		`DRUSH_OPTIONS_URI: "http://drupal.internal"`,
+		`DRUPAL_TRUSTED_HOST_PATTERNS: "^localhost$,^drupal\\.internal$"`,
 		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.internal/"`,
 	} {
 		if !strings.Contains(compose, want) {
@@ -259,13 +260,16 @@ http:
 	for _, want := range []string{
 		"drupal-internal:",
 		"Host(`drupal.internal`)",
-		"drupal-internal-host:",
-		"Host: localhost",
 		"priority: 9000",
 		"entryPoints:\n        - http",
 	} {
 		if !strings.Contains(router, want) {
 			t.Fatalf("expected router to contain %q, got:\n%s", want, router)
+		}
+	}
+	for _, absent := range []string{"drupal-internal-host", "Host: localhost", "middlewares:"} {
+		if strings.Contains(router, absent) {
+			t.Fatalf("expected router not to contain %q, got:\n%s", absent, router)
 		}
 	}
 
@@ -283,6 +287,17 @@ http:
 	}
 	if strings.Contains(router, "middlewares: {}") {
 		t.Fatalf("expected empty middleware map pruned, got:\n%s", router)
+	}
+}
+
+func TestTrustedHostPatterns(t *testing.T) {
+	t.Parallel()
+
+	if got := TrustedHostPatterns("repo.example.org", false); got != `^repo\.example\.org$` {
+		t.Fatalf("TrustedHostPatterns(public) = %q", got)
+	}
+	if got := TrustedHostPatterns("localhost", true); got != `^localhost$,^drupal\.internal$` {
+		t.Fatalf("TrustedHostPatterns(local) = %q", got)
 	}
 }
 

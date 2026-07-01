@@ -879,6 +879,7 @@ services:
 	for _, want := range []string{
 		`DRUPAL_DEFAULT_SITE_URL: http://localhost`,
 		`DRUSH_OPTIONS_URI: "http://drupal.internal"`,
+		`DRUPAL_TRUSTED_HOST_PATTERNS: "^localhost$,^drupal\\.internal$"`,
 		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.internal/"`,
 	} {
 		if !strings.Contains(compose, want) {

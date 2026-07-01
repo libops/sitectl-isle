@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	corecomponent "github.com/libops/sitectl/pkg/component"
@@ -51,6 +52,9 @@ const (
 	workbenchClientRouterPriority = 100000
 	defaultDrupalHostRule         = "Host(`localhost`)"
 )
+
+// DefaultTrustedHostPatterns is the Drupal trusted-host regex for local sites.
+const DefaultTrustedHostPatterns = "^localhost$"
 
 var fedoraCleanupFiles = []string{
 	"context.context.all_media.yml",
@@ -360,7 +364,10 @@ func syncLocalDrupalRouter(projectDir string, enabled bool) error {
 	if err := doc.SetValue(routerPath, router); err != nil {
 		return err
 	}
-	if err := doc.SetValue(".http.middlewares."+localDrupalHostMiddlewareName, localDrupalHostMiddleware()); err != nil {
+	if err := doc.DeletePath(".http.middlewares." + localDrupalHostMiddlewareName); err != nil {
+		return err
+	}
+	if err := deletePathIfEmptyYAMLMap(doc, ".http.middlewares"); err != nil {
 		return err
 	}
 	updated, err := doc.Bytes()
@@ -436,10 +443,9 @@ func localDrupalRouter(data []byte) (map[string]any, error) {
 		return nil, err
 	}
 	router := map[string]any{
-		"rule":        localDrupalHostRule,
-		"service":     drupalRouterName,
-		"priority":    localDrupalRouterPriority,
-		"middlewares": []any{localDrupalHostMiddlewareName},
+		"rule":     localDrupalHostRule,
+		"service":  drupalRouterName,
+		"priority": localDrupalRouterPriority,
 	}
 	for _, key := range []string{"entryPoints", "tls"} {
 		if value, ok := source[key]; ok {
@@ -447,16 +453,6 @@ func localDrupalRouter(data []byte) (map[string]any, error) {
 		}
 	}
 	return router, nil
-}
-
-func localDrupalHostMiddleware() map[string]any {
-	return map[string]any{
-		"headers": map[string]any{
-			"customRequestHeaders": map[string]any{
-				"Host": coretraefik.DefaultIngressDomain,
-			},
-		},
-	}
 }
 
 func drupalRouter(data []byte) (map[string]any, error) {
@@ -812,6 +808,9 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 		if err := compose.SetServiceEnv("drupal", "DRUSH_OPTIONS_URI", LocalDrupalBaseURL); err != nil {
 			return err
 		}
+		if err := compose.SetServiceEnv("drupal", "DRUPAL_TRUSTED_HOST_PATTERNS", TrustedHostPatterns(coretraefik.DefaultIngressDomain, true)); err != nil {
+			return err
+		}
 	}
 	if err := compose.SetServiceEnv("fcrepo", "FCREPO_ALLOW_EXTERNAL_DRUPAL", fcrepoAllowedDrupalURL(firstServiceEnvValue(compose, "drupal", "DRUSH_OPTIONS_URI", "DRUPAL_DEFAULT_SITE_URL"))); err != nil {
 		return err
@@ -1059,6 +1058,39 @@ func shouldUseLocalDrupalInternalURL(siteURL string) bool {
 	}
 	host := serviceURLHost(siteURL)
 	return host == "" || host == "localhost" || host == "127.0.0.1"
+}
+
+// TrustedHostPatterns returns comma-separated Drupal trusted host regexes.
+func TrustedHostPatterns(domain string, includeLocalDrupal bool) string {
+	patterns := []string{trustedHostPattern(domain)}
+	if includeLocalDrupal {
+		patterns = append(patterns, trustedHostPattern(localDrupalHost))
+	}
+	return strings.Join(uniqueStrings(patterns), ",")
+}
+
+func trustedHostPattern(domain string) string {
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		domain = coretraefik.DefaultIngressDomain
+	}
+	if domain == coretraefik.DefaultIngressDomain {
+		return DefaultTrustedHostPatterns
+	}
+	return "^" + regexp.QuoteMeta(domain) + "$"
+}
+
+func uniqueStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func fcrepoAllowedDrupalURL(siteURL string) string {
