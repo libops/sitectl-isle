@@ -196,6 +196,78 @@ volumes: {}
 	}
 }
 
+func TestSyncLocalDrupalInternalIngress(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectDir, "conf", "traefik"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(conf/traefik) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+services:
+  traefik:
+    networks:
+      default:
+        aliases:
+          - fcrepo.localhost
+networks:
+  default: {}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "conf", "traefik", "drupal.yml"), []byte(`
+http:
+  services:
+    drupal:
+      loadBalancer:
+        servers:
+          - url: http://drupal:80
+  routers:
+    drupal:
+      rule: Host(`+"`"+`localhost`+"`"+`)
+      entryPoints:
+        - http
+      service: drupal
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(drupal router) error = %v", err)
+	}
+
+	if err := SyncLocalDrupalInternalIngress(projectDir, true); err != nil {
+		t.Fatalf("SyncLocalDrupalInternalIngress(true) error = %v", err)
+	}
+
+	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	for _, want := range []string{"fcrepo.localhost", "drupal.localhost"} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		}
+	}
+	router := readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
+	for _, want := range []string{
+		"drupal-localhost:",
+		"Host(`drupal.localhost`)",
+		"priority: 9000",
+		"entryPoints:\n        - http",
+	} {
+		if !strings.Contains(router, want) {
+			t.Fatalf("expected router to contain %q, got:\n%s", want, router)
+		}
+	}
+
+	if err := SyncLocalDrupalInternalIngress(projectDir, false); err != nil {
+		t.Fatalf("SyncLocalDrupalInternalIngress(false) error = %v", err)
+	}
+
+	compose = readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	if strings.Contains(compose, "drupal.localhost") || !strings.Contains(compose, "fcrepo.localhost") {
+		t.Fatalf("expected only local Drupal alias removed, got:\n%s", compose)
+	}
+	router = readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
+	if strings.Contains(router, "drupal-localhost") {
+		t.Fatalf("expected local Drupal router removed, got:\n%s", router)
+	}
+}
+
 func TestApplyBlazegraphOnRestoresServiceAndVolume(t *testing.T) {
 	t.Parallel()
 

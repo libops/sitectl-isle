@@ -20,6 +20,9 @@ func applyISLEIngressFiles(ctx *config.Context, values map[string]string) error 
 	if ctx == nil {
 		return fmt.Errorf("context is nil")
 	}
+	if err := createpkg.SyncLocalDrupalInternalIngress(ctx.ProjectDir, ingressDomain(values) == coretraefik.DefaultIngressDomain); err != nil {
+		return err
+	}
 	if err := applyISLEFcrepoIngressEnv(ctx, values); err != nil {
 		return err
 	}

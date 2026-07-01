@@ -37,6 +37,11 @@ const (
 	PrivateISLEFileSystemURI = "private"
 	drupalFcrepoInternalURL  = "http://fcrepo:8080/fcrepo/rest/"
 
+	drupalRouterName              = "drupal"
+	localDrupalHost               = "drupal.localhost"
+	localDrupalHostRule           = "Host(`drupal.localhost`)"
+	localDrupalRouterName         = "drupal-localhost"
+	localDrupalRouterPriority     = 9000
 	workbenchClientRouterName     = "islandora-workbench-client"
 	workbenchClientUserAgentRule  = "HeaderRegexp(`User-Agent`, `(?i)^Islandora Workbench$`)"
 	workbenchClientRouterPriority = 100000
@@ -189,6 +194,9 @@ func Apply(opts Options) error {
 			return fmt.Errorf("apply bot-mitigation=%s: %w", opts.BotMitigation, err)
 		}
 	}
+	if err := SyncLocalDrupalInternalIngress(opts.Path, true); err != nil {
+		return fmt.Errorf("sync local Drupal ingress: %w", err)
+	}
 
 	return nil
 }
@@ -255,6 +263,100 @@ func SyncBotMitigationBypass(projectDir string) error {
 	return updateWorkbenchClientBypass(projectDir, strings.Contains(string(data), "captcha-protect"))
 }
 
+func SyncLocalDrupalInternalIngress(projectDir string, enabled bool) error {
+	routerPath := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	if _, err := os.Stat(routerPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat local Drupal router config: %w", err)
+	}
+	if err := syncLocalDrupalTraefikAlias(projectDir, enabled); err != nil {
+		return err
+	}
+	return syncLocalDrupalRouter(projectDir, enabled)
+}
+
+func syncLocalDrupalTraefikAlias(projectDir string, enabled bool) error {
+	path := filepath.Join(projectDir, "docker-compose.yml")
+	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read docker-compose.yml: %w", err)
+	}
+	var root map[string]any
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return fmt.Errorf("parse docker-compose.yml: %w", err)
+	}
+	services := yamlMap(root["services"])
+	traefik := yamlMap(services["traefik"])
+	if traefik == nil {
+		return nil
+	}
+	networks := yamlMap(traefik["networks"])
+	defaultNetwork := yamlMap(networks["default"])
+	if defaultNetwork == nil && !enabled {
+		return nil
+	}
+	aliases := stringSlice(defaultNetwork["aliases"])
+	aliases = setStringPresent(aliases, localDrupalHost, enabled)
+	if !enabled && len(aliases) == len(stringSlice(defaultNetwork["aliases"])) {
+		return nil
+	}
+	doc, err := corecomponent.LoadYAMLDocument(data)
+	if err != nil {
+		return fmt.Errorf("load docker-compose.yml: %w", err)
+	}
+	if err := doc.SetValue(".services.traefik.networks.default.aliases", aliases); err != nil {
+		return fmt.Errorf("set Traefik local Drupal alias: %w", err)
+	}
+	updated, err := doc.Bytes()
+	if err != nil {
+		return fmt.Errorf("marshal docker-compose.yml: %w", err)
+	}
+	return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+}
+
+func syncLocalDrupalRouter(projectDir string, enabled bool) error {
+	path := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read local Drupal router config: %w", err)
+	}
+	doc, err := corecomponent.LoadYAMLDocument(data)
+	if err != nil {
+		return fmt.Errorf("parse local Drupal router config: %w", err)
+	}
+	routerPath := ".http.routers." + localDrupalRouterName
+	if !enabled {
+		if err := doc.DeletePath(routerPath); err != nil {
+			return err
+		}
+		updated, err := doc.Bytes()
+		if err != nil {
+			return fmt.Errorf("marshal local Drupal router config: %w", err)
+		}
+		return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+	}
+	router, err := localDrupalRouter(data)
+	if err != nil {
+		return err
+	}
+	if err := doc.SetValue(routerPath, router); err != nil {
+		return err
+	}
+	updated, err := doc.Bytes()
+	if err != nil {
+		return fmt.Errorf("marshal local Drupal router config: %w", err)
+	}
+	return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+}
+
 func updateWorkbenchClientBypass(projectDir string, enabled bool) error {
 	path := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
 	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
@@ -315,6 +417,24 @@ func workbenchClientRouter(data []byte) (map[string]any, error) {
 	return router, nil
 }
 
+func localDrupalRouter(data []byte) (map[string]any, error) {
+	source, err := drupalRouter(data)
+	if err != nil {
+		return nil, err
+	}
+	router := map[string]any{
+		"rule":     localDrupalHostRule,
+		"service":  drupalRouterName,
+		"priority": localDrupalRouterPriority,
+	}
+	for _, key := range []string{"entryPoints", "tls"} {
+		if value, ok := source[key]; ok {
+			router[key] = value
+		}
+	}
+	return router, nil
+}
+
 func drupalRouter(data []byte) (map[string]any, error) {
 	var root map[string]any
 	if err := yaml.Unmarshal(data, &root); err != nil {
@@ -327,6 +447,42 @@ func drupalRouter(data []byte) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	return router, nil
+}
+
+func stringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string{}, typed...)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if item != nil {
+				out = append(out, fmt.Sprint(item))
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func setStringPresent(values []string, target string, present bool) []string {
+	out := make([]string, 0, len(values)+1)
+	found := false
+	for _, value := range values {
+		if value == target {
+			found = true
+			if present {
+				out = append(out, value)
+			}
+			continue
+		}
+		out = append(out, value)
+	}
+	if present && !found {
+		out = append(out, target)
+	}
+	return out
 }
 
 func yamlMap(value any) map[string]any {
