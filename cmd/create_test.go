@@ -515,6 +515,46 @@ func TestEnsureClonedCheckoutSkipsNonEmptyDirectory(t *testing.T) {
 	}
 }
 
+func TestRefreshCreateContextComposeMetadataUsesTemplateComposeName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte("name: isle-site-template\nservices: {}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(docker-compose.yml) error = %v", err)
+	}
+	ctx := &config.Context{
+		Name:               "isle-local",
+		Site:               "isle",
+		Plugin:             "isle",
+		DockerHostType:     config.ContextLocal,
+		ProjectDir:         projectDir,
+		ProjectName:        "isle",
+		ComposeProjectName: "isle",
+		ComposeNetwork:     "isle_default",
+	}
+	if err := config.SaveContext(ctx, true); err != nil {
+		t.Fatalf("SaveContext() error = %v", err)
+	}
+
+	if err := refreshCreateContextComposeMetadata(ctx); err != nil {
+		t.Fatalf("refreshCreateContextComposeMetadata() error = %v", err)
+	}
+
+	if ctx.ComposeProjectName != "isle-site-template" {
+		t.Fatalf("expected in-memory compose project name refreshed, got %q", ctx.ComposeProjectName)
+	}
+	if ctx.ComposeNetwork != "isle-site-template_default" {
+		t.Fatalf("expected in-memory compose network refreshed, got %q", ctx.ComposeNetwork)
+	}
+	saved, err := config.GetContext("isle-local")
+	if err != nil {
+		t.Fatalf("GetContext() error = %v", err)
+	}
+	if saved.ComposeProjectName != "isle-site-template" || saved.ComposeNetwork != "isle-site-template_default" {
+		t.Fatalf("expected saved context metadata refreshed, got project=%q network=%q", saved.ComposeProjectName, saved.ComposeNetwork)
+	}
+}
+
 func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	oldSDK := commandSDK
 	oldEnsure := createEnsureLocalContext
@@ -859,6 +899,72 @@ func TestBootstrapCheckoutRunsGitAddAndInitialCommit(t *testing.T) {
 	}
 	if got, want := strings.Join(commands[1], " "), fmt.Sprintf("git -c safe.directory=%s -c user.name=sitectl-isle -c user.email=sitectl-isle@localhost commit -m initial commit.", projectDir); got != want {
 		t.Fatalf("unexpected commit command %q", got)
+	}
+}
+
+func TestRunStartupPreparesLocalPortEnv(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	projectDir := t.TempDir()
+
+	oldPrepare := createPrepareStartup
+	oldRunProject := createRunProjectCommand
+	t.Cleanup(func() {
+		createPrepareStartup = oldPrepare
+		createRunProjectCommand = oldRunProject
+	})
+
+	var prepared bool
+	createPrepareStartup = func(out io.Writer, ctx *config.Context) (map[string]string, error) {
+		prepared = true
+		if ctx.ProjectDir != projectDir {
+			t.Fatalf("expected prepare project dir %q, got %q", projectDir, ctx.ProjectDir)
+		}
+		return map[string]string{
+			"SITE_URL":   "http://localhost:8081",
+			"URI_SCHEME": "http",
+		}, nil
+	}
+
+	var commands []string
+	createRunProjectCommand = func(gotProjectDir string, stdout, stderr io.Writer, name string, args ...string) error {
+		if gotProjectDir != projectDir {
+			t.Fatalf("expected project dir %q, got %q", projectDir, gotProjectDir)
+		}
+		if name != "bash" || len(args) != 2 || args[0] != "-lc" {
+			t.Fatalf("expected bash -lc command, got %s %v", name, args)
+		}
+		commands = append(commands, args[1])
+		return nil
+	}
+
+	if err := runStartup(io.Discard, &config.Context{Name: "isle-local", ProjectDir: projectDir}); err != nil {
+		t.Fatalf("runStartup() error = %v", err)
+	}
+	if !prepared {
+		t.Fatal("expected startup port preparation")
+	}
+	if len(commands) == 0 {
+		t.Fatal("expected startup commands")
+	}
+	for _, command := range commands {
+		if !strings.HasPrefix(command, "export SITE_URL='http://localhost:8081' URI_SCHEME='http'; ") {
+			t.Fatalf("expected command to include local port env prefix, got %q", command)
+		}
+	}
+}
+
+func TestShellEnvPrefixWorksBeforeCompoundCommands(t *testing.T) {
+	got := shellEnvPrefix(map[string]string{
+		"SITE_URL":   "http://localhost:8081",
+		"URI_SCHEME": "http",
+	})
+	want := "export SITE_URL='http://localhost:8081' URI_SCHEME='http'; "
+	if got != want {
+		t.Fatalf("shellEnvPrefix() = %q, want %q", got, want)
+	}
+	compound := got + "if [ -d drupal/rootfs ]; then find drupal/rootfs -type d -exec chmod 755 {} \\; ; fi"
+	if !strings.Contains(compound, "; if [ -d drupal/rootfs ]") {
+		t.Fatalf("expected export prefix to terminate before compound command, got %q", compound)
 	}
 }
 

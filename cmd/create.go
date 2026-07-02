@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,8 @@ var (
 	createRunProjectCommand  = defaultRunProjectCommand
 	createBootstrapCheckout  = bootstrapCheckout
 	createRunStartup         = runStartup
+	createRefreshContext     = refreshCreateContextComposeMetadata
+	createPrepareStartup     = prepareCreateStartup
 	createCheckPrereqs       = checkPrereqs
 	createLookPath           = exec.LookPath
 	createRunCheckCommand    = runCheckCommand
@@ -316,6 +319,10 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		printCreateFailureSummary(summary, req)
 		return err
 	}
+	if err := createRefreshContext(ctx); err != nil {
+		printCreateFailureSummary(summary, req)
+		return err
+	}
 	if !req.ImageOverrides.Empty() {
 		if err := plugin.ApplyComposeImageOverrides(ctx.ProjectDir, req.ImageOverrides); err != nil {
 			printCreateFailureSummary(summary, req)
@@ -427,6 +434,23 @@ func ensureCreateContext(sdk *plugin.SDK, req createRequest) (*config.Context, e
 	})
 }
 
+func refreshCreateContextComposeMetadata(ctx *config.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	projectDir := strings.TrimSpace(ctx.ProjectDir)
+	if projectDir == "" {
+		return nil
+	}
+	composeProjectName := config.DetectComposeProjectName(projectDir)
+	if strings.TrimSpace(composeProjectName) == "" || composeProjectName == ctx.ComposeProjectName {
+		return nil
+	}
+	ctx.ComposeProjectName = composeProjectName
+	ctx.ComposeNetwork = config.DetectComposeNetworkName(projectDir, composeProjectName)
+	return config.SaveContext(ctx, false)
+}
+
 func runStartup(out io.Writer, ctx *config.Context) error {
 	cleanupLabel, _, _ := cleanupCommand()
 	logPath, err := startupLogPath(ctx.Name)
@@ -461,12 +485,18 @@ This will completely stop and destroy the setup.`, shellPath(ctx.ProjectDir), cl
 	))
 	fmt.Fprintln(out)
 
+	startupEnv, err := createPrepareStartup(out, ctx)
+	if err != nil {
+		return err
+	}
+
 	if err := runWithSpinner(out, "Starting the Islandora stack", func() error {
 		for _, commandText := range startupCommands() {
 			commandText = strings.TrimSpace(commandText)
 			if commandText == "" {
 				continue
 			}
+			commandText = shellEnvPrefix(startupEnv) + commandText
 			if _, err := fmt.Fprintf(logFile, "Running %s\n", commandText); err != nil {
 				return err
 			}
@@ -495,6 +525,20 @@ This will completely stop and destroy the setup.`, shellPath(ctx.ProjectDir), cl
 	))
 	fmt.Fprintln(out)
 	return nil
+}
+
+func prepareCreateStartup(out io.Writer, ctx *config.Context) (map[string]string, error) {
+	if ctx == nil {
+		return nil, nil
+	}
+	envValues, messages, err := ctx.PrepareComposeUpPortOverride()
+	if err != nil {
+		return nil, err
+	}
+	for _, message := range messages {
+		fmt.Fprintln(out, message)
+	}
+	return envValues, nil
 }
 
 type prereqCheck struct {
@@ -907,4 +951,25 @@ func shellSingleQuote(value string) string {
 
 func shellPath(value string) string {
 	return shellSingleQuote(value)
+}
+
+func shellEnvPrefix(values map[string]string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+shellSingleQuote(values[key]))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "export " + strings.Join(parts, " ") + "; "
 }
