@@ -93,6 +93,12 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 		state = corecomponent.DispositionToState(disposition)
 	}
 
+	assistantDevMode := name == coredevmode.Name && strings.TrimSpace(stateValue) == "" && componentSetBoolFlagValue(cmd, "assistant")
+	if assistantDevMode {
+		disposition = corecomponent.DispositionEnabled
+		state = corecomponent.StateOn
+	}
+
 	var statuses []componentView
 	if remoteContext {
 		statuses, err = detectComponentViewsForDefinitions(ctx, rootfs, def)
@@ -123,7 +129,7 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 		}
 	}
 
-	if strings.TrimSpace(stateValue) == "" {
+	if strings.TrimSpace(stateValue) == "" && !assistantDevMode {
 		status, ok := statusByName[name]
 		if !ok {
 			return fmt.Errorf("missing detected status for component %q", name)
@@ -171,7 +177,7 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 		return runIngressComponentSet(cmd, ctx, disposition, state, followUps)
 	}
 	if name == coredevmode.Name {
-		return runDevModeComponentSet(cmd, ctx, disposition, state)
+		return runDevModeComponentSet(cmd, ctx, disposition, state, followUps)
 	}
 	if name == coretraefik.BotMitigationName {
 		return runBotMitigationComponentSet(cmd, ctx, disposition, state)
@@ -435,13 +441,13 @@ func uploadLimitValue(values map[string]string, key string) string {
 	}
 }
 
-func runDevModeComponentSet(cmd *cobra.Command, ctx *config.Context, disposition corecomponent.Disposition, state corecomponent.State) error {
+func runDevModeComponentSet(cmd *cobra.Command, ctx *config.Context, disposition corecomponent.Disposition, state corecomponent.State, followUps map[string]string) error {
 	component, err := isleDevModeComponent()
 	if err != nil {
 		return err
 	}
 	manager := corecomponent.NewManager(ctx)
-	spec := component.SpecForWithOptions(state, nil)
+	spec := component.SpecForWithOptions(state, followUps)
 	switch state {
 	case corecomponent.StateOn:
 		if err := manager.EnableComponentWithOptions(cmd.Context(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
@@ -708,6 +714,8 @@ func addComponentSetFollowUpFlags(cmd *cobra.Command, defs []corecomponent.Defin
 			}
 			if followUp.MultiValue {
 				cmd.Flags().StringArray(flagName, corecomponent.SplitFollowUpValues(followUp.DefaultValue), usage)
+			} else if followUp.BoolValue {
+				cmd.Flags().Bool(flagName, corecomponent.FollowUpBoolDefault(followUp), usage)
 			} else {
 				cmd.Flags().String(flagName, strings.TrimSpace(followUp.DefaultValue), usage)
 			}
@@ -730,7 +738,13 @@ func resolveComponentSetFollowUps(cmd *cobra.Command, def corecomponent.Definiti
 		case spec.Name == "acme-email" && def.Name == coretraefik.IngressName && !coretraefik.IngressModeRequiresACMEEmail(resolvedIngressMode(options, view, def)):
 			options[spec.Name] = strings.TrimSpace(view.FollowUpValues[spec.Name])
 		case cmd != nil && cmd.Flags().Lookup(flagName) != nil && cmd.Flags().Changed(flagName):
-			if spec.MultiValue {
+			if spec.BoolValue {
+				value, err := cmd.Flags().GetBool(flagName)
+				if err != nil {
+					return nil, err
+				}
+				options[spec.Name] = corecomponent.FormatFollowUpBool(value)
+			} else if spec.MultiValue {
 				values, err := cmd.Flags().GetStringArray(flagName)
 				if err != nil {
 					return nil, err
@@ -748,7 +762,9 @@ func resolveComponentSetFollowUps(cmd *cobra.Command, def corecomponent.Definiti
 			if defaultValue == "" {
 				defaultValue = strings.TrimSpace(spec.DefaultValue)
 			}
-			if spec.MultiValue {
+			if spec.BoolValue {
+				options[spec.Name] = corecomponent.FormatFollowUpBool(corecomponent.FollowUpBoolDefault(spec))
+			} else if spec.MultiValue {
 				options[spec.Name] = corecomponent.NormalizeFollowUpValue(defaultValue)
 			} else {
 				options[spec.Name] = defaultValue
@@ -799,6 +815,14 @@ func componentSetFollowUpSpecFlagName(componentName string, followUp corecompone
 		return strings.TrimSpace(followUp.FlagName)
 	}
 	return componentSetFollowUpFlagName(componentName, followUp.Name)
+}
+
+func componentSetBoolFlagValue(cmd *cobra.Command, flagName string) bool {
+	if cmd == nil || strings.TrimSpace(flagName) == "" || cmd.Flags().Lookup(flagName) == nil || !cmd.Flags().Changed(flagName) {
+		return false
+	}
+	value, err := cmd.Flags().GetBool(flagName)
+	return err == nil && value
 }
 
 func resolveComponentSetStateValue(cmd *cobra.Command, args []string) (string, error) {
