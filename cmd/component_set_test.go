@@ -791,6 +791,60 @@ func TestRunComponentSetConfiguresIngressLetsEncrypt(t *testing.T) {
 	}
 }
 
+func TestRunComponentSetIngressYoloUsesDefaultDispositionWhenMissing(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldPromptState := componentPromptState
+	oldPromptDisposition := componentPromptDisposition
+	t.Cleanup(func() {
+		componentPromptState = oldPromptState
+		componentPromptDisposition = oldPromptDisposition
+	})
+
+	componentPromptState = func(name string, guidance corecomponent.StateGuidance, input corecomponent.InputFunc) (corecomponent.State, error) {
+		t.Fatalf("did not expect state prompt for %s", name)
+		return "", nil
+	}
+	componentPromptDisposition = func(name string, guidance corecomponent.StateGuidance, allowed []corecomponent.Disposition, defaultDisposition corecomponent.Disposition, input corecomponent.InputFunc) (corecomponent.Disposition, error) {
+		t.Fatalf("did not expect disposition prompt for %s", name)
+		return "", nil
+	}
+
+	var out bytes.Buffer
+	cmd := newComponentSetTestCommand()
+	cmd.SetOut(&out)
+	if err := cmd.Flags().Set("mode", coretraefik.IngressModeHTTP); err != nil {
+		t.Fatalf("Flags().Set(mode) error = %v", err)
+	}
+	if err := cmd.Flags().Set("domain", "qa-origin.libops.io"); err != nil {
+		t.Fatalf("Flags().Set(domain) error = %v", err)
+	}
+
+	opts := componentSetOptions{
+		Path:         projectDir,
+		DrupalRootfs: createpkg.DefaultDrupalRootfs,
+		Yolo:         true,
+	}
+	if err := runComponentSetWithOptions(cmd, coretraefik.IngressName, "", opts); err != nil {
+		t.Fatalf("runComponentSetWithOptions() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "ingress: enabled (http)") {
+		t.Fatalf("expected component output, got:\n%s", out.String())
+	}
+
+	compose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	for _, want := range []string{
+		`INGRESS_HOSTNAMES: "qa-origin.libops.io,localhost,127.0.0.1,::1"`,
+		`INGRESS_SCHEME: "http"`,
+		`DRUPAL_DEFAULT_CANTALOUPE_URL: "http://qa-origin.libops.io/iiif/3"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		}
+	}
+}
+
 func TestApplyISLEIngressFilesRemovesFcrepoEnvWhenServiceAbsent(t *testing.T) {
 	projectDir := t.TempDir()
 	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
