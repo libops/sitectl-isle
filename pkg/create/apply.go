@@ -972,6 +972,7 @@ func fcrepoRestoreServiceBlock(image, commonMerge string) string {
     secrets:
       - source: DB_ROOT_PASSWORD
       - source: FCREPO_DB_PASSWORD
+        target: DB_PASSWORD
       - source: JWT_ADMIN_TOKEN
       - source: JWT_PUBLIC_KEY
     volumes:
