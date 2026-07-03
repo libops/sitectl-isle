@@ -135,8 +135,8 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
 	}
-	if !strings.Contains(string(composeText), `DRUPAL_ENABLE_HTTPS: "true"`) ||
-		!strings.Contains(string(composeText), `DRUPAL_DEFAULT_SITE_URL: "https://repo.example.org"`) ||
+	if !strings.Contains(string(composeText), `INGRESS_HOSTNAMES: "repo.example.org,localhost,127.0.0.1,::1"`) ||
+		!strings.Contains(string(composeText), `INGRESS_SCHEME: "https"`) ||
 		!strings.Contains(string(composeText), "--certificatesResolvers.letsencrypt.acme.email=admin@example.org") {
 		t.Fatalf("expected prod letsencrypt settings, got:\n%s", string(composeText))
 	}

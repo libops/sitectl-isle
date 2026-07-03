@@ -58,9 +58,6 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	if err != nil {
 		return err
 	}
-	if ctx.DockerHostType != config.ContextLocal {
-		return fmt.Errorf("component changes are local-only; context %q is %q", ctx.Name, ctx.DockerHostType)
-	}
 	rootfs, err := resolveCodebaseRootfsForContext(cmd, ctx, opts.CodebaseRootfs, opts.DrupalRootfs)
 	if err != nil {
 		return err
@@ -81,6 +78,13 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	if !ok {
 		return fmt.Errorf("unknown component %q", name)
 	}
+	remoteContext := ctx.DockerHostType != config.ContextLocal
+	if remoteContext {
+		if !remoteComponentSetAllowed(name) {
+			return fmt.Errorf("component %q changes are local-only; context %q is %q", name, ctx.Name, ctx.DockerHostType)
+		}
+		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: modifying remote project files directly; commit and review these changes through version control before promoting them.")
+	}
 	if disposition != "" {
 		disposition, err = corecomponent.ResolveAllowedDisposition(def.AllowedDispositions, disposition)
 		if err != nil {
@@ -89,7 +93,12 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 		state = corecomponent.DispositionToState(disposition)
 	}
 
-	statuses, err := detectComponentViewsForContext(ctx, rootfs)
+	var statuses []componentView
+	if remoteContext {
+		statuses, err = detectComponentViewsForDefinitions(ctx, rootfs, def)
+	} else {
+		statuses, err = detectComponentViewsForContext(ctx, rootfs)
+	}
 	if err != nil {
 		return err
 	}
@@ -218,6 +227,15 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	}
 	fmt.Fprintln(cmd.OutOrStdout())
 	return nil
+}
+
+func remoteComponentSetAllowed(name string) bool {
+	switch name {
+	case coretraefik.IngressName, coredevmode.Name:
+		return true
+	default:
+		return false
+	}
 }
 
 func componentDefinitions() map[string]corecomponent.Definition {
@@ -378,12 +396,15 @@ func isleIngressComponent() (corecomponent.ComposeServiceComponent, error) {
 			"triplet":    "{domain}",
 			"cantaloupe": "{domain}",
 		},
+		AppEnvDeletes: []string{
+			"DRUPAL_DEFAULT_SITE_URL",
+			"DRUPAL_ENABLE_HTTPS",
+			"DRUPAL_TRUSTED_HOST_PATTERNS",
+			"DRUSH_OPTIONS_URI",
+		},
 		ServiceEnvTemplates: map[string]map[string]string{
 			"drupal": {
 				"DRUPAL_DEFAULT_CANTALOUPE_URL": "{base_url}/iiif/3",
-				"DRUPAL_DEFAULT_SITE_URL":       "{base_url}",
-				"DRUPAL_ENABLE_HTTPS":           "{https_enabled}",
-				"DRUSH_OPTIONS_URI":             "{base_url}",
 			},
 			"fcrepo": {
 				"FCREPO_ALLOW_EXTERNAL_DRUPAL": "{base_url}/",
@@ -702,7 +723,7 @@ func resolveComponentSetFollowUps(cmd *cobra.Command, def corecomponent.Definiti
 	for _, spec := range def.FollowUpsForDisposition(disposition) {
 		flagName := componentSetFollowUpSpecFlagName(def.Name, spec)
 		switch {
-		case spec.Name == "acme-email" && def.Name == coretraefik.IngressName && resolvedIngressMode(options, view, def) != coretraefik.IngressModeHTTPSLetsEncrypt:
+		case spec.Name == "acme-email" && def.Name == coretraefik.IngressName && !coretraefik.IngressModeRequiresACMEEmail(resolvedIngressMode(options, view, def)):
 			options[spec.Name] = strings.TrimSpace(view.FollowUpValues[spec.Name])
 		case cmd != nil && cmd.Flags().Lookup(flagName) != nil && cmd.Flags().Changed(flagName):
 			if spec.MultiValue {

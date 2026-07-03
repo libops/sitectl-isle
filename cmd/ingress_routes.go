@@ -21,8 +21,7 @@ func (isleIngressRouteProvider) Routes(cmd *cobra.Command, ctx *config.Context) 
 	followUps := currentIngressFollowUps(ctx)
 	domain := firstIngressRouteValue(followUps["domain"], coretraefik.DefaultIngressDomain, "localhost")
 	scheme := "http"
-	switch strings.TrimSpace(followUps["mode"]) {
-	case coretraefik.IngressModeHTTPSDefault, coretraefik.IngressModeHTTPSLetsEncrypt:
+	if coretraefik.IngressModeUsesHTTPS(followUps["mode"]) {
 		scheme = "https"
 	}
 	routes := []plugin.IngressRoute{

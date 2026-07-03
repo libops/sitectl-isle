@@ -757,8 +757,8 @@ func TestRunComponentSetConfiguresIngressLetsEncrypt(t *testing.T) {
 	composePath := filepath.Join(projectDir, "docker-compose.yml")
 	compose := readFileForTest(t, composePath)
 	for _, want := range []string{
-		`DRUPAL_ENABLE_HTTPS: "true"`,
-		`DRUPAL_DEFAULT_SITE_URL: "https://repo.example.org"`,
+		`INGRESS_HOSTNAMES: "repo.example.org,localhost,127.0.0.1,::1"`,
+		`INGRESS_SCHEME: "https"`,
 		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`,
 		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "https://repo.example.org/"`,
 		"--entryPoints.https.address=:443",
@@ -838,7 +838,7 @@ services:
 
 	ctx := &config.Context{ProjectDir: projectDir}
 	if err := applyISLEIngressFiles(ctx, map[string]string{
-		"mode":   coretraefik.IngressModeHTTPSDefault,
+		"mode":   coretraefik.IngressModeHTTPSCustom,
 		"domain": "repo.example.org",
 	}); err != nil {
 		t.Fatalf("applyISLEIngressFiles() error = %v", err)
@@ -848,6 +848,9 @@ services:
 	want := `DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`
 	if !strings.Contains(compose, want) {
 		t.Fatalf("expected fcrepo URL %q, got:\n%s", want, compose)
+	}
+	if strings.Contains(compose, "drupal.internal") {
+		t.Fatalf("expected non-local ingress to omit drupal.internal, got:\n%s", compose)
 	}
 }
 
@@ -877,13 +880,20 @@ services:
 
 	compose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
 	for _, want := range []string{
-		`DRUPAL_DEFAULT_SITE_URL: http://localhost`,
-		`DRUSH_OPTIONS_URI: "http://drupal.internal"`,
-		`DRUPAL_TRUSTED_HOST_PATTERNS: "^localhost$,^drupal\\.internal$"`,
+		`INGRESS_HOSTNAMES: "localhost,127.0.0.1,::1,drupal.internal"`,
 		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.internal/"`,
 	} {
 		if !strings.Contains(compose, want) {
 			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		}
+	}
+	for _, notWant := range []string{
+		`DRUPAL_DEFAULT_SITE_URL`,
+		`DRUSH_OPTIONS_URI`,
+		`DRUPAL_TRUSTED_HOST_PATTERNS`,
+	} {
+		if strings.Contains(compose, notWant) {
+			t.Fatalf("expected compose not to contain %q, got:\n%s", notWant, compose)
 		}
 	}
 }

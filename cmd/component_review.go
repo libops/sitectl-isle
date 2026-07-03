@@ -74,19 +74,33 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 	if err != nil {
 		return err
 	}
-	if ctx.DockerHostType != config.ContextLocal {
-		return fmt.Errorf("component review is local-only; context %q is %q", ctx.Name, ctx.DockerHostType)
-	}
 	rootfs, err := resolveCodebaseRootfsForContext(cmd, ctx, opts.CodebaseRootfs, opts.DrupalRootfs)
 	if err != nil {
 		return err
 	}
 
-	statuses, err := detectComponentViewsForContext(ctx, rootfs)
+	componentName := strings.TrimSpace(opts.ComponentName)
+	remoteContext := ctx.DockerHostType != config.ContextLocal
+	if remoteContext && !opts.Report {
+		if componentName == "" || !remoteComponentSetAllowed(componentName) {
+			return fmt.Errorf("component review apply is local-only for %q; context %q is %q", componentName, ctx.Name, ctx.DockerHostType)
+		}
+		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: modifying remote project files directly; commit and review these changes through version control before promoting them.")
+	}
+
+	var statuses []componentView
+	if remoteContext && componentName != "" {
+		def, ok := componentDefinitions()[componentName]
+		if !ok {
+			return fmt.Errorf("unknown component %q", componentName)
+		}
+		statuses, err = detectComponentViewsForDefinitions(ctx, rootfs, def)
+	} else {
+		statuses, err = detectComponentViewsForContext(ctx, rootfs)
+	}
 	if err != nil {
 		return err
 	}
-	componentName := strings.TrimSpace(opts.ComponentName)
 	if strings.TrimSpace(componentName) != "" {
 		for _, status := range statuses {
 			if status.Name == componentName {
@@ -122,6 +136,24 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 		return err
 	}
 	decisions := convertComponentReviewDecisions(rawDecisions)
+	if remoteContext {
+		if err := applyRemoteComponentReviewDecision(ctx, componentName, decisions[componentName]); err != nil {
+			return err
+		}
+		for _, status := range statuses {
+			decision := decisions[status.Name]
+			fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", status.Name, reviewDecisionLabel(decision))
+			if strings.TrimSpace(decision.TLSMode) != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), " (%s)", decision.TLSMode)
+			} else if strings.TrimSpace(decision.TrustedIPs) != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), " (%s)", decision.TrustedIPs)
+			} else if strings.TrimSpace(decision.MaxUploadSize) != "" || strings.TrimSpace(decision.UploadTimeout) != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), " (%s, %s)", uploadLimitValue(map[string]string{"max-upload-size": decision.MaxUploadSize}, "max-upload-size"), uploadLimitValue(map[string]string{"upload-timeout": decision.UploadTimeout}, "upload-timeout"))
+			}
+			fmt.Fprintln(cmd.OutOrStdout())
+		}
+		return nil
+	}
 	if strings.TrimSpace(componentName) != "" {
 		decisions = mergeCurrentComponentReviewDecisions(ctx, rootfs, decisions)
 	}
@@ -145,6 +177,17 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 		fmt.Fprintln(cmd.OutOrStdout())
 	}
 	return nil
+}
+
+func applyRemoteComponentReviewDecision(ctx *config.Context, componentName string, decision componentReviewDecision) error {
+	switch componentName {
+	case coretraefik.IngressName:
+		return applyIngressReviewDecision(ctx, decision)
+	case coredevmode.Name:
+		return applyDevModeReviewDecision(ctx, decision)
+	default:
+		return fmt.Errorf("component review apply is local-only for %q; context %q is %q", componentName, ctx.Name, ctx.DockerHostType)
+	}
 }
 
 func mergeCurrentComponentReviewDecisions(ctx *config.Context, drupalRootfs string, decisions map[string]componentReviewDecision) map[string]componentReviewDecision {

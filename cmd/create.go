@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -293,23 +294,27 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	req.ContextName = ctx.Name
 	req.Path = ctx.ProjectDir
 	req.Apply.Path = ctx.ProjectDir
-	cloned, err := ensureClonedCheckout(progress, req)
+	cloned, err := ensureClonedCheckoutForContext(progress, ctx, req)
 	if err != nil {
 		return err
 	}
 	if cloned {
-		if err := createBootstrapCheckout(progress, ctx.ProjectDir); err != nil {
+		if err := bootstrapCheckoutForContext(progress, ctx); err != nil {
 			return err
 		}
 	}
 	fmt.Fprintln(progress)
 	fmt.Fprintln(progress, corecomponent.RenderSection("Template configuration", "Applying requested ISLE component and topology choices."))
 	fmt.Fprintln(progress)
-	if err := runWithSpinner(progress, "Applying ISLE options", func() error {
-		return createApply(req.Apply)
-	}); err != nil {
-		printCreateFailureSummary(summary, req)
-		return err
+	if ctx.DockerHostType == config.ContextRemote {
+		fmt.Fprintln(progress, "Warning: remote ISLE create leaves template-level Drupal/codebase rewrites to version-controlled local changes.")
+	} else {
+		if err := runWithSpinner(progress, "Applying ISLE options", func() error {
+			return createApply(req.Apply)
+		}); err != nil {
+			printCreateFailureSummary(summary, req)
+			return err
+		}
 	}
 	if err := applyCreateIngress(ctx, req); err != nil {
 		printCreateFailureSummary(summary, req)
@@ -324,7 +329,10 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		return err
 	}
 	if !req.ImageOverrides.Empty() {
-		if err := plugin.ApplyComposeImageOverrides(ctx.ProjectDir, req.ImageOverrides); err != nil {
+		if ctx.DockerHostType == config.ContextRemote {
+			fmt.Fprintln(progress, "Warning: modifying remote project files directly; commit and review these changes through version control before promoting them.")
+		}
+		if err := plugin.ApplyComposeImageOverridesContext(ctx, req.ImageOverrides); err != nil {
 			printCreateFailureSummary(summary, req)
 			return err
 		}
@@ -442,12 +450,12 @@ func refreshCreateContextComposeMetadata(ctx *config.Context) error {
 	if projectDir == "" {
 		return nil
 	}
-	composeProjectName := config.DetectComposeProjectName(projectDir)
+	composeProjectName := config.DetectContextComposeProjectName(ctx)
 	if strings.TrimSpace(composeProjectName) == "" || composeProjectName == ctx.ComposeProjectName {
 		return nil
 	}
 	ctx.ComposeProjectName = composeProjectName
-	ctx.ComposeNetwork = config.DetectComposeNetworkName(projectDir, composeProjectName)
+	ctx.ComposeNetwork = config.DetectContextComposeNetwork(ctx)
 	return config.SaveContext(ctx, false)
 }
 
@@ -500,7 +508,7 @@ This will completely stop and destroy the setup.`, shellPath(ctx.ProjectDir), cl
 			if _, err := fmt.Fprintf(logFile, "Running %s\n", commandText); err != nil {
 				return err
 			}
-			if err := createRunProjectCommand(ctx.ProjectDir, logFile, logFile, "bash", "-lc", commandText); err != nil {
+			if err := runCreateProjectShellCommand(ctx, logFile, logFile, commandText); err != nil {
 				return fmt.Errorf("run %s: %w", commandText, err)
 			}
 		}
@@ -653,6 +661,97 @@ func ensureClonedCheckout(out io.Writer, req createRequest) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func ensureClonedCheckoutForContext(out io.Writer, ctx *config.Context, req createRequest) (bool, error) {
+	if ctx == nil || ctx.DockerHostType != config.ContextRemote {
+		return ensureClonedCheckout(out, req)
+	}
+	repoURL := strings.TrimSpace(req.TemplateRepo)
+	branch := strings.TrimSpace(req.TemplateBranch)
+	projectDir := strings.TrimSpace(ctx.ProjectDir)
+	if repoURL == "" {
+		return false, fmt.Errorf("template repo cannot be empty")
+	}
+	if projectDir == "" {
+		return false, fmt.Errorf("project directory cannot be empty")
+	}
+
+	var present bytes.Buffer
+	checkCommand := fmt.Sprintf("if [ -d %s ] && [ -n \"$(ls -A %s 2>/dev/null)\" ]; then echo present; fi", plugin.ShellQuote(projectDir), plugin.ShellQuote(projectDir))
+	if err := commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, "", &present, io.Discard, checkCommand); err == nil && strings.TrimSpace(present.String()) == "present" {
+		return false, nil
+	}
+	if err := commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, "", io.Discard, io.Discard, fmt.Sprintf("mkdir -p %s", plugin.ShellQuote(filepath.Dir(projectDir)))); err != nil {
+		return false, fmt.Errorf("create parent directory for %q: %w", projectDir, err)
+	}
+
+	fmt.Fprintln(out, corecomponent.RenderSection(
+		"Template checkout",
+		fmt.Sprintf("Cloning %s at %s into %s on %s.", repoURL, helpers.FirstNonEmpty(branch, "default branch"), projectDir, ctx.SSHHostname),
+	))
+	fmt.Fprintln(out)
+	cloneArgs := []string{"git", "clone"}
+	if branch != "" {
+		cloneArgs = append(cloneArgs, "--branch", branch)
+	}
+	cloneArgs = append(cloneArgs, repoURL, projectDir)
+	initBranch := helpers.FirstNonEmpty(branch, "main")
+	cloneCommand := strings.Join([]string{
+		plugin.ShellJoin(cloneArgs),
+		"rm -rf " + plugin.ShellQuote(filepath.Join(projectDir, ".git")),
+		plugin.ShellJoin([]string{"git", "-C", projectDir, "init", "-b", initBranch}),
+	}, " && ")
+	if err := runWithSpinner(out, "Cloning template repository", func() error {
+		return commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, "", io.Discard, io.Discard, cloneCommand)
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func bootstrapCheckoutForContext(out io.Writer, ctx *config.Context) error {
+	if ctx == nil || ctx.DockerHostType != config.ContextRemote {
+		return createBootstrapCheckout(out, ctx.ProjectDir)
+	}
+	projectDir := strings.TrimSpace(ctx.ProjectDir)
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, corecomponent.RenderSection(
+		"Git bootstrap",
+		fmt.Sprintf("Recording the pristine template checkout in %s before applying any sitectl-isle changes.", projectDir),
+	))
+	fmt.Fprintln(out)
+	return runWithSpinner(out, "Creating initial git commit", func() error {
+		safeDirectory := "safe.directory=" + projectDir
+		if err := commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, projectDir, io.Discard, io.Discard, plugin.ShellJoin([]string{"git", "-c", safeDirectory, "add", "."})); err != nil {
+			return fmt.Errorf("stage initial checkout: %w", err)
+		}
+		if err := commandSDK.RunComposeProjectCommandContext(
+			context.Background(),
+			ctx,
+			projectDir,
+			io.Discard,
+			io.Discard,
+			plugin.ShellJoin([]string{
+				"git",
+				"-c", safeDirectory,
+				"-c", "user.name=sitectl-isle",
+				"-c", "user.email=sitectl-isle@localhost",
+				"commit",
+				"-m", "initial commit.",
+			}),
+		); err != nil {
+			return fmt.Errorf("create initial commit: %w", err)
+		}
+		return nil
+	})
+}
+
+func runCreateProjectShellCommand(ctx *config.Context, stdout, stderr io.Writer, commandText string) error {
+	if ctx != nil && ctx.DockerHostType == config.ContextRemote {
+		return commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, ctx.ProjectDir, stdout, stderr, commandText)
+	}
+	return createRunProjectCommand(ctx.ProjectDir, stdout, stderr, "bash", "-lc", commandText)
 }
 
 func bootstrapCheckout(out io.Writer, projectDir string) error {

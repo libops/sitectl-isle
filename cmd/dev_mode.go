@@ -47,7 +47,7 @@ func applyISLEDevMode(ctx *config.Context, enabled bool) error {
 
 func writeISLEDevModeTraefikOverride(ctx *config.Context) error {
 	overridePath := resolveEnvironmentOverridePath(ctx)
-	compose, err := corecomponent.LoadComposeFileOptional(overridePath)
+	compose, err := corecomponent.LoadComposeFileOptionalForContext(ctx, overridePath)
 	if err != nil {
 		return err
 	}
