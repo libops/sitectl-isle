@@ -136,7 +136,7 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	_ = cmd.Flags().Set("iiif-upstream-url", "https://iiif.example.org")
 	_ = cmd.Flags().Set("codebase", "git-root")
 	_ = cmd.Flags().Set("ingress", "enabled")
-	_ = cmd.Flags().Set("mode", coretraefik.IngressModeHTTPSDefault)
+	_ = cmd.Flags().Set("mode", coretraefik.IngressModeHTTPSCustom)
 	_ = cmd.Flags().Set("domain", "repo.example.org")
 	_ = cmd.Flags().Set("trusted-ip", "10.0.0.0/8")
 	_ = cmd.Flags().Set("trusted-ip", "203.0.113.4")
@@ -160,7 +160,7 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	if req.Apply.DerivativeServices["homarus"] != createpkg.DerivativeTopologyDistributed {
 		t.Fatalf("expected homarus distributed option, got %+v", req.Apply.DerivativeServices)
 	}
-	if req.IngressState != "on" || req.IngressMode != coretraefik.IngressModeHTTPSDefault || req.IngressDomain != "repo.example.org" || req.IngressTrustedIPs != "10.0.0.0/8,203.0.113.4" {
+	if req.IngressState != "on" || req.IngressMode != coretraefik.IngressModeHTTPSCustom || req.IngressDomain != "repo.example.org" || req.IngressTrustedIPs != "10.0.0.0/8,203.0.113.4" {
 		t.Fatalf("expected ingress enabled with overrides, got state=%q mode=%q domain=%q trusted=%q", req.IngressState, req.IngressMode, req.IngressDomain, req.IngressTrustedIPs)
 	}
 	if req.MaxUploadSize != "2G" || req.UploadTimeout != "10m" {

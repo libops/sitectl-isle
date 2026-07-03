@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	corecomponent "github.com/libops/sitectl/pkg/component"
+	"github.com/libops/sitectl/pkg/config"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"gopkg.in/yaml.v3"
 )
@@ -260,38 +261,61 @@ func ApplyBotMitigation(projectDir, state string) error {
 }
 
 func SyncBotMitigationBypass(projectDir string) error {
-	path := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
-	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
+	return SyncBotMitigationBypassContext(localProjectContext(projectDir))
+}
+
+func SyncBotMitigationBypassContext(ctx *config.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("context is nil")
+	}
+	path := ctx.ResolveProjectPath(filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	exists, err := ctx.FileExists(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+		return fmt.Errorf("stat bot mitigation router config: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	data, err := ctx.ReadFile(path)
+	if err != nil {
 		return fmt.Errorf("read bot mitigation router config: %w", err)
 	}
-	return updateWorkbenchClientBypass(projectDir, strings.Contains(string(data), "captcha-protect"))
+	return updateWorkbenchClientBypassContext(ctx, strings.Contains(string(data), "captcha-protect"))
 }
 
 func SyncLocalDrupalInternalIngress(projectDir string, enabled bool) error {
-	routerPath := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
-	if _, err := os.Stat(routerPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("stat local Drupal router config: %w", err)
-	}
-	if err := syncLocalDrupalTraefikAlias(projectDir, enabled); err != nil {
-		return err
-	}
-	return syncLocalDrupalRouter(projectDir, enabled)
+	return SyncLocalDrupalInternalIngressContext(localProjectContext(projectDir), enabled)
 }
 
-func syncLocalDrupalTraefikAlias(projectDir string, enabled bool) error {
-	path := filepath.Join(projectDir, "docker-compose.yml")
-	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
+func SyncLocalDrupalInternalIngressContext(ctx *config.Context, enabled bool) error {
+	if ctx == nil {
+		return fmt.Errorf("context is nil")
+	}
+	routerPath := ctx.ResolveProjectPath(filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	exists, err := ctx.FileExists(routerPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+		return fmt.Errorf("stat local Drupal router config: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	if err := syncLocalDrupalTraefikAliasContext(ctx, enabled); err != nil {
+		return err
+	}
+	return syncLocalDrupalRouterContext(ctx, enabled)
+}
+
+func syncLocalDrupalTraefikAliasContext(ctx *config.Context, enabled bool) error {
+	path := ctx.ResolveProjectPath("docker-compose.yml")
+	exists, err := ctx.FileExists(path)
+	if err != nil {
+		return fmt.Errorf("stat docker-compose.yml: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	data, err := ctx.ReadFile(path)
+	if err != nil {
 		return fmt.Errorf("read docker-compose.yml: %w", err)
 	}
 	var root map[string]any
@@ -324,16 +348,20 @@ func syncLocalDrupalTraefikAlias(projectDir string, enabled bool) error {
 	if err != nil {
 		return fmt.Errorf("marshal docker-compose.yml: %w", err)
 	}
-	return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+	return ctx.WriteFile(path, updated)
 }
 
-func syncLocalDrupalRouter(projectDir string, enabled bool) error {
-	path := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
-	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
+func syncLocalDrupalRouterContext(ctx *config.Context, enabled bool) error {
+	path := ctx.ResolveProjectPath(filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	exists, err := ctx.FileExists(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+		return fmt.Errorf("stat local Drupal router config: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	data, err := ctx.ReadFile(path)
+	if err != nil {
 		return fmt.Errorf("read local Drupal router config: %w", err)
 	}
 	doc, err := corecomponent.LoadYAMLDocument(data)
@@ -355,7 +383,7 @@ func syncLocalDrupalRouter(projectDir string, enabled bool) error {
 		if err != nil {
 			return fmt.Errorf("marshal local Drupal router config: %w", err)
 		}
-		return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+		return ctx.WriteFile(path, updated)
 	}
 	router, err := localDrupalRouter(data)
 	if err != nil {
@@ -374,16 +402,24 @@ func syncLocalDrupalRouter(projectDir string, enabled bool) error {
 	if err != nil {
 		return fmt.Errorf("marshal local Drupal router config: %w", err)
 	}
-	return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+	return ctx.WriteFile(path, updated)
 }
 
 func updateWorkbenchClientBypass(projectDir string, enabled bool) error {
-	path := filepath.Join(projectDir, filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
-	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project directory.
+	return updateWorkbenchClientBypassContext(localProjectContext(projectDir), enabled)
+}
+
+func updateWorkbenchClientBypassContext(ctx *config.Context, enabled bool) error {
+	path := ctx.ResolveProjectPath(filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	exists, err := ctx.FileExists(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+		return fmt.Errorf("stat bot mitigation router config: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	data, err := ctx.ReadFile(path)
+	if err != nil {
 		return fmt.Errorf("read bot mitigation router config: %w", err)
 	}
 	doc, err := corecomponent.LoadYAMLDocument(data)
@@ -399,7 +435,7 @@ func updateWorkbenchClientBypass(projectDir string, enabled bool) error {
 		if err != nil {
 			return fmt.Errorf("marshal bot mitigation router config: %w", err)
 		}
-		return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+		return ctx.WriteFile(path, updated)
 	}
 	router, err := workbenchClientRouter(data)
 	if err != nil {
@@ -412,7 +448,14 @@ func updateWorkbenchClientBypass(projectDir string, enabled bool) error {
 	if err != nil {
 		return fmt.Errorf("marshal bot mitigation router config: %w", err)
 	}
-	return os.WriteFile(path, updated, 0o644) // #nosec G306 -- generated project configuration is non-secret.
+	return ctx.WriteFile(path, updated)
+}
+
+func localProjectContext(projectDir string) *config.Context {
+	return &config.Context{
+		DockerHostType: config.ContextLocal,
+		ProjectDir:     projectDir,
+	}
 }
 
 func workbenchClientRouter(data []byte) (map[string]any, error) {

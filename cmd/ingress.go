@@ -14,11 +14,19 @@ import (
 	yaml "gopkg.in/yaml.v3"
 )
 
-const drupalFcrepoInternalURL = "http://fcrepo:8080/fcrepo/rest/"
+const (
+	drupalFcrepoInternalURL = "http://fcrepo:8080/fcrepo/rest/"
+	drupalInternalHostname  = "drupal.internal"
+)
 
 func applyISLEIngressFiles(ctx *config.Context, values map[string]string) error {
 	if ctx == nil {
 		return fmt.Errorf("context is nil")
+	}
+	if ctx.DockerHostType == "" {
+		localCtx := *ctx
+		localCtx.DockerHostType = config.ContextLocal
+		ctx = &localCtx
 	}
 	if err := applyISLEFcrepoIngressEnv(ctx, values); err != nil {
 		return err
@@ -28,7 +36,7 @@ func applyISLEIngressFiles(ctx *config.Context, values map[string]string) error 
 	data, err := ctx.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return createpkg.SyncBotMitigationBypass(ctx.ProjectDir)
+			return createpkg.SyncBotMitigationBypassContext(ctx)
 		}
 		return fmt.Errorf("read Triplet config: %w", err)
 	}
@@ -46,20 +54,30 @@ func applyISLEIngressFiles(ctx *config.Context, values map[string]string) error 
 	if err := ctx.WriteFile(path, updated); err != nil {
 		return err
 	}
-	return createpkg.SyncBotMitigationBypass(ctx.ProjectDir)
+	return createpkg.SyncBotMitigationBypassContext(ctx)
 }
 
 func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) error {
-	compose, err := corecomponent.LoadComposeFile(ctx.ResolveProjectPath("docker-compose.yml"))
+	compose, err := corecomponent.LoadComposeFileForContext(ctx, ctx.ResolveProjectPath("docker-compose.yml"))
 	if err != nil {
 		return err
 	}
 	localFcrepo := compose.HasService("fcrepo") && ingressDomain(values) == coretraefik.DefaultIngressDomain
-	if err := createpkg.SyncLocalDrupalInternalIngress(ctx.ProjectDir, localFcrepo); err != nil {
+	if err := compose.SetServiceEnv("drupal", "INGRESS_HOSTNAMES", strings.Join(isleIngressHostnames(ctx, values, localFcrepo), ",")); err != nil {
 		return err
 	}
-	if err := compose.SetServiceEnv("drupal", "DRUPAL_TRUSTED_HOST_PATTERNS", createpkg.TrustedHostPatterns(ingressDomain(values), localFcrepo)); err != nil {
+	if err := createpkg.SyncLocalDrupalInternalIngressContext(ctx, localFcrepo); err != nil {
 		return err
+	}
+	for _, key := range []string{
+		"DRUPAL_DEFAULT_SITE_URL",
+		"DRUPAL_ENABLE_HTTPS",
+		"DRUPAL_TRUSTED_HOST_PATTERNS",
+		"DRUSH_OPTIONS_URI",
+	} {
+		if err := compose.DeleteServiceEnv("drupal", key); err != nil {
+			return err
+		}
 	}
 	if !compose.HasService("fcrepo") {
 		for _, key := range []string{
@@ -77,9 +95,6 @@ func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) er
 		return err
 	}
 	if localFcrepo {
-		if err := compose.SetServiceEnv("drupal", "DRUSH_OPTIONS_URI", createpkg.LocalDrupalBaseURL); err != nil {
-			return err
-		}
 		if err := compose.SetServiceEnv("fcrepo", "FCREPO_ALLOW_EXTERNAL_DRUPAL", createpkg.LocalDrupalBaseURL+"/"); err != nil {
 			return err
 		}
@@ -87,18 +102,41 @@ func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) er
 	return compose.Save()
 }
 
+func isleIngressHostnames(ctx *config.Context, values map[string]string, includeInternalDrupal bool) []string {
+	update := coretraefik.IngressAppUpdate{
+		Mode:   strings.TrimSpace(values["mode"]),
+		Domain: ingressDomain(values),
+		Scheme: ingressScheme(values),
+	}
+	hosts := coretraefik.SuggestedApplicationHosts(ctx, update)
+	if includeInternalDrupal {
+		hosts = appendUniqueISLEHostname(hosts, drupalInternalHostname)
+	}
+	return hosts
+}
+
+func appendUniqueISLEHostname(hosts []string, hostname string) []string {
+	hostname = strings.Trim(strings.TrimSpace(hostname), "[]")
+	if hostname == "" {
+		return hosts
+	}
+	for _, existing := range hosts {
+		if strings.EqualFold(existing, hostname) {
+			return hosts
+		}
+	}
+	return append(hosts, hostname)
+}
+
 func ingressBaseURL(values map[string]string) string {
 	return ingressScheme(values) + "://" + ingressDomain(values)
 }
 
 func ingressScheme(values map[string]string) string {
-	mode := strings.TrimSpace(values["mode"])
-	switch mode {
-	case coretraefik.IngressModeHTTPSDefault, coretraefik.IngressModeHTTPSLetsEncrypt:
+	if coretraefik.IngressModeUsesHTTPS(values["mode"]) {
 		return "https"
-	default:
-		return "http"
 	}
+	return "http"
 }
 
 func ingressDomain(values map[string]string) string {

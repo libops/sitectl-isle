@@ -110,11 +110,15 @@ func invokeSDKIncludedRPC(sdk *plugin.SDK, include string, req plugin.RPCRequest
 type componentView = corecomponent.ReviewView
 
 func detectComponentViewsForContext(siteCtx *config.Context, drupalRootfs string) ([]componentView, error) {
+	return detectComponentViewsForDefinitions(siteCtx, drupalRootfs, orderedComponentDefinitions()...)
+}
+
+func detectComponentViewsForDefinitions(siteCtx *config.Context, drupalRootfs string, defs ...corecomponent.Definition) ([]componentView, error) {
 	definitions := componentDefinitions()
 	sdkStatuses, err := corecomponent.DetectComponentStatuses(siteCtx, siteCtx.ProjectDir, corecomponent.DetectOptions{
 		ComposeRoot:  siteCtx.ProjectDir,
 		DrupalRootfs: drupalRootfs,
-	}, orderedComponentDefinitions()...)
+	}, defs...)
 	if err != nil {
 		return nil, err
 	}
@@ -185,14 +189,18 @@ func currentIngressFollowUps(siteCtx *config.Context) map[string]string {
 	if siteCtx == nil {
 		return followUps
 	}
-	compose, err := corecomponent.LoadComposeFile(filepath.Join(siteCtx.ProjectDir, "docker-compose.yml"))
+	compose, err := corecomponent.LoadComposeFileForContext(siteCtx, siteCtx.ResolveProjectPath("docker-compose.yml"))
 	if err != nil {
 		return followUps
 	}
 	command := composeServiceCommand(compose, "traefik")
+	tlsMode := composeServiceEnvValue(compose, "traefik", "SITECTL_TLS_MODE")
 	projectEnv := healthcheck.ProjectEnv(siteCtx)
-	followUps["mode"] = detectIngressMode(command)
+	followUps["mode"] = detectIngressMode(command, tlsMode)
 	if domain := domainFromTraefikRoute(siteCtx, projectEnv); domain != "" {
+		followUps["domain"] = domain
+	}
+	if domain := firstISLEIngressHostname(composeServiceEnvValue(compose, "drupal", "INGRESS_HOSTNAMES")); domain != "" && followUps["domain"] == "" {
 		followUps["domain"] = domain
 	}
 	if domain := domainFromServiceURL(composeServiceEnvValue(compose, "drupal", "DRUPAL_DEFAULT_SITE_URL"), projectEnv); domain != "" && followUps["domain"] == "" {
@@ -240,7 +248,10 @@ func domainFromTraefikRoute(siteCtx *config.Context, projectEnv map[string]strin
 	return domainFromServiceURL(publicURL, projectEnv)
 }
 
-func detectIngressMode(command string) string {
+func detectIngressMode(command, tlsMode string) string {
+	if mode, ok := coretraefik.NormalizeIngressMode(tlsMode); ok && mode != coretraefik.IngressModeHTTP {
+		return mode
+	}
 	if commandValueByPrefix(command, "--certificatesResolvers.letsencrypt.acme.email=") != "" ||
 		commandValueByPrefix(command, "--certificatesresolvers.letsencrypt.acme.email=") != "" {
 		return coretraefik.IngressModeHTTPSLetsEncrypt
@@ -248,7 +259,7 @@ func detectIngressMode(command string) string {
 	for _, line := range composeStringLines(command) {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "--entryPoints.https.address=") || strings.HasPrefix(line, "--entrypoints.https.address=") {
-			return coretraefik.IngressModeHTTPSDefault
+			return coretraefik.IngressModeHTTPSCustom
 		}
 	}
 	return coretraefik.IngressModeHTTP
