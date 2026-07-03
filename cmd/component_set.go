@@ -128,7 +128,11 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 		if !ok {
 			return fmt.Errorf("missing detected status for component %q", name)
 		}
-		disposition, state, err = promptComponentSetState(status)
+		if opts.Yolo {
+			disposition, state, err = defaultComponentSetState(status)
+		} else {
+			disposition, state, err = promptComponentSetState(status)
+		}
 		if err != nil {
 			return err
 		}
@@ -854,4 +858,16 @@ func promptComponentSetState(status componentView) (corecomponent.Disposition, c
 		return "", "", err
 	}
 	return corecomponent.StateToDisposition(state), state, nil
+}
+
+func defaultComponentSetState(status componentView) (corecomponent.Disposition, corecomponent.State, error) {
+	disposition := corecomponent.ReviewDefaultDisposition(status)
+	if disposition == "" {
+		disposition = corecomponent.StateToDisposition(corecomponent.ReviewDefaultState(status))
+	}
+	resolved, err := corecomponent.ResolveAllowedDisposition(status.Definition.AllowedDispositions, disposition)
+	if err != nil {
+		return "", "", err
+	}
+	return resolved, corecomponent.DispositionToState(resolved), nil
 }
