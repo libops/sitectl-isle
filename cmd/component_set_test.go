@@ -1023,6 +1023,50 @@ func TestRunComponentSetTogglesDevMode(t *testing.T) {
 	}
 }
 
+func TestRunComponentSetDevModeAssistantImpliesEnabled(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	oldPromptChoice := componentPromptChoice
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+		componentPromptChoice = oldPromptChoice
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	cmd := newComponentSetTestCommand()
+	if err := cmd.Flags().Set("assistant", "true"); err != nil {
+		t.Fatalf("Flags().Set(assistant) error = %v", err)
+	}
+	if err := cmd.Flags().Set("harness", "claude"); err != nil {
+		t.Fatalf("Flags().Set(harness) error = %v", err)
+	}
+	if err := runComponentSet(cmd, "dev-mode", ""); err != nil {
+		t.Fatalf("runComponentSet(dev-mode --assistant) error = %v", err)
+	}
+
+	override := readFileForTest(t, filepath.Join(projectDir, "docker-compose.override.yml"))
+	for _, want := range []string{
+		"cli-sandbox:",
+		"image: ghcr.io/libops/cli-sandbox:claude",
+		"- claude",
+		"- --dangerously-skip-permissions",
+		"./web/modules/custom:/var/www/drupal/web/modules/custom:z,rw",
+	} {
+		if !strings.Contains(override, want) {
+			t.Fatalf("expected override to contain %q, got:\n%s", want, override)
+		}
+	}
+}
+
 func TestRunComponentSetDistributesCantaloupeIIIF(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
