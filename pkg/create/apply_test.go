@@ -194,6 +194,7 @@ volumes: {}
 		`DRUSH_OPTIONS_URI: "http://drupal.internal"`,
 		`DRUPAL_TRUSTED_HOST_PATTERNS: "^localhost$,^drupal\\.internal$"`,
 		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.internal/"`,
+		`target: DB_PASSWORD`,
 	} {
 		if !strings.Contains(compose, want) {
 			t.Fatalf("expected restored compose to contain %q, got:\n%s", want, compose)
