@@ -40,6 +40,7 @@ var (
 	createRunProjectCommand  = defaultRunProjectCommand
 	createBootstrapCheckout  = bootstrapCheckout
 	createRunStartup         = runStartup
+	createRewriteCommand     = rewriteCreateProjectShellCommand
 	createRefreshContext     = refreshCreateContextComposeMetadata
 	createPrepareStartup     = prepareCreateStartup
 	createCheckPrereqs       = checkPrereqs
@@ -504,6 +505,7 @@ This will completely stop and destroy the setup.`, shellPath(ctx.ProjectDir), cl
 			if commandText == "" {
 				continue
 			}
+			commandText = createRewriteCommand(ctx, commandText)
 			commandText = shellEnvPrefix(startupEnv) + commandText
 			if _, err := fmt.Fprintf(logFile, "Running %s\n", commandText); err != nil {
 				return err
@@ -752,6 +754,13 @@ func runCreateProjectShellCommand(ctx *config.Context, stdout, stderr io.Writer,
 		return commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, ctx.ProjectDir, stdout, stderr, commandText)
 	}
 	return createRunProjectCommand(ctx.ProjectDir, stdout, stderr, "bash", "-lc", commandText)
+}
+
+func rewriteCreateProjectShellCommand(ctx *config.Context, commandText string) string {
+	if ctx == nil {
+		return commandText
+	}
+	return ctx.DockerComposeShellCommand(commandText)
 }
 
 func bootstrapCheckout(out io.Writer, projectDir string) error {

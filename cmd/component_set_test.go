@@ -1056,7 +1056,7 @@ func TestRunComponentSetDevModeAssistantImpliesEnabled(t *testing.T) {
 	override := readFileForTest(t, filepath.Join(projectDir, "docker-compose.override.yml"))
 	for _, want := range []string{
 		"cli-sandbox:",
-		"image: ghcr.io/libops/cli-sandbox:claude",
+		"image: ${SITECTL_ASSISTANT_IMAGE:-ghcr.io/libops/cli-sandbox:claude}",
 		"- claude",
 		"- --dangerously-skip-permissions",
 		"./web/modules/custom:/var/www/drupal/web/modules/custom:z,rw",

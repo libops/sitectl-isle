@@ -908,9 +908,11 @@ func TestRunStartupPreparesLocalPortEnv(t *testing.T) {
 
 	oldPrepare := createPrepareStartup
 	oldRunProject := createRunProjectCommand
+	oldRewrite := createRewriteCommand
 	t.Cleanup(func() {
 		createPrepareStartup = oldPrepare
 		createRunProjectCommand = oldRunProject
+		createRewriteCommand = oldRewrite
 	})
 
 	var prepared bool
@@ -926,6 +928,14 @@ func TestRunStartupPreparesLocalPortEnv(t *testing.T) {
 	}
 
 	var commands []string
+	var rewrites []string
+	createRewriteCommand = func(ctx *config.Context, command string) string {
+		if strings.HasPrefix(command, "export ") {
+			t.Fatalf("expected compose rewrite before startup env prefix, got %q", command)
+		}
+		rewrites = append(rewrites, command)
+		return "rewritten(" + command + ")"
+	}
 	createRunProjectCommand = func(gotProjectDir string, stdout, stderr io.Writer, name string, args ...string) error {
 		if gotProjectDir != projectDir {
 			t.Fatalf("expected project dir %q, got %q", projectDir, gotProjectDir)
@@ -946,8 +956,11 @@ func TestRunStartupPreparesLocalPortEnv(t *testing.T) {
 	if len(commands) == 0 {
 		t.Fatal("expected startup commands")
 	}
+	if len(rewrites) != len(commands) {
+		t.Fatalf("expected every startup command to be rewritten before execution, got rewrites=%d commands=%d", len(rewrites), len(commands))
+	}
 	for _, command := range commands {
-		if !strings.HasPrefix(command, "export SITE_URL='http://localhost:8081' URI_SCHEME='http'; ") {
+		if !strings.HasPrefix(command, "export SITE_URL='http://localhost:8081' URI_SCHEME='http'; rewritten(") {
 			t.Fatalf("expected command to include local port env prefix, got %q", command)
 		}
 	}

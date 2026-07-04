@@ -108,6 +108,8 @@ github.com/libops/sitectl v0.35.8-0.20260703170832-874a4f93b124 h1:1GtPaqwMoRJFn
 github.com/libops/sitectl v0.35.8-0.20260703170832-874a4f93b124/go.mod h1:uoXxmr3TSUYVgcWxwcFSOiDUmmKQW2ASr856dk/9yd8=
 github.com/libops/sitectl v0.35.8 h1:qQls8Ki7Lc8k/UGivqjVxxXWP/uYszwiWI/HrKDikDI=
 github.com/libops/sitectl v0.35.8/go.mod h1:uoXxmr3TSUYVgcWxwcFSOiDUmmKQW2ASr856dk/9yd8=
+github.com/libops/sitectl v0.36.0 h1:Gc+jN7L4tq2bbaGwchRshdnRqyr4oVzaipMA2TwoDvc=
+github.com/libops/sitectl v0.36.0/go.mod h1:uoXxmr3TSUYVgcWxwcFSOiDUmmKQW2ASr856dk/9yd8=
 github.com/lrstanley/bubblezone/v2 v2.0.0 h1:pMb9fHKs0slJF6OrzQ2hEgWusqyl9VU/S0UZ5hyh7ZA=
 github.com/lrstanley/bubblezone/v2 v2.0.0/go.mod h1:yV/QTjcm4Zu5cqvGvdHi7xVUfnB36w/SafOuDp57dgY=
 github.com/lucasb-eyer/go-colorful v1.4.0 h1:UtrWVfLdarDgc44HcS7pYloGHJUjHV/4FwW4TvVgFr4=
