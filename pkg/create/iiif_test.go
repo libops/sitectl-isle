@@ -24,7 +24,9 @@ func TestApplyTripletLocalReplacesCantaloupe(t *testing.T) {
 
 	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.yml"))
 	assertContainsIIIF(t, compose, "\n  triplet:\n")
-	assertContainsIIIF(t, compose, "ghcr.io/libops/triplet:v1.1.0@sha256:ebdd90375f515e863a57372940a61a3b071c3bfb3134c699e2b5d726949603c8")
+	assertContainsIIIF(t, compose, "ghcr.io/libops/triplet:v1.1.1@sha256:84dd6c00ed9fd3e60e4e544feda58044d1f47b624fe3a7ee2460e59cc6bf4de2")
+	assertContainsIIIF(t, compose, "./certs/rootCA.pem:/etc/ssl/certs/lehigh.pem:ro,z")
+	assertContainsIIIF(t, compose, "./conf/triplet/config.yaml:/etc/triplet/config.yaml:ro,z")
 	assertContainsIIIF(t, compose, "drupal-public-files:/public:ro")
 	assertContainsIIIF(t, compose, "drupal-private-files:/private:ro")
 	assertContainsIIIF(t, compose, "source: fcrepo-data")

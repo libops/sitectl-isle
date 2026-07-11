@@ -1,0 +1,18 @@
+http:
+  middlewares:
+    fcrepo-strip-suffix:
+      replacePathRegex:
+        regex: "^(.*/fcrepo/rest/[^.]*)/fcr:metadata$"
+        replacement: "$1"
+  services:
+    fcrepo:
+      loadBalancer:
+        servers:
+          - url: http://fcrepo:8080
+  routers:
+    fcrepo:
+      rule: PathPrefix(`/fcrepo`)
+      middlewares:
+        - fcrepo-strip-suffix
+      service: fcrepo
+      priority: 100

@@ -194,19 +194,19 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 		Codebase:        resolveCodebaseCreateValue(name, disposition, currentStates),
 	}
 	if applyOpts.Fcrepo == "" {
-		applyOpts.Fcrepo = createpkg.FcrepoStateOn
+		applyOpts.Fcrepo = createpkg.FcrepoStateOff
 	}
 	if applyOpts.Blazegraph == "" {
-		applyOpts.Blazegraph = createpkg.FcrepoStateOn
+		applyOpts.Blazegraph = createpkg.FcrepoStateOff
 	}
 	if applyOpts.IIIF == "" {
-		applyOpts.IIIF = createpkg.IIIFCantaloupe
+		applyOpts.IIIF = createpkg.IIIFTriplet
 	}
 	if applyOpts.IIIFTopology == "" {
 		applyOpts.IIIFTopology = createpkg.IIIFTopologyLocal
 	}
 	if applyOpts.Codebase == "" {
-		applyOpts.Codebase = createpkg.CodebaseNested
+		applyOpts.Codebase = createpkg.CodebaseGitRoot
 	}
 
 	if applyOpts.Fcrepo == createpkg.FcrepoStateOff {
@@ -324,7 +324,7 @@ func runIIIFComponentSet(cmd *cobra.Command, ctx *config.Context, drupalRootfs, 
 		ComposeOverride: resolveEnvironmentOverridePath(ctx),
 	}
 	if opts.IIIF == "" {
-		opts.IIIF = createpkg.IIIFCantaloupe
+		opts.IIIF = createpkg.IIIFTriplet
 	}
 	if opts.IIIFTopology == "" {
 		opts.IIIFTopology = createpkg.IIIFTopologyLocal

@@ -10,18 +10,18 @@ func TestFcrepoDefinition(t *testing.T) {
 	t.Parallel()
 
 	definition := Fcrepo(TemplateSource{
-		Repo: "libops/isle-site-template",
+		Repo: "libops/isle",
 		Ref:  "v1.2.3",
 	})
 
 	if definition.Name != "fcrepo" {
 		t.Fatalf("expected name fcrepo, got %q", definition.Name)
 	}
-	if definition.DefaultState != corecomponent.StateOn {
-		t.Fatalf("expected default state on, got %q", definition.DefaultState)
+	if definition.DefaultState != corecomponent.StateOff {
+		t.Fatalf("expected default state off, got %q", definition.DefaultState)
 	}
-	if definition.DefaultDisposition != corecomponent.DispositionEnabled {
-		t.Fatalf("expected default disposition enabled, got %q", definition.DefaultDisposition)
+	if definition.DefaultDisposition != corecomponent.DispositionSuperseded {
+		t.Fatalf("expected default disposition superseded, got %q", definition.DefaultDisposition)
 	}
 	if !definition.PromptOnCreate {
 		t.Fatal("expected fcrepo to prompt on create")
@@ -48,11 +48,14 @@ func TestFcrepoDefinition(t *testing.T) {
 		t.Fatalf("expected fcrepo filesystem follow-up, got %#v", definition.FollowUps)
 	}
 
-	if len(definition.Off.Compose.Canonical) != 1 {
-		t.Fatalf("expected one canonical compose source, got %d", len(definition.Off.Compose.Canonical))
+	if len(definition.Off.Compose.Canonical) != 2 {
+		t.Fatalf("expected two canonical compose sources, got %d", len(definition.Off.Compose.Canonical))
 	}
 	if definition.Off.Compose.Canonical[0].Path != "docker-compose.yml" {
 		t.Fatalf("expected docker-compose.yml canonical path, got %q", definition.Off.Compose.Canonical[0].Path)
+	}
+	if definition.Off.Compose.Canonical[1].Path != "conf/traefik/fcrepo.yml" {
+		t.Fatalf("expected fcrepo router canonical path, got %q", definition.Off.Compose.Canonical[1].Path)
 	}
 	if len(definition.On.Drupal.Canonical) != 1 {
 		t.Fatalf("expected one canonical drupal source, got %d", len(definition.On.Drupal.Canonical))
@@ -63,6 +66,10 @@ func TestFcrepoDefinition(t *testing.T) {
 
 	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.fcrepo")
 	assertHasRule(t, definition.On.Compose.Rules, OpRestore, ".services.fcrepo")
+	assertHasWholeFileRule(t, definition.Off.Compose.Rules, OpDelete, "conf/traefik/fcrepo.yml")
+	assertHasWholeFileRule(t, definition.On.Compose.Rules, OpRestore, "conf/traefik/fcrepo.yml")
+	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.fcrepo-database-init")
+	assertHasRule(t, definition.On.Compose.Rules, OpSet, ".services.fcrepo-database-init.environment.DB_NAME")
 	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.milliner")
 	assertHasRule(t, definition.On.Compose.Rules, OpRestore, ".services.milliner")
 	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_URL")
@@ -78,18 +85,18 @@ func TestBlazegraphDefinition(t *testing.T) {
 	t.Parallel()
 
 	definition := Blazegraph(TemplateSource{
-		Repo: "libops/isle-site-template",
+		Repo: "libops/isle",
 		Ref:  "v1.2.3",
 	})
 
 	if definition.Name != "blazegraph" {
 		t.Fatalf("expected name blazegraph, got %q", definition.Name)
 	}
-	if definition.DefaultState != corecomponent.StateOn {
-		t.Fatalf("expected default state on, got %q", definition.DefaultState)
+	if definition.DefaultState != corecomponent.StateOff {
+		t.Fatalf("expected default state off, got %q", definition.DefaultState)
 	}
-	if definition.DefaultDisposition != corecomponent.DispositionEnabled {
-		t.Fatalf("expected default disposition enabled, got %q", definition.DefaultDisposition)
+	if definition.DefaultDisposition != corecomponent.DispositionDisabled {
+		t.Fatalf("expected default disposition disabled, got %q", definition.DefaultDisposition)
 	}
 	if !definition.PromptOnCreate {
 		t.Fatal("expected blazegraph to prompt on create")
@@ -168,6 +175,18 @@ func TestExternalCantaloupeDefinition(t *testing.T) {
 	}
 }
 
+func TestIIIFDefinitionDefaultsToLibOpsTemplate(t *testing.T) {
+	t.Parallel()
+
+	definition := IIIF(TemplateSource{})
+	if definition.DefaultState != corecomponent.StateOn {
+		t.Fatalf("expected default state on, got %q", definition.DefaultState)
+	}
+	if definition.DefaultDisposition != corecomponent.DispositionTriplet {
+		t.Fatalf("expected default disposition triplet, got %q", definition.DefaultDisposition)
+	}
+}
+
 func TestCodebaseDefinition(t *testing.T) {
 	t.Parallel()
 
@@ -176,8 +195,11 @@ func TestCodebaseDefinition(t *testing.T) {
 	if definition.Name != "codebase" {
 		t.Fatalf("expected name codebase, got %q", definition.Name)
 	}
-	if definition.DefaultDisposition != corecomponent.DispositionNested {
-		t.Fatalf("expected default disposition nested, got %q", definition.DefaultDisposition)
+	if definition.DefaultState != corecomponent.StateOn {
+		t.Fatalf("expected default state on, got %q", definition.DefaultState)
+	}
+	if definition.DefaultDisposition != corecomponent.DispositionGitRoot {
+		t.Fatalf("expected default disposition git-root, got %q", definition.DefaultDisposition)
 	}
 	if len(definition.AllowedDispositions) != 2 || definition.AllowedDispositions[0] != corecomponent.DispositionNested || definition.AllowedDispositions[1] != corecomponent.DispositionGitRoot {
 		t.Fatalf("expected nested/git-root dispositions, got %#v", definition.AllowedDispositions)

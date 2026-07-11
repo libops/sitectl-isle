@@ -24,7 +24,7 @@ func newComponentSetTestCommand() *cobra.Command {
 	var yolo bool
 
 	cmd := &cobra.Command{Use: "set <name> [disposition]"}
-	cmd.Flags().StringVar(&path, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
+	cmd.Flags().StringVar(&path, "path", "", "Path to the checked out ISLE project. Defaults to the active sitectl context project directory")
 	addCodebaseRootfsFlags(cmd, &codebaseRootfs, &drupalRootfs, createpkg.DefaultDrupalRootfs)
 	cmd.Flags().StringVar(&state, "state", "", "Component state to apply. Valid values are on or off. If omitted, the command prompts interactively.")
 	cmd.Flags().StringVar(&disposition, "disposition", "", "Component disposition to apply. Valid values depend on the component, commonly disabled, superceded, enabled, or distributed.")
@@ -372,7 +372,7 @@ func TestRunComponentSetUsesContextRootfsAfterCodebaseGitRoot(t *testing.T) {
 	compose = readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
 	for _, want := range []string{
 		"\n  blazegraph:\n",
-		"image: islandora/blazegraph:main",
+		"image: libops/blazegraph:2.1.5@sha256:3127324525a28f4905b56d24fa7e866c4bf4588f85f6f21df44ffc93b24666fc",
 		"blazegraph-data",
 		`ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"`,
 		`DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: "islandora"`,
@@ -769,7 +769,9 @@ func TestRunComponentSetConfiguresIngressLetsEncrypt(t *testing.T) {
 		`PHP_UPLOAD_MAX_FILESIZE: "2G"`,
 		`PHP_POST_MAX_SIZE: "2G"`,
 		`NGINX_CLIENT_MAX_BODY_SIZE: "2G"`,
+		`NGINX_CLIENT_BODY_TIMEOUT: "10m"`,
 		`NGINX_FASTCGI_READ_TIMEOUT: "10m"`,
+		`NGINX_FASTCGI_SEND_TIMEOUT: "10m"`,
 		"--entryPoints.http.transport.respondingTimeouts.readTimeout=10m",
 		`NGINX_SET_REAL_IP_FROM: "10.0.0.0/8"`,
 		`NGINX_SET_REAL_IP_FROM2: "203.0.113.4"`,
@@ -1009,14 +1011,18 @@ func TestRunComponentSetTogglesDevMode(t *testing.T) {
 		"UID: ${UID:-1000}",
 		"./assets:/var/www/drupal/assets:z,rw",
 		"./web/modules/custom:/var/www/drupal/web/modules/custom:z,rw",
+		"--providers.file.watch=true",
 	} {
 		if !strings.Contains(override, want) {
 			t.Fatalf("expected override to contain %q, got:\n%s", want, override)
 		}
 	}
+	if strings.Contains(override, "--providers.docker") {
+		t.Fatalf("dev-mode override must not enable the Docker provider, got:\n%s", override)
+	}
 
 	if err := runComponentSet(newComponentSetTestCommand(), "dev-mode", "disabled"); err != nil {
-		t.Fatalf("runComponentSet(disabled) error = %v", err)
+		t.Fatalf("runComponentSet(disabled) error = %v; override:\n%s", err, readFileForTest(t, overridePath))
 	}
 	if _, err := os.Stat(overridePath); !os.IsNotExist(err) {
 		t.Fatalf("expected dev override removed, stat error = %v", err)

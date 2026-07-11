@@ -13,6 +13,7 @@ import (
 	"time"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
+	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
@@ -214,8 +215,8 @@ func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
 	if req.Apply.ISLEFileSystemURI != "archive" {
 		t.Fatalf("expected custom isle-file-system-uri preserved, got %q", req.Apply.ISLEFileSystemURI)
 	}
-	if req.Apply.DrupalRootfs != createpkg.DefaultDrupalRootfs {
-		t.Fatalf("expected drupal rootfs preserved, got %q", req.Apply.DrupalRootfs)
+	if req.Apply.DrupalRootfs != corecomponent.DefaultDrupalRootfs {
+		t.Fatalf("expected LibOps git-root Drupal path, got %q", req.Apply.DrupalRootfs)
 	}
 }
 
@@ -431,7 +432,7 @@ func TestStartupCommandUsesCreateDefinitionLifecycle(t *testing.T) {
 	for _, want := range []string{
 		"docker compose pull --ignore-buildable",
 		"docker compose build",
-		"docker compose up --remove-orphans -d",
+		"docker compose up --remove-orphans --wait --wait-timeout 600 -d",
 	} {
 		if !strings.Contains(args[1], want) {
 			t.Fatalf("expected startup command to contain %q, got %q", want, args[1])
@@ -515,22 +516,23 @@ func TestEnsureClonedCheckoutSkipsNonEmptyDirectory(t *testing.T) {
 	}
 }
 
-func TestRefreshCreateContextComposeMetadataUsesTemplateComposeName(t *testing.T) {
+func TestRefreshCreateContextComposeMetadataKeepsContextDerivedNameWithoutTemplateName(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	projectDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte("name: isle-site-template\nservices: {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(docker-compose.yml) error = %v", err)
 	}
+	projectName := filepath.Base(projectDir)
 	ctx := &config.Context{
 		Name:               "isle-local",
 		Site:               "isle",
 		Plugin:             "isle",
 		DockerHostType:     config.ContextLocal,
 		ProjectDir:         projectDir,
-		ProjectName:        "isle",
-		ComposeProjectName: "isle",
-		ComposeNetwork:     "isle_default",
+		ProjectName:        projectName,
+		ComposeProjectName: projectName,
+		ComposeNetwork:     projectName + "_default",
 	}
 	if err := config.SaveContext(ctx, true); err != nil {
 		t.Fatalf("SaveContext() error = %v", err)
@@ -540,18 +542,18 @@ func TestRefreshCreateContextComposeMetadataUsesTemplateComposeName(t *testing.T
 		t.Fatalf("refreshCreateContextComposeMetadata() error = %v", err)
 	}
 
-	if ctx.ComposeProjectName != "isle-site-template" {
-		t.Fatalf("expected in-memory compose project name refreshed, got %q", ctx.ComposeProjectName)
+	if ctx.ComposeProjectName != projectName {
+		t.Fatalf("expected in-memory compose project name preserved, got %q", ctx.ComposeProjectName)
 	}
-	if ctx.ComposeNetwork != "isle-site-template_default" {
-		t.Fatalf("expected in-memory compose network refreshed, got %q", ctx.ComposeNetwork)
+	if ctx.ComposeNetwork != projectName+"_default" {
+		t.Fatalf("expected in-memory compose network preserved, got %q", ctx.ComposeNetwork)
 	}
 	saved, err := config.GetContext("isle-local")
 	if err != nil {
 		t.Fatalf("GetContext() error = %v", err)
 	}
-	if saved.ComposeProjectName != "isle-site-template" || saved.ComposeNetwork != "isle-site-template_default" {
-		t.Fatalf("expected saved context metadata refreshed, got project=%q network=%q", saved.ComposeProjectName, saved.ComposeNetwork)
+	if saved.ComposeProjectName != projectName || saved.ComposeNetwork != projectName+"_default" {
+		t.Fatalf("expected saved context metadata preserved, got project=%q network=%q", saved.ComposeProjectName, saved.ComposeNetwork)
 	}
 }
 

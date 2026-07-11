@@ -1,20 +1,18 @@
-  traefik:
-    command:
-      - --ping=true
-      - --log.level=INFO
-      - --entryPoints.http.address=:80
-      - --entryPoints.http.transport.respondingTimeouts.readTimeout=300s
-      - --providers.file.directory=/etc/traefik/dynamic
-      - --providers.docker=true
-      - --providers.docker.network=default
-      - --providers.docker.exposedByDefault=false
-      - --api.insecure=true
-      - --api.dashboard=true
-      - --api.debug=true
-    environment:
-      DEVELOPMENT_ENVIRONMENT: "true"
-    ports: !override
-      - "8082:80"
+    traefik:
+      command:
+        - --ping=true
+        - --log.level=INFO
+        - --entryPoints.http.address=:80
+        - --entryPoints.http.transport.respondingTimeouts.readTimeout=300s
+        - --providers.file.directory=/etc/traefik/dynamic
+        - --providers.file.watch=true
+        - --api.insecure=true
+        - --api.dashboard=true
+        - --api.debug=true
+      environment:
+        DEVELOPMENT_ENVIRONMENT: "true"
+      ports: !override
+        - "8082:80"
 x-sitectl-dev-ports:
   traefik:
     - "8082:80"

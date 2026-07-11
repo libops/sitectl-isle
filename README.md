@@ -1,6 +1,6 @@
 # sitectl-isle
 
-`sitectl-isle` simplifies the creation and operation of repositories created using the [ISLE Site Template](https://github.com/Islandora-Devops/isle-site-template). It uses sitectl components to make features like Traefik bot mitigation, Triplet IIIF, and Islandora filesystem storage easy to enable and customize.
+`sitectl-isle` simplifies the creation and operation of repositories created using the [LibOps ISLE template](https://github.com/libops/isle). It uses sitectl components to make features like Traefik bot mitigation, Triplet IIIF, and Islandora filesystem storage easy to enable and customize.
 
 Documentation: https://sitectl.libops.io/plugins/isle
 
@@ -46,12 +46,13 @@ Use [`sitectl image`](https://sitectl.libops.io/commands/image) for local image 
 sitectl image set --tag drupal=nginx-1.30.3-php84 --tag solr=9
 ```
 
-Use [`sitectl set`](https://sitectl.libops.io/commands/set) and [`sitectl converge`](https://sitectl.libops.io/commands/converge) for component changes:
+Use [`sitectl set`](https://sitectl.libops.io/commands/set) for component changes. It updates the component-owned project files immediately:
 
 ```bash
 sitectl set bot-mitigation on
-sitectl converge
 ```
+
+Use [`sitectl converge`](https://sitectl.libops.io/commands/converge) later to inspect and repair component drift after manual edits or upstream updates.
 
 See the [ISLE plugin docs](https://sitectl.libops.io/plugins/isle) for Fedora, Blazegraph, IIIF, derivatives, sync, migration, cache, TLS, and bot mitigation details.
 

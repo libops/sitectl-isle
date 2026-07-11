@@ -25,7 +25,7 @@ func newComponentReviewTestCommand() *cobra.Command {
 	var yolo bool
 
 	cmd := &cobra.Command{Use: "review"}
-	cmd.Flags().StringVar(&path, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
+	cmd.Flags().StringVar(&path, "path", "", "Path to the checked out ISLE project. Defaults to the active sitectl context project directory")
 	addCodebaseRootfsFlags(cmd, &codebaseRootfs, &drupalRootfs, createpkg.DefaultDrupalRootfs)
 	cmd.Flags().StringVarP(&componentName, "component", "c", "", "Specific component to reconcile")
 	corecomponent.AddReviewFlags(cmd, &report, &verbose, &format)
@@ -175,6 +175,166 @@ func TestBuildComponentReviewQuestionIncludesRuntimeTransitionWarnings(t *testin
 	if !strings.Contains(question, "If disabled: Disabling Blazegraph removes indexing integrations but does not require content migration.") {
 		t.Fatalf("expected disable warning in question, got:\n%s", question)
 	}
+}
+
+func TestDriftedComponentViewsPreservesOnlyDrift(t *testing.T) {
+	t.Parallel()
+	views := []componentView{
+		{Name: "enabled", State: corecomponent.DetectedState(corecomponent.StateOn)},
+		{Name: "disabled", State: corecomponent.DetectedState(corecomponent.StateOff)},
+		{Name: "drifted", State: corecomponent.StateDrifted},
+	}
+	got := driftedComponentViews(views)
+	if len(got) != 1 || got[0].Name != "drifted" {
+		t.Fatalf("driftedComponentViews() = %+v, want only drifted", got)
+	}
+}
+
+func TestRunComponentReconcileDriftOnlyPreservesHealthyTopology(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+	writeISLEDefaultCodebaseFixture(t, projectDir)
+	for _, service := range createpkg.DerivativeServiceNames() {
+		addDerivativeServiceFixture(t, projectDir, service)
+	}
+
+	ctx, err := localStatusContext(projectDir)
+	if err != nil {
+		t.Fatalf("localStatusContext() error = %v", err)
+	}
+	if err := applyIngressReviewDecision(ctx, componentReviewDecision{
+		State:         corecomponent.StateOn,
+		TLSMode:       coretraefik.IngressModeHTTP,
+		Domain:        coretraefik.DefaultIngressDomain,
+		MaxUploadSize: coretraefik.DefaultMaxUploadSize,
+		UploadTimeout: coretraefik.DefaultUploadTimeout,
+	}); err != nil {
+		t.Fatalf("applyIngressReviewDecision() error = %v", err)
+	}
+	// Keep ingress healthy under the currently released core detector, which
+	// evaluates each supported Compose filename independently. The v0.37 core
+	// candidate-file behavior collapses these to the files that actually exist.
+	composeFixture := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	for _, name := range []string{"docker-compose.yaml", "compose.yml", "compose.yaml"} {
+		writeFileForTest(t, filepath.Join(projectDir, name), composeFixture)
+	}
+
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	compose := readFileForTest(t, composePath)
+	compose = strings.Replace(compose, "\n  traefik:\n", "\n  triplet:\n    image: libops/triplet:test\n\n  traefik:\n", 1)
+	writeFileForTest(t, composePath, compose)
+
+	before, err := detectComponentViewsForContext(ctx, createpkg.DefaultDrupalRootfs)
+	if err != nil {
+		t.Fatalf("detectComponentViewsForContext(before) error = %v", err)
+	}
+	beforeByName := componentViewsByName(before)
+	drifted := driftedComponentViews(before)
+	if len(drifted) != 1 || drifted[0].Name != "iiif" {
+		details := make([]string, 0, len(drifted))
+		for _, view := range drifted {
+			details = append(details, view.Name+": "+componentDriftSummary(view, 10))
+		}
+		t.Fatalf("fixture drift = %v, want only iiif", details)
+	}
+
+	oldApply := componentApplyOptions
+	oldInput := componentReviewInput
+	oldPromptState := componentReviewPromptState
+	oldPromptDisposition := componentReviewPromptDisposition
+	oldPromptChoice := componentReviewPromptChoice
+	t.Cleanup(func() {
+		componentApplyOptions = oldApply
+		componentReviewInput = oldInput
+		componentReviewPromptState = oldPromptState
+		componentReviewPromptDisposition = oldPromptDisposition
+		componentReviewPromptChoice = oldPromptChoice
+	})
+
+	var got createpkg.Options
+	componentApplyOptions = func(opts createpkg.Options) error {
+		got = opts
+		return createpkg.Apply(opts)
+	}
+	var prompted []string
+	componentReviewPromptDisposition = nil
+	componentReviewPromptState = func(name string, guidance corecomponent.StateGuidance, input corecomponent.InputFunc) (corecomponent.State, error) {
+		prompted = append(prompted, name)
+		if name != "iiif" {
+			t.Fatalf("unexpected prompt for healthy component %q", name)
+		}
+		return corecomponent.StateOff, nil
+	}
+	componentReviewPromptChoice = func(name string, choices []corecomponent.Choice, defaultValue string, input corecomponent.InputFunc, sections ...string) (string, error) {
+		t.Fatalf("unexpected follow-up prompt for %q", name)
+		return "", nil
+	}
+	componentReviewInput = func(question ...string) (string, error) {
+		t.Fatalf("unexpected text prompt: %s", strings.Join(question, "\n"))
+		return "", nil
+	}
+
+	var out bytes.Buffer
+	cmd := newComponentReviewTestCommand()
+	cmd.SetOut(&out)
+	if err := runComponentReconcile(cmd, componentReconcileOptions{
+		Path:         projectDir,
+		DrupalRootfs: createpkg.DefaultDrupalRootfs,
+		Yolo:         true,
+		DriftOnly:    true,
+	}); err != nil {
+		t.Fatalf("runComponentReconcile() error = %v", err)
+	}
+	if len(prompted) != 1 || prompted[0] != "iiif" {
+		t.Fatalf("prompted components = %v, want [iiif]", prompted)
+	}
+
+	if got.Fcrepo != createpkg.FcrepoStateOn || got.Blazegraph != createpkg.FcrepoStateOn {
+		t.Fatalf("healthy repository topology changed: fcrepo=%q blazegraph=%q", got.Fcrepo, got.Blazegraph)
+	}
+	if got.IIIF != createpkg.IIIFCantaloupe || got.IIIFTopology != createpkg.IIIFTopologyLocal {
+		t.Fatalf("unexpected IIIF repair: implementation=%q topology=%q", got.IIIF, got.IIIFTopology)
+	}
+	if got.Codebase != createpkg.CodebaseNested {
+		t.Fatalf("healthy codebase layout changed: %q", got.Codebase)
+	}
+
+	after, err := detectComponentViewsForContext(ctx, createpkg.DefaultDrupalRootfs)
+	if err != nil {
+		t.Fatalf("detectComponentViewsForContext(after) error = %v", err)
+	}
+	if drifted := driftedComponentViews(after); len(drifted) != 0 {
+		t.Fatalf("drift remains after reconcile: %+v", drifted)
+	}
+	afterByName := componentViewsByName(after)
+	for _, name := range []string{"fcrepo", "blazegraph", "iiif-topology", "codebase"} {
+		beforeView := beforeByName[name]
+		afterView := afterByName[name]
+		if beforeView.State != afterView.State || beforeView.Disposition != afterView.Disposition {
+			t.Fatalf("healthy component %q changed from %s/%s to %s/%s", name, beforeView.State, beforeView.Disposition, afterView.State, afterView.Disposition)
+		}
+	}
+	if afterByName["iiif"].Disposition != corecomponent.DispositionCantaloupe {
+		t.Fatalf("iiif drift repaired to %q, want %q", afterByName["iiif"].Disposition, corecomponent.DispositionCantaloupe)
+	}
+
+	compose = readFileForTest(t, composePath)
+	for _, want := range []string{"\n  fcrepo:\n", "\n  blazegraph:\n", "context: ./drupal"} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("reconcile removed healthy topology marker %q:\n%s", want, compose)
+		}
+	}
+	if strings.Contains(compose, "\n  triplet:\n") {
+		t.Fatalf("reconcile did not remove drifted triplet service:\n%s", compose)
+	}
+}
+
+func componentViewsByName(views []componentView) map[string]componentView {
+	byName := make(map[string]componentView, len(views))
+	for _, view := range views {
+		byName[view.Name] = view
+	}
+	return byName
 }
 
 func TestRunComponentReviewReportDoesNotPromptOrApply(t *testing.T) {

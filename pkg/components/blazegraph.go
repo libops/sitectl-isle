@@ -5,8 +5,8 @@ import corecomponent "github.com/libops/sitectl/pkg/component"
 func Blazegraph(source TemplateSource) Definition {
 	return Definition{
 		Name:                "blazegraph",
-		DefaultState:        corecomponent.StateOn,
-		DefaultDisposition:  corecomponent.DispositionEnabled,
+		DefaultState:        corecomponent.StateOff,
+		DefaultDisposition:  corecomponent.DispositionDisabled,
 		AllowedDispositions: []corecomponent.Disposition{corecomponent.DispositionEnabled, corecomponent.DispositionDisabled},
 		PromptOnCreate:      true,
 		Guidance: corecomponent.StateGuidance{

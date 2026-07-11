@@ -50,6 +50,7 @@ type componentReconcileOptions struct {
 	Verbose        bool
 	Format         string
 	Yolo           bool
+	DriftOnly      bool
 }
 
 func componentReconcileOptionsFromGlobals(componentName string) componentReconcileOptions {
@@ -101,6 +102,7 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 	if err != nil {
 		return err
 	}
+	allStatuses := statuses
 	if strings.TrimSpace(componentName) != "" {
 		for _, status := range statuses {
 			if status.Name == componentName {
@@ -117,6 +119,13 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 	}
 	if opts.Report {
 		return corecomponent.WriteComponentStatusReportWithFormat(cmd.OutOrStdout(), statuses, opts.Verbose, opts.Format)
+	}
+	if opts.DriftOnly {
+		statuses = driftedComponentViews(statuses)
+		if len(statuses) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "No component drift detected")
+			return nil
+		}
 	}
 
 	rawDecisions, err := corecomponent.RunReview(statuses, corecomponent.ReviewOptions{
@@ -154,8 +163,8 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 		}
 		return nil
 	}
-	if strings.TrimSpace(componentName) != "" {
-		decisions = mergeCurrentComponentReviewDecisions(ctx, rootfs, decisions)
+	if opts.DriftOnly || strings.TrimSpace(componentName) != "" {
+		decisions = mergeCurrentComponentReviewDecisions(allStatuses, decisions)
 	}
 
 	if err := applyComponentReview(ctx, rootfs, opts.Path, decisions); err != nil {
@@ -179,6 +188,16 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 	return nil
 }
 
+func driftedComponentViews(views []componentView) []componentView {
+	drifted := make([]componentView, 0, len(views))
+	for _, view := range views {
+		if view.State == corecomponent.StateDrifted {
+			drifted = append(drifted, view)
+		}
+	}
+	return drifted
+}
+
 func applyRemoteComponentReviewDecision(ctx *config.Context, componentName string, decision componentReviewDecision) error {
 	switch componentName {
 	case coretraefik.IngressName:
@@ -190,12 +209,7 @@ func applyRemoteComponentReviewDecision(ctx *config.Context, componentName strin
 	}
 }
 
-func mergeCurrentComponentReviewDecisions(ctx *config.Context, drupalRootfs string, decisions map[string]componentReviewDecision) map[string]componentReviewDecision {
-	statuses, err := detectComponentViewsForContext(ctx, drupalRootfs)
-	if err != nil {
-		return decisions
-	}
-
+func mergeCurrentComponentReviewDecisions(statuses []componentView, decisions map[string]componentReviewDecision) map[string]componentReviewDecision {
 	merged := make(map[string]componentReviewDecision, len(statuses))
 	for name, decision := range decisions {
 		merged[name] = decision
@@ -284,19 +298,19 @@ func applyComponentReview(ctx *config.Context, drupalRootfs, pathOverride string
 		Codebase:           reviewCodebaseCreateValue(decisions["codebase"]),
 	}
 	if opts.Fcrepo == "" {
-		opts.Fcrepo = createpkg.FcrepoStateOn
+		opts.Fcrepo = createpkg.FcrepoStateOff
 	}
 	if opts.Blazegraph == "" {
-		opts.Blazegraph = createpkg.FcrepoStateOn
+		opts.Blazegraph = createpkg.FcrepoStateOff
 	}
 	if opts.IIIF == "" {
-		opts.IIIF = createpkg.IIIFCantaloupe
+		opts.IIIF = createpkg.IIIFTriplet
 	}
 	if opts.IIIFTopology == "" {
 		opts.IIIFTopology = createpkg.IIIFTopologyLocal
 	}
 	if opts.Codebase == "" {
-		opts.Codebase = createpkg.CodebaseNested
+		opts.Codebase = createpkg.CodebaseGitRoot
 	}
 
 	if opts.Fcrepo == createpkg.FcrepoStateOff {

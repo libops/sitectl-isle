@@ -1,6 +1,7 @@
 version: 2
 before:
   hooks:
+    - ./scripts/check-sitectl-core-version.sh v0.38.0
     - go mod tidy
 builds:
   - binary: sitectl-isle
@@ -69,3 +70,16 @@ nfpms:
     dependencies:
       - sitectl
       - sitectl-drupal
+    overrides:
+      deb:
+        dependencies:
+          - sitectl (>= 0.38.0)
+          - sitectl-drupal (>= 0.10.0)
+      rpm:
+        dependencies:
+          - sitectl >= 0.38.0
+          - sitectl-drupal >= 0.10.0
+      apk:
+        dependencies:
+          - sitectl>=0.38.0
+          - sitectl-drupal>=0.10.0

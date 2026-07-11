@@ -39,7 +39,7 @@ var derivativeServiceSpecs = []DerivativeServiceSpec{
 	},
 	{
 		Name:        "crayfits",
-		ImageRef:    "libops/crayfits@sha256:4e0d27cd95c9776ccf0d682804aa34a79d1c815304b1521c0d120c7470e2341c",
+		ImageRef:    "libops/crayfits:main@sha256:9939b6288328e42ba8f82e79a99dd85ca4a0bb0d0f52b29466b66eaa4504e9cb",
 		AlpacaEnv:   "ALPACA_DERIVATIVE_FITS_URL",
 		LocalURL:    "http://crayfits:8080/",
 		ExternalURL: microservicesBaseURL + "/crayfits",
@@ -47,7 +47,7 @@ var derivativeServiceSpecs = []DerivativeServiceSpec{
 	},
 	{
 		Name:        "homarus",
-		ImageRef:    "libops/homarus@sha256:6668319f8a796af81857afb1bd415589d771f731a98668d7f7441ed264591ded",
+		ImageRef:    "libops/homarus:8.1.2@sha256:dede2629a054497e8220f5cd4602f2f5d5bc249a430cb12ece61f8ef15819e9a",
 		AlpacaEnv:   "ALPACA_DERIVATIVE_HOMARUS_URL",
 		LocalURL:    "http://homarus:8080/",
 		ExternalURL: microservicesBaseURL + "/homarus",
@@ -55,7 +55,7 @@ var derivativeServiceSpecs = []DerivativeServiceSpec{
 	},
 	{
 		Name:        "houdini",
-		ImageRef:    "libops/houdini@sha256:dfac6017c31660b28fdc0d441ab053297450aba5b1a3016e0943353b5d0cd33b",
+		ImageRef:    "libops/houdini:8.18.2@sha256:347005f6ba008b48e0f0e5b10d5cd30582883dab9bd514dae72ff59bd5eac8e2",
 		AlpacaEnv:   "ALPACA_DERIVATIVE_HOUDINI_URL",
 		LocalURL:    "http://houdini:8080/",
 		ExternalURL: microservicesBaseURL + "/houdini",
@@ -63,7 +63,7 @@ var derivativeServiceSpecs = []DerivativeServiceSpec{
 	},
 	{
 		Name:        "hypercube",
-		ImageRef:    "libops/hypercube@sha256:3909994ca3849eacfa4974d63517e9bf4ca91a8519461618bbb87f6a8c01cb35",
+		ImageRef:    "libops/hypercube:5.5.2@sha256:d9ebaf350cb09ae814ae4fb2b4f38182c6f04032b05fff4cb8c2ad24f8006e9a",
 		AlpacaEnv:   "ALPACA_DERIVATIVE_OCR_URL",
 		LocalURL:    "http://hypercube:8080/",
 		ExternalURL: microservicesBaseURL + "/hypercube",
@@ -71,7 +71,7 @@ var derivativeServiceSpecs = []DerivativeServiceSpec{
 	},
 	{
 		Name:        "mergepdf",
-		ImageRef:    "islandora/mergepdf:main@sha256:19ed2d048abbe548f9bad07712547678b06dc33f7a066bc14358bdef3b9c93f7",
+		ImageRef:    "libops/mergepdf:main@sha256:8ee2a3cd7d2b02e84af559518b9f7f85e1abe87a4ee337db415619f75d2047a8",
 		AlpacaEnv:   "ALPACA_DERIVATIVE_MERGEPDF_URL",
 		LocalURL:    "http://mergepdf:8080/",
 		ExternalURL: microservicesBaseURL + "/mergepdf",

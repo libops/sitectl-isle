@@ -52,7 +52,9 @@ var componentExtensionReconcileCmd = &cobra.Command{
 	Use:   "reconcile",
 	Short: "Internal component reconcile hook",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runComponentReconcile(cmd, componentReconcileOptionsFromGlobals(componentExtensionName))
+		opts := componentReconcileOptionsFromGlobals(componentExtensionName)
+		opts.DriftOnly = true
+		return runComponentReconcile(cmd, opts)
 	},
 }
 

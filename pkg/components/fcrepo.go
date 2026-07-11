@@ -5,8 +5,8 @@ import corecomponent "github.com/libops/sitectl/pkg/component"
 func Fcrepo(source TemplateSource) Definition {
 	return Definition{
 		Name:                "fcrepo",
-		DefaultState:        corecomponent.StateOn,
-		DefaultDisposition:  corecomponent.DispositionEnabled,
+		DefaultState:        corecomponent.StateOff,
+		DefaultDisposition:  corecomponent.DispositionSuperseded,
 		AllowedDispositions: []corecomponent.Disposition{corecomponent.DispositionEnabled, corecomponent.DispositionSuperseded},
 		PromptOnCreate:      true,
 		FollowUps: []corecomponent.FollowUpSpec{
@@ -44,9 +44,9 @@ func Fcrepo(source TemplateSource) Definition {
 			},
 		},
 		Guidance: corecomponent.StateGuidance{
-			Question: `Fedora is the default backend repository that Islandora content will be synchronized with and stored in.
-If you plan to store your files in a different file system backend like AWS S3, you may want to turn the fcrepo component off.`,
-			EnabledHelp:    "Keep the default Islandora repository stack with Fedora-backed storage.",
+			Question: `The LibOps template stores files through Drupal without Fedora by default.
+Enable Fedora only when this site requires a Fedora-backed Islandora repository.`,
+			EnabledHelp:    "Add the Fedora-backed Islandora repository stack.",
 			SupersededHelp: "Replace Fedora-backed storage with another storage approach and rewire Drupal to use a different filesystem URI.",
 		},
 		Gates: corecomponent.GateSpec{
@@ -67,8 +67,20 @@ If you plan to store your files in a different file system backend like AWS S3, 
 			Compose: YAMLStateSpec{
 				Canonical: []RepoAsset{
 					source.ComposeAsset("docker-compose.yml"),
+					source.ComposeAsset("conf/traefik/fcrepo.yml"),
 				},
 				Rules: []YAMLRule{
+					{
+						Files: []string{"conf/traefik/fcrepo.yml"},
+						Op:    OpRestore,
+						Path:  ".",
+					},
+					{
+						Files: []string{"docker-compose.yml"},
+						Op:    OpSet,
+						Path:  ".services.fcrepo-database-init.environment.DB_NAME",
+						Value: "fcrepo",
+					},
 					{
 						Files:       []string{"docker-compose.yml"},
 						SourceFiles: []string{"docker-compose.yml"},
@@ -159,8 +171,19 @@ If you plan to store your files in a different file system backend like AWS S3, 
 			Compose: YAMLStateSpec{
 				Canonical: []RepoAsset{
 					source.ComposeAsset("docker-compose.yml"),
+					source.ComposeAsset("conf/traefik/fcrepo.yml"),
 				},
 				Rules: []YAMLRule{
+					{
+						Files: []string{"conf/traefik/fcrepo.yml"},
+						Op:    OpDelete,
+						Path:  ".",
+					},
+					{
+						Files: []string{"docker-compose.yml"},
+						Op:    OpDelete,
+						Path:  ".services.fcrepo-database-init",
+					},
 					{
 						Files:       []string{"docker-compose.yml"},
 						SourceFiles: []string{"docker-compose.yml"},

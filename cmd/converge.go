@@ -38,6 +38,7 @@ func (r *isleConvergeRunner) Run(cmd *cobra.Command, ctx *config.Context) error 
 		Verbose:        r.verbose,
 		Format:         r.format,
 		Yolo:           r.yolo,
+		DriftOnly:      true,
 	})
 }
 

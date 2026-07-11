@@ -23,7 +23,7 @@ func newStatusTestCommand() *cobra.Command {
 	var format string
 
 	cmd := &cobra.Command{Use: "status"}
-	cmd.Flags().StringVar(&path, "path", "", "Path to the checked out isle-site-template project. Defaults to the active sitectl context project directory")
+	cmd.Flags().StringVar(&path, "path", "", "Path to the checked out ISLE project. Defaults to the active sitectl context project directory")
 	addCodebaseRootfsFlags(cmd, &codebaseRootfs, &drupalRootfs, createpkg.DefaultDrupalRootfs)
 	corecomponent.AddReportFlags(cmd, &verbose, &format)
 	return cmd
@@ -368,6 +368,9 @@ services:
       DRUPAL_ENABLE_HTTPS: "true"
   fcrepo:
     image: islandora/fcrepo6
+  fcrepo-database-init:
+    environment:
+      DB_NAME: fcrepo
   milliner:
     image: islandora/milliner
   traefik:
@@ -555,6 +558,9 @@ services:
     image: islandora/cantaloupe
   fcrepo:
     image: islandora/fcrepo6
+  fcrepo-database-init:
+    environment:
+      DB_NAME: fcrepo
   milliner:
     image: islandora/milliner
   traefik:
@@ -579,6 +585,9 @@ volumes:
 	}
 	if err := os.WriteFile(filepath.Join(projectDir, "conf", "traefik", "drupal.yml"), []byte("http:\n  services:\n    drupal:\n      loadBalancer:\n        servers:\n          - url: http://drupal:80\n  routers:\n    drupal:\n      rule: Host(`localhost`)\n      service: drupal\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(conf/traefik/drupal.yml) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "conf", "traefik", "fcrepo.yml"), []byte("http:\n  middlewares:\n    fcrepo-strip-suffix:\n      replacePathRegex:\n        regex: \"^(.*/fcrepo/rest/[^.]*)/fcr:metadata$\"\n        replacement: \"$1\"\n  services:\n    fcrepo:\n      loadBalancer:\n        servers:\n          - url: http://fcrepo:8080\n  routers:\n    fcrepo:\n      rule: PathPrefix(`/fcrepo`)\n      middlewares:\n        - fcrepo-strip-suffix\n      service: fcrepo\n      priority: 100\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(conf/traefik/fcrepo.yml) error = %v", err)
 	}
 
 	files := []string{

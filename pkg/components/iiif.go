@@ -5,8 +5,8 @@ import corecomponent "github.com/libops/sitectl/pkg/component"
 func IIIF(source TemplateSource) Definition {
 	return Definition{
 		Name:                "iiif",
-		DefaultState:        corecomponent.StateOff,
-		DefaultDisposition:  corecomponent.DispositionCantaloupe,
+		DefaultState:        corecomponent.StateOn,
+		DefaultDisposition:  corecomponent.DispositionTriplet,
 		AllowedDispositions: []corecomponent.Disposition{corecomponent.DispositionCantaloupe, corecomponent.DispositionTriplet},
 		PromptOnCreate:      true,
 		Guidance: corecomponent.StateGuidance{

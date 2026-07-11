@@ -103,13 +103,10 @@ func createDefinition() plugin.CreateSpec {
 			"docker compose build",
 		},
 		Images: []plugin.ComposeImageSpec{
-			{Service: "drupal", Image: "islandora.io/isle-site-template:local", BuildPolicy: plugin.BuildPolicyIfNotPresent},
+			{Service: "drupal", Image: "libops/islandora:nginx-1.30.3-php84", BuildPolicy: plugin.BuildPolicyAlways},
 		},
 		DockerComposeInit: []string{
-			"mkdir -p ./certs",
-			"docker compose run --rm init",
-			"chown -R \"$(id -u):$(id -g)\" ./certs ./secrets > /dev/null 2>&1 || sudo chown -R \"$(id -u):$(id -g)\" ./certs ./secrets > /dev/null 2>&1 || true",
-			"id -u > ./certs/UID",
+			"./scripts/init.sh",
 		},
 		InitArtifacts: []plugin.InitArtifact{
 			{Path: "certs/cert.pem"},
@@ -127,12 +124,18 @@ func createDefinition() plugin.CreateSpec {
 			{Path: "secrets/JWT_ADMIN_TOKEN"},
 			{Path: "secrets/JWT_PUBLIC_KEY"},
 			{Path: "secrets/JWT_PRIVATE_KEY"},
+			{Path: "secrets/TOMCAT_ADMIN_PASSWORD"},
 		},
-		DockerComposeUp:   []string{"docker compose up --remove-orphans -d"},
+		DockerComposeUp:   []string{"docker compose up --remove-orphans --wait --wait-timeout 600 -d"},
 		DockerComposeDown: []string{"docker compose down"},
 		DockerComposeRollout: []string{
-			"docker compose pull --ignore-buildable --quiet || true",
-			"docker compose up --remove-orphans --wait --pull missing --quiet-pull -d",
+			"docker compose pull --ignore-buildable --quiet || docker compose pull --ignore-buildable",
+			"docker compose build --pull",
+			"docker compose up --remove-orphans --pull missing --quiet-pull -d drupal",
+			"docker compose exec -T drupal sh -c 'attempt=0; until test -f /installed; do attempt=$((attempt + 1)); if [ \"$attempt\" -ge 150 ]; then echo \"Drupal did not become ready for database migration within 5 minutes\" >&2; exit 1; fi; sleep 2; done'",
+			"docker compose exec -T --workdir /var/www/drupal drupal drush updb -y",
+			"docker compose exec -T --workdir /var/www/drupal drupal drush cr",
+			"docker compose up --remove-orphans --wait --wait-timeout 600 --pull missing --quiet-pull -d",
 		},
 	}
 }
@@ -432,10 +435,10 @@ func ensureCreateContext(sdk *plugin.SDK, req createRequest) (*config.Context, e
 	}
 	return sdk.EnsureComposeCreateContext(req.ComposeCreateRequest, plugin.ComposeCreateContextOptions{
 		DefaultName:         "isle-local",
-		DefaultSite:         filepath.Base(helpers.FirstNonEmpty(req.Path, "isle-site-template")),
+		DefaultSite:         filepath.Base(helpers.FirstNonEmpty(req.Path, "isle")),
 		DefaultPlugin:       "isle",
 		DefaultProjectDir:   req.Path,
-		DefaultProjectName:  filepath.Base(helpers.FirstNonEmpty(req.Path, "isle-site-template")),
+		DefaultProjectName:  filepath.Base(helpers.FirstNonEmpty(req.Path, "isle")),
 		DefaultEnvironment:  "local",
 		DefaultDrupalRootfs: req.DrupalRootfs,
 		DrupalContainerRoot: "/var/www/drupal",

@@ -5,14 +5,14 @@ import corecomponent "github.com/libops/sitectl/pkg/component"
 func Codebase() Definition {
 	return Definition{
 		Name:                "codebase",
-		DefaultState:        corecomponent.StateOff,
-		DefaultDisposition:  corecomponent.DispositionNested,
+		DefaultState:        corecomponent.StateOn,
+		DefaultDisposition:  corecomponent.DispositionGitRoot,
 		AllowedDispositions: []corecomponent.Disposition{corecomponent.DispositionNested, corecomponent.DispositionGitRoot},
 		PromptOnCreate:      false,
 		Guidance: corecomponent.StateGuidance{
 			Question:     "Choose where the Drupal codebase is laid out in the compose repository.",
 			EnabledHelp:  "Move the Drupal codebase and Dockerfile to the git root so the checkout follows libops application layout standards.",
-			DisabledHelp: "Keep the upstream isle-site-template layout with Drupal code under drupal/rootfs/var/www/drupal.",
+			DisabledHelp: "Keep the legacy nested ISLE layout with Drupal code under drupal/rootfs/var/www/drupal.",
 		},
 		Gates: corecomponent.GateSpec{
 			LocalOnly: true,
@@ -25,7 +25,7 @@ func Codebase() Definition {
 			},
 			Disable: corecomponent.TransitionBehavior{
 				DataMigration: corecomponent.DataMigrationNone,
-				Summary:       "The upstream nested isle-site-template codebase layout is expected.",
+				Summary:       "The legacy nested ISLE codebase layout is expected.",
 			},
 		},
 		On: DomainSpec{
