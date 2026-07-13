@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   goreleaser:
-    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@2b484149fca1653d2bd48311929efca21f32214d # main
+    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@69fc4b92079cd51606e1d4757031c6e9b645bb5a # main
     permissions:
       contents: write
       id-token: write
