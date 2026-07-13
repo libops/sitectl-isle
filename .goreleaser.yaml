@@ -48,6 +48,7 @@ brews:
     repository:
       owner: libops
       name: homebrew
+      token: "{{ .Env.HOMEBREW_REPO_TOKEN }}"
     dependencies:
       - name: "libops/homebrew/sitectl"
       - name: "libops/homebrew/sitectl-drupal"
