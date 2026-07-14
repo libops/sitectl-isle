@@ -120,10 +120,7 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 				Rules: []YAMLRule{
 					{
 						Files: []string{
-							"context.context.all_media.yml",
 							"context.context.external_files.yml",
-							"context.context.repository_content.yml",
-							"context.context.taxonomy_terms.yml",
 							"system.action.delete_file_as_fedora_external_content.yml",
 							"system.action.delete_node_from_fedora.yml",
 							"system.action.delete_taxonomy_term_in_fedora.yml",
@@ -137,10 +134,7 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 							"views.view.non_fedora_files.yml",
 						},
 						SourceFiles: []string{
-							"context.context.all_media.yml",
 							"context.context.external_files.yml",
-							"context.context.repository_content.yml",
-							"context.context.taxonomy_terms.yml",
 							"system.action.delete_file_as_fedora_external_content.yml",
 							"system.action.delete_node_from_fedora.yml",
 							"system.action.delete_taxonomy_term_in_fedora.yml",
@@ -155,6 +149,36 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 						},
 						Op:   OpRestore,
 						Path: ".",
+					},
+					{
+						Files: []string{"context.context.all_media.yml"},
+						Op:    OpSet,
+						Path:  ".reactions.index.actions.index_media_in_fedora",
+						Value: "index_media_in_fedora",
+					},
+					{
+						Files: []string{"context.context.repository_content.yml"},
+						Op:    OpSet,
+						Path:  ".reactions.index.actions.index_node_in_fedora",
+						Value: "index_node_in_fedora",
+					},
+					{
+						Files: []string{"context.context.repository_content.yml"},
+						Op:    OpSet,
+						Path:  ".reactions.delete.actions.delete_node_from_fedora",
+						Value: "delete_node_from_fedora",
+					},
+					{
+						Files: []string{"context.context.taxonomy_terms.yml"},
+						Op:    OpSet,
+						Path:  ".reactions.index.actions.index_taxonomy_term_in_fedora",
+						Value: "index_taxonomy_term_in_fedora",
+					},
+					{
+						Files: []string{"context.context.taxonomy_terms.yml"},
+						Op:    OpSet,
+						Path:  ".reactions.delete.actions.delete_taxonomy_term_in_fedora",
+						Value: "delete_taxonomy_term_in_fedora",
 					},
 					{
 						Files:   []string{"*.yml"},
@@ -223,10 +247,7 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 				Rules: []YAMLRule{
 					{
 						Files: []string{
-							"context.context.all_media.yml",
 							"context.context.external_files.yml",
-							"context.context.repository_content.yml",
-							"context.context.taxonomy_terms.yml",
 							"system.action.delete_file_as_fedora_external_content.yml",
 							"system.action.delete_node_from_fedora.yml",
 							"system.action.delete_taxonomy_term_in_fedora.yml",
@@ -241,6 +262,31 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 						},
 						Op:   OpDelete,
 						Path: ".",
+					},
+					{
+						Files: []string{"context.context.all_media.yml"},
+						Op:    OpDelete,
+						Path:  ".reactions.index.actions.index_media_in_fedora",
+					},
+					{
+						Files: []string{"context.context.repository_content.yml"},
+						Op:    OpDelete,
+						Path:  ".reactions.index.actions.index_node_in_fedora",
+					},
+					{
+						Files: []string{"context.context.repository_content.yml"},
+						Op:    OpDelete,
+						Path:  ".reactions.delete.actions.delete_node_from_fedora",
+					},
+					{
+						Files: []string{"context.context.taxonomy_terms.yml"},
+						Op:    OpDelete,
+						Path:  ".reactions.index.actions.index_taxonomy_term_in_fedora",
+					},
+					{
+						Files: []string{"context.context.taxonomy_terms.yml"},
+						Op:    OpDelete,
+						Path:  ".reactions.delete.actions.delete_taxonomy_term_in_fedora",
 					},
 					{
 						Files: []string{"*.yml"},

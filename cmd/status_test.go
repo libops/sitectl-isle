@@ -74,6 +74,201 @@ func TestStatusCommandReportsOn(t *testing.T) {
 	}
 }
 
+func TestStatusDetectsWrongRepositoryReactionValueAsDrift(t *testing.T) {
+	tests := []struct {
+		name          string
+		componentName string
+		file          string
+		oldValue      string
+		wrongValue    string
+	}{
+		{
+			name:          "fcrepo reaction",
+			componentName: "fcrepo",
+			file:          "context.context.repository_content.yml",
+			oldValue:      "index_node_in_fedora: index_node_in_fedora",
+			wrongValue:    "index_node_in_fedora: wrong_action",
+		},
+		{
+			name:          "blazegraph reaction",
+			componentName: "blazegraph",
+			file:          "context.context.repository_content.yml",
+			oldValue:      "index_node_in_triplestore: index_node_in_triplestore",
+			wrongValue:    "index_node_in_triplestore: wrong_action",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projectDir := t.TempDir()
+			writeISLEOnFixture(t, projectDir)
+			path := filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "config", "sync", tt.file)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("ReadFile(%s) error = %v", tt.file, err)
+			}
+			updated := strings.Replace(string(data), tt.oldValue, tt.wrongValue, 1)
+			if updated == string(data) {
+				t.Fatalf("fixture %s does not contain %q", tt.file, tt.oldValue)
+			}
+			if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+				t.Fatalf("WriteFile(%s) error = %v", tt.file, err)
+			}
+
+			definitions := componentDefinitions()
+			views, err := detectComponentViewsForDefinitions(&config.Context{
+				Name:           "isle-local",
+				Site:           "isle-local",
+				Plugin:         "isle",
+				DockerHostType: config.ContextLocal,
+				ProjectDir:     projectDir,
+			}, createpkg.DefaultDrupalRootfs, definitions[tt.componentName])
+			if err != nil {
+				t.Fatalf("detectComponentViewsForDefinitions() error = %v", err)
+			}
+			if len(views) != 1 {
+				t.Fatalf("component views = %d, want 1", len(views))
+			}
+			if views[0].State != corecomponent.StateDrifted {
+				t.Fatalf("%s state = %q, want %q", tt.componentName, views[0].State, corecomponent.StateDrifted)
+			}
+		})
+	}
+}
+
+func TestApplyAndStatusAgreeForEveryRepositoryState(t *testing.T) {
+	states := []struct {
+		name                string
+		fcrepo              string
+		blazegraph          string
+		wantFcrepoState     corecomponent.DetectedState
+		wantBlazegraphState corecomponent.DetectedState
+	}{
+		{name: "both disabled", fcrepo: createpkg.FcrepoStateOff, blazegraph: createpkg.FcrepoStateOff, wantFcrepoState: corecomponent.DetectedState(corecomponent.StateOff), wantBlazegraphState: corecomponent.DetectedState(corecomponent.StateOff)},
+		{name: "standalone blazegraph", fcrepo: createpkg.FcrepoStateOff, blazegraph: createpkg.FcrepoStateOn, wantFcrepoState: corecomponent.DetectedState(corecomponent.StateOff), wantBlazegraphState: corecomponent.DetectedState(corecomponent.StateOn)},
+		{name: "standalone fcrepo", fcrepo: createpkg.FcrepoStateOn, blazegraph: createpkg.FcrepoStateOff, wantFcrepoState: corecomponent.DetectedState(corecomponent.StateOn), wantBlazegraphState: corecomponent.DetectedState(corecomponent.StateOff)},
+		{name: "both enabled", fcrepo: createpkg.FcrepoStateOn, blazegraph: createpkg.FcrepoStateOn, wantFcrepoState: corecomponent.DetectedState(corecomponent.StateOn), wantBlazegraphState: corecomponent.DetectedState(corecomponent.StateOn)},
+	}
+
+	for _, tt := range states {
+		t.Run(tt.name, func(t *testing.T) {
+			projectDir := t.TempDir()
+			writeISLEOnFixture(t, projectDir)
+			opts := createpkg.Options{
+				Path:              projectDir,
+				DrupalRootfs:      createpkg.DefaultDrupalRootfs,
+				Fcrepo:            tt.fcrepo,
+				Blazegraph:        tt.blazegraph,
+				ISLEFileSystemURI: createpkg.PrivateISLEFileSystemURI,
+			}
+			if err := createpkg.Apply(opts); err != nil {
+				t.Fatalf("Apply() error = %v", err)
+			}
+
+			configDir := filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "config", "sync")
+			for _, name := range []string{
+				"context.context.all_media.yml",
+				"context.context.repository_content.yml",
+				"context.context.taxonomy_terms.yml",
+			} {
+				path := filepath.Join(configDir, name)
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("ReadFile(%s) error = %v", name, err)
+				}
+				doc, err := corecomponent.LoadYAMLDocument(data)
+				if err != nil {
+					t.Fatalf("LoadYAMLDocument(%s) error = %v", name, err)
+				}
+				for path, value := range map[string]string{
+					".description": "Downstream-owned description",
+					".reactions.index.actions.downstream_status_action": "downstream_status_action",
+				} {
+					if err := doc.SetString(path, value); err != nil {
+						t.Fatalf("SetString(%s, %s) error = %v", name, path, err)
+					}
+				}
+				updated, err := doc.Bytes()
+				if err != nil {
+					t.Fatalf("Bytes(%s) error = %v", name, err)
+				}
+				if err := os.WriteFile(path, updated, 0o644); err != nil {
+					t.Fatalf("WriteFile(%s) error = %v", name, err)
+				}
+			}
+
+			actionPath := filepath.Join(configDir, "system.action.delete_media_from_triplestore.yml")
+			if tt.blazegraph == createpkg.FcrepoStateOn {
+				data, err := os.ReadFile(actionPath)
+				if err != nil {
+					t.Fatalf("ReadFile(Blazegraph action) error = %v", err)
+				}
+				doc, err := corecomponent.LoadYAMLDocument(data)
+				if err != nil {
+					t.Fatalf("LoadYAMLDocument(Blazegraph action) error = %v", err)
+				}
+				if err := doc.SetString(".configuration.queue", "downstream-owned-queue"); err != nil {
+					t.Fatalf("SetString(Blazegraph action queue) error = %v", err)
+				}
+				updated, err := doc.Bytes()
+				if err != nil {
+					t.Fatalf("Bytes(Blazegraph action) error = %v", err)
+				}
+				if err := os.WriteFile(actionPath, updated, 0o644); err != nil {
+					t.Fatalf("WriteFile(Blazegraph action) error = %v", err)
+				}
+			}
+
+			if err := createpkg.Apply(opts); err != nil {
+				t.Fatalf("second Apply() error = %v", err)
+			}
+			definitions := componentDefinitions()
+			views, err := detectComponentViewsForDefinitions(&config.Context{
+				Name:           "isle-local",
+				Site:           "isle-local",
+				Plugin:         "isle",
+				DockerHostType: config.ContextLocal,
+				ProjectDir:     projectDir,
+			}, createpkg.DefaultDrupalRootfs, definitions["fcrepo"], definitions["blazegraph"])
+			if err != nil {
+				t.Fatalf("detectComponentViewsForDefinitions() error = %v", err)
+			}
+			statesByName := map[string]corecomponent.DetectedState{}
+			for _, view := range views {
+				statesByName[view.Name] = view.State
+			}
+			if got := statesByName["fcrepo"]; got != tt.wantFcrepoState {
+				t.Fatalf("fcrepo status = %q, want %q", got, tt.wantFcrepoState)
+			}
+			if got := statesByName["blazegraph"]; got != tt.wantBlazegraphState {
+				t.Fatalf("blazegraph status = %q, want %q", got, tt.wantBlazegraphState)
+			}
+			for _, name := range []string{
+				"context.context.all_media.yml",
+				"context.context.repository_content.yml",
+				"context.context.taxonomy_terms.yml",
+			} {
+				data, err := os.ReadFile(filepath.Join(configDir, name))
+				if err != nil {
+					t.Fatalf("ReadFile(preserved %s) error = %v", name, err)
+				}
+				if !strings.Contains(string(data), "Downstream-owned description") || !strings.Contains(string(data), "downstream_status_action") {
+					t.Fatalf("Apply did not preserve unmanaged context fields in %s:\n%s", name, data)
+				}
+			}
+			if tt.blazegraph == createpkg.FcrepoStateOn {
+				data, err := os.ReadFile(actionPath)
+				if err != nil {
+					t.Fatalf("ReadFile(preserved Blazegraph action) error = %v", err)
+				}
+				if !strings.Contains(string(data), "downstream-owned-queue") {
+					t.Fatalf("Apply did not preserve unmanaged Blazegraph action content:\n%s", data)
+				}
+			}
+		})
+	}
+}
+
 func TestStatusCommandReportsOff(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
@@ -619,13 +814,13 @@ volumes:
 		}
 	}
 
-	if err := os.WriteFile(filepath.Join(configDir, "context.context.all_media.yml"), []byte("reactions:\n  index:\n    actions:\n      index_media_in_triplestore: index_media_in_triplestore\n  delete:\n    actions:\n      delete_media_from_triplestore: delete_media_from_triplestore\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "context.context.all_media.yml"), []byte("reactions:\n  index:\n    actions:\n      index_media_in_fedora: index_media_in_fedora\n      index_media_in_triplestore: index_media_in_triplestore\n  delete:\n    actions:\n      delete_media_from_triplestore: delete_media_from_triplestore\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(all_media) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "context.context.repository_content.yml"), []byte("reactions:\n  index:\n    actions:\n      index_node_in_triplestore: index_node_in_triplestore\n  delete:\n    actions:\n      delete_node_from_triplestore: delete_node_from_triplestore\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "context.context.repository_content.yml"), []byte("reactions:\n  index:\n    actions:\n      index_node_in_fedora: index_node_in_fedora\n      index_node_in_triplestore: index_node_in_triplestore\n  delete:\n    actions:\n      delete_node_from_fedora: delete_node_from_fedora\n      delete_node_from_triplestore: delete_node_from_triplestore\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(repository_content) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "context.context.taxonomy_terms.yml"), []byte("reactions:\n  index:\n    actions:\n      index_taxonomy_term_in_the_triplestore: index_taxonomy_term_in_the_triplestore\n  delete:\n    actions:\n      delete_taxonomy_term_in_triplestore: delete_taxonomy_term_in_triplestore\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "context.context.taxonomy_terms.yml"), []byte("reactions:\n  index:\n    actions:\n      index_taxonomy_term_in_fedora: index_taxonomy_term_in_fedora\n      index_taxonomy_term_in_the_triplestore: index_taxonomy_term_in_the_triplestore\n  delete:\n    actions:\n      delete_taxonomy_term_in_fedora: delete_taxonomy_term_in_fedora\n      delete_taxonomy_term_in_triplestore: delete_taxonomy_term_in_triplestore\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(taxonomy_terms) error = %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(configDir, "views.view.files.yml"), []byte("value: 'fedora://'\n"), 0o644); err != nil {

@@ -1,12 +1,14 @@
 package create
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	corecomponent "github.com/libops/sitectl/pkg/component"
+	"gopkg.in/yaml.v3"
 )
 
 func TestApplyFcrepoOffPublic(t *testing.T) {
@@ -420,7 +422,7 @@ func TestTrustedHostPatterns(t *testing.T) {
 	}
 }
 
-func TestApplyBlazegraphOnRestoresServiceAndVolume(t *testing.T) {
+func TestApplyRepositoryComponentsRestoresBlazegraphRuntimeAndDrupalConfig(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
@@ -440,8 +442,14 @@ volumes: {}
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}
 
-	if err := applyBlazegraphOn(projectDir); err != nil {
-		t.Fatalf("applyBlazegraphOn() error = %v", err)
+	if err := applyRepositoryComponents(Options{
+		Path:              projectDir,
+		DrupalRootfs:      DefaultDrupalRootfs,
+		Fcrepo:            FcrepoStateOff,
+		Blazegraph:        FcrepoStateOn,
+		ISLEFileSystemURI: PrivateISLEFileSystemURI,
+	}); err != nil {
+		t.Fatalf("applyRepositoryComponents() error = %v", err)
 	}
 
 	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
@@ -461,6 +469,8 @@ volumes: {}
 			t.Fatalf("expected restored blazegraph compose to contain %q, got:\n%s", want, compose)
 		}
 	}
+
+	assertRepositoryComponentState(t, projectDir, false, true)
 }
 
 func TestApplyBlazegraphOnRewritesExistingImage(t *testing.T) {
@@ -483,7 +493,7 @@ volumes:
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}
 
-	if err := applyBlazegraphOn(projectDir); err != nil {
+	if err := applyBlazegraphOn(projectDir, DefaultDrupalRootfs); err != nil {
 		t.Fatalf("applyBlazegraphOn() error = %v", err)
 	}
 
@@ -500,6 +510,248 @@ volumes:
 	}
 	if !strings.Contains(compose, `com.example.preserve: "true"`) {
 		t.Fatalf("expected existing service config preserved, got:\n%s", compose)
+	}
+}
+
+func TestApplyRepositoryComponentsReconcilesEveryStateTransition(t *testing.T) {
+	t.Parallel()
+
+	states := []struct {
+		name       string
+		fcrepo     string
+		blazegraph string
+	}{
+		{name: "both disabled", fcrepo: FcrepoStateOff, blazegraph: FcrepoStateOff},
+		{name: "standalone blazegraph", fcrepo: FcrepoStateOff, blazegraph: FcrepoStateOn},
+		{name: "standalone fcrepo", fcrepo: FcrepoStateOn, blazegraph: FcrepoStateOff},
+		{name: "both enabled", fcrepo: FcrepoStateOn, blazegraph: FcrepoStateOn},
+	}
+
+	for _, source := range states {
+		for _, target := range states {
+			t.Run(source.name+" to "+target.name, func(t *testing.T) {
+				t.Parallel()
+
+				projectDir := t.TempDir()
+				writeRepositoryComponentsOffFixture(t, projectDir)
+				applyRepositoryState(t, projectDir, source.fcrepo, source.blazegraph)
+				seedRepositoryContextSentinels(t, projectDir)
+				sourceActionSentinel := source.blazegraph == FcrepoStateOn
+				if sourceActionSentinel {
+					appendActionSentinel(t, projectDir)
+				}
+
+				applyRepositoryState(t, projectDir, target.fcrepo, target.blazegraph)
+				fcrepoEnabled := target.fcrepo == FcrepoStateOn
+				blazegraphEnabled := target.blazegraph == FcrepoStateOn
+				assertRepositoryComponentState(t, projectDir, fcrepoEnabled, blazegraphEnabled)
+				assertRepositoryContextSentinels(t, projectDir)
+				assertActionSentinel(t, projectDir, blazegraphEnabled && sourceActionSentinel)
+
+				wantSnapshot := repositoryComponentSnapshot(t, projectDir)
+				applyRepositoryState(t, projectDir, target.fcrepo, target.blazegraph)
+				if got := repositoryComponentSnapshot(t, projectDir); got != wantSnapshot {
+					t.Fatalf("repeated repository reconciliation was not idempotent\n--- first ---\n%s\n--- second ---\n%s", wantSnapshot, got)
+				}
+			})
+		}
+	}
+}
+
+func TestApplyRepositoryComponentsHandlesMissingConfigDirectory(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	writeRepositoryComponentsOffFixture(t, projectDir)
+	drupalRoot := filepath.Join(projectDir, DefaultDrupalRootfs)
+	if err := os.RemoveAll(drupalRoot); err != nil {
+		t.Fatalf("RemoveAll(Drupal root) error = %v", err)
+	}
+
+	applyRepositoryState(t, projectDir, FcrepoStateOff, FcrepoStateOff)
+	if _, err := os.Stat(drupalRoot); !os.IsNotExist(err) {
+		t.Fatalf("disabled reconciliation created absent Drupal root, stat error = %v", err)
+	}
+
+	applyRepositoryState(t, projectDir, FcrepoStateOff, FcrepoStateOn)
+	assertRepositoryComponentState(t, projectDir, false, true)
+}
+
+func TestApplyRepositoryComponentsRejectsConfigDirectorySymlinkEscape(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	writeRepositoryComponentsOffFixture(t, projectDir)
+	configDir := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync")
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "sentinel.yml")
+	writeTestFile(t, outsidePath, "outside: unchanged\n")
+	if err := os.RemoveAll(configDir); err != nil {
+		t.Fatalf("RemoveAll(config dir) error = %v", err)
+	}
+	if err := os.Symlink(outsideDir, configDir); err != nil {
+		t.Skipf("Symlink(config dir) is unavailable: %v", err)
+	}
+
+	err := applyRepositoryComponents(Options{
+		Path:              projectDir,
+		DrupalRootfs:      DefaultDrupalRootfs,
+		Fcrepo:            FcrepoStateOff,
+		Blazegraph:        FcrepoStateOn,
+		ISLEFileSystemURI: PrivateISLEFileSystemURI,
+	})
+	if err == nil {
+		t.Fatal("applyRepositoryComponents() succeeded through escaping config directory symlink")
+	}
+	if got := readTestFile(t, outsidePath); got != "outside: unchanged\n" {
+		t.Fatalf("outside sentinel changed through config directory symlink: %q", got)
+	}
+}
+
+func TestApplyRepositoryComponentsRejectsManagedLeafSymlinkEscape(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	writeRepositoryComponentsOffFixture(t, projectDir)
+	configDir := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync")
+	outsidePath := filepath.Join(t.TempDir(), "outside-context.yml")
+	writeTestFile(t, outsidePath, "outside: unchanged\n")
+	contextPath := filepath.Join(configDir, repositoryContextSpecs[0].Name)
+	if err := os.Symlink(outsidePath, contextPath); err != nil {
+		t.Skipf("Symlink(shared context) is unavailable: %v", err)
+	}
+
+	err := applyRepositoryComponents(Options{
+		Path:              projectDir,
+		DrupalRootfs:      DefaultDrupalRootfs,
+		Fcrepo:            FcrepoStateOn,
+		Blazegraph:        FcrepoStateOn,
+		ISLEFileSystemURI: PrivateISLEFileSystemURI,
+	})
+	if err == nil {
+		t.Fatal("applyRepositoryComponents() succeeded through escaping managed leaf symlink")
+	}
+	if got := readTestFile(t, outsidePath); got != "outside: unchanged\n" {
+		t.Fatalf("outside context changed through managed leaf symlink: %q", got)
+	}
+}
+
+func TestApplyBlazegraphOnRejectsInRootActionAlias(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	writeRepositoryComponentsOffFixture(t, projectDir)
+	configDir := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync")
+	jsonLDPath := filepath.Join(configDir, "jsonld.settings.yml")
+	writeTestFile(t, jsonLDPath, "outside-managed-action: unchanged\n")
+	actionPath := filepath.Join(configDir, blazegraphCleanupFiles[0])
+	if err := os.Symlink("jsonld.settings.yml", actionPath); err != nil {
+		t.Skipf("Symlink(action alias) is unavailable: %v", err)
+	}
+
+	err := applyBlazegraphOn(projectDir, DefaultDrupalRootfs)
+	if err == nil {
+		t.Fatal("applyBlazegraphOn() succeeded through in-root managed action alias")
+	}
+	if got := readTestFile(t, jsonLDPath); got != "outside-managed-action: unchanged\n" {
+		t.Fatalf("excluded JSON-LD config changed through action alias: %q", got)
+	}
+}
+
+func TestApplyFcrepoOffOnRestoresStorageWiring(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	writeRepositoryComponentsOffFixture(t, projectDir)
+	configDir := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync")
+	for _, name := range mediaSchemeFiles {
+		writeTestFile(t, filepath.Join(configDir, name), "settings:\n  uri_scheme: fedora\n")
+	}
+	referencePath := filepath.Join(configDir, "views.view.files.yml")
+	writeTestFile(t, referencePath, "uri: 'fedora://media/example'\n")
+
+	applyRepositoryState(t, projectDir, FcrepoStateOff, FcrepoStateOff)
+	for _, name := range mediaSchemeFiles {
+		if got := readTestFile(t, filepath.Join(configDir, name)); !strings.Contains(got, "uri_scheme: private") && !strings.Contains(got, `uri_scheme: "private"`) {
+			t.Fatalf("%s did not transition to private storage:\n%s", name, got)
+		}
+	}
+	if got := readTestFile(t, referencePath); !strings.Contains(got, "private://media/example") {
+		t.Fatalf("Fedora URI reference did not transition to private storage: %s", got)
+	}
+
+	applyRepositoryState(t, projectDir, FcrepoStateOn, FcrepoStateOff)
+	for _, name := range mediaSchemeFiles {
+		if got := readTestFile(t, filepath.Join(configDir, name)); !strings.Contains(got, "uri_scheme: fedora") && !strings.Contains(got, `uri_scheme: "fedora"`) {
+			t.Fatalf("%s did not transition back to Fedora storage:\n%s", name, got)
+		}
+	}
+	if got := readTestFile(t, referencePath); !strings.Contains(got, "fedora://media/example") {
+		t.Fatalf("filesystem URI reference did not transition back to Fedora: %s", got)
+	}
+}
+
+func TestApplyFcrepoOffRemovesEveryFedoraAdminMappingKey(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	writeRepositoryComponentsOffFixture(t, projectDir)
+	path := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync", "views.view.roles.yml")
+	writeTestFile(t, path, `roles:
+  fedoraadmin: 0
+nested:
+  entries:
+    - fedoraadmin: "1"
+      keep: true
+label: fedoraadmin
+`)
+
+	applyRepositoryState(t, projectDir, FcrepoStateOff, FcrepoStateOff)
+	data := []byte(readTestFile(t, path))
+	for _, yamlPath := range []string{".roles.fedoraadmin", ".nested.entries"} {
+		if yamlPath == ".nested.entries" {
+			continue
+		}
+		if _, found, err := testYAMLPathValue(data, yamlPath); err != nil || found {
+			t.Fatalf("fedoraadmin mapping path %s found=%t err=%v:\n%s", yamlPath, found, err, data)
+		}
+	}
+	var decoded any
+	if err := yaml.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal(cleaned roles) error = %v", err)
+	}
+	if yamlTreeHasMappingKey(decoded, "fedoraadmin") {
+		t.Fatalf("recursive fedoraadmin mapping key remained:\n%s", data)
+	}
+	if !strings.Contains(string(data), "label: fedoraadmin") {
+		t.Fatalf("fedoraadmin scalar value should be preserved:\n%s", data)
+	}
+}
+
+func TestApplyBlazegraphOnPreservesExistingActionContents(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	writeRepositoryComponentsOffFixture(t, projectDir)
+	applyRepositoryState(t, projectDir, FcrepoStateOff, FcrepoStateOn)
+	actionPath := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync", blazegraphCleanupFiles[0])
+	data := []byte(readTestFile(t, actionPath))
+	doc, err := corecomponent.LoadYAMLDocument(data)
+	if err != nil {
+		t.Fatalf("LoadYAMLDocument(action) error = %v", err)
+	}
+	if err := doc.SetString(".configuration.queue", "downstream-owned-queue"); err != nil {
+		t.Fatalf("SetString(action queue) error = %v", err)
+	}
+	updated, err := doc.Bytes()
+	if err != nil {
+		t.Fatalf("Bytes(action) error = %v", err)
+	}
+	writeTestFile(t, actionPath, string(updated))
+
+	applyRepositoryState(t, projectDir, FcrepoStateOff, FcrepoStateOn)
+	if got := readTestFile(t, actionPath); !strings.Contains(got, "downstream-owned-queue") {
+		t.Fatalf("Blazegraph apply overwrote downstream-owned action contents:\n%s", got)
 	}
 }
 
@@ -1491,6 +1743,276 @@ services:
 	if !strings.Contains(devCompose, `CRAYFITS_WEBSERVICE_URI: "http://fits:8080/fits/examine"`) {
 		t.Fatalf("expected dev compose to reset crayfits fits URL, got:\n%s", devCompose)
 	}
+}
+
+func writeRepositoryComponentsOffFixture(t *testing.T, projectDir string) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `x-common: &common
+  restart: unless-stopped
+secrets: {}
+services:
+  activemq:
+    <<: *common
+    image: libops/activemq:5
+  alpaca:
+    <<: *common
+    environment:
+      ALPACA_FCREPO_INDEXER_ENABLED: "false"
+      ALPACA_TRIPLESTORE_INDEXER_ENABLED: "false"
+  database-init:
+    image: libops/base:3
+  drupal:
+    <<: *common
+    environment:
+      DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: ""
+volumes: {}
+`)
+	if err := os.MkdirAll(filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(config sync) error = %v", err)
+	}
+}
+
+func assertRepositoryComponentState(t *testing.T, projectDir string, fcrepoEnabled, blazegraphEnabled bool) {
+	t.Helper()
+	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	for service, want := range map[string]bool{
+		"fcrepo":     fcrepoEnabled,
+		"milliner":   fcrepoEnabled,
+		"blazegraph": blazegraphEnabled,
+	} {
+		got := strings.Contains(compose, "\n  "+service+":\n")
+		if got != want {
+			t.Fatalf("compose service %s present = %t, want %t:\n%s", service, got, want, compose)
+		}
+	}
+	for value, want := range map[string]bool{
+		`ALPACA_FCREPO_INDEXER_ENABLED: "true"`:             fcrepoEnabled,
+		`ALPACA_TRIPLESTORE_INDEXER_ENABLED: "true"`:        blazegraphEnabled,
+		`DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: "islandora"`: blazegraphEnabled,
+	} {
+		if got := strings.Contains(compose, value); got != want {
+			t.Fatalf("compose contains %q = %t, want %t:\n%s", value, got, want, compose)
+		}
+	}
+
+	configDir := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync")
+	for _, spec := range repositoryContextSpecs {
+		path := filepath.Join(configDir, spec.Name)
+		data, exists := readOptionalTestFile(t, path)
+		if !exists {
+			if fcrepoEnabled || blazegraphEnabled {
+				t.Fatalf("shared context %s is missing while a repository component is enabled", spec.Name)
+			}
+			continue
+		}
+		for _, reaction := range spec.BlazegraphReactions {
+			assertYAMLReactionState(t, data, spec.Name, reaction, blazegraphEnabled)
+		}
+		for _, reaction := range spec.FcrepoReactions {
+			assertYAMLReactionState(t, data, spec.Name, reaction, fcrepoEnabled)
+		}
+	}
+
+	for _, name := range blazegraphCleanupFiles {
+		if got := testFileExists(t, filepath.Join(configDir, name)); got != blazegraphEnabled {
+			t.Fatalf("Blazegraph action %s exists = %t, want %t", name, got, blazegraphEnabled)
+		}
+	}
+	for _, name := range fedoraCleanupFiles {
+		if got := testFileExists(t, filepath.Join(configDir, name)); got != fcrepoEnabled {
+			t.Fatalf("fcrepo config %s exists = %t, want %t", name, got, fcrepoEnabled)
+		}
+	}
+}
+
+func assertYAMLReactionState(t *testing.T, data []byte, name string, reaction indexingReaction, enabled bool) {
+	t.Helper()
+	value, found, err := testYAMLPathValue(data, reaction.Path)
+	if err != nil {
+		t.Fatalf("read YAML path %s in %s: %v", reaction.Path, name, err)
+	}
+	if found != enabled {
+		t.Fatalf("YAML path %s in %s present = %t, want %t", reaction.Path, name, found, enabled)
+	}
+	if enabled && fmt.Sprint(value) != reaction.Value {
+		t.Fatalf("YAML path %s in %s = %v, want %q", reaction.Path, name, value, reaction.Value)
+	}
+}
+
+func applyRepositoryState(t *testing.T, projectDir, fcrepo, blazegraph string) {
+	t.Helper()
+	if err := applyRepositoryComponents(Options{
+		Path:              projectDir,
+		DrupalRootfs:      DefaultDrupalRootfs,
+		Fcrepo:            fcrepo,
+		Blazegraph:        blazegraph,
+		ISLEFileSystemURI: PrivateISLEFileSystemURI,
+	}); err != nil {
+		t.Fatalf("applyRepositoryComponents(fcrepo=%s, blazegraph=%s) error = %v", fcrepo, blazegraph, err)
+	}
+}
+
+func seedRepositoryContextSentinels(t *testing.T, projectDir string) {
+	t.Helper()
+	configDir := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync")
+	for _, spec := range repositoryContextSpecs {
+		path := filepath.Join(configDir, spec.Name)
+		data, exists := readOptionalTestFile(t, path)
+		if !exists {
+			data = []byte("reactions: {}\n")
+		}
+		doc, err := corecomponent.LoadYAMLDocument(data)
+		if err != nil {
+			t.Fatalf("LoadYAMLDocument(%s) error = %v", spec.Name, err)
+		}
+		for path, value := range map[string]string{
+			".description":         "Downstream-owned description",
+			".downstream.sentinel": "preserve me",
+			".reactions.index.actions.downstream_index_action":   "downstream_index_action",
+			".reactions.delete.actions.downstream_delete_action": "downstream_delete_action",
+		} {
+			if err := doc.SetString(path, value); err != nil {
+				t.Fatalf("SetString(%s, %s) error = %v", spec.Name, path, err)
+			}
+		}
+		updated, err := doc.Bytes()
+		if err != nil {
+			t.Fatalf("Bytes(%s) error = %v", spec.Name, err)
+		}
+		writeTestFile(t, path, string(updated))
+	}
+}
+
+func assertRepositoryContextSentinels(t *testing.T, projectDir string) {
+	t.Helper()
+	configDir := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync")
+	for _, spec := range repositoryContextSpecs {
+		data := []byte(readTestFile(t, filepath.Join(configDir, spec.Name)))
+		for path, want := range map[string]string{
+			".description":         "Downstream-owned description",
+			".downstream.sentinel": "preserve me",
+			".reactions.index.actions.downstream_index_action":   "downstream_index_action",
+			".reactions.delete.actions.downstream_delete_action": "downstream_delete_action",
+		} {
+			got, found, err := testYAMLPathValue(data, path)
+			if err != nil {
+				t.Fatalf("read sentinel %s in %s: %v", path, spec.Name, err)
+			}
+			if !found || fmt.Sprint(got) != want {
+				t.Fatalf("sentinel %s in %s = %v (found=%t), want %q", path, spec.Name, got, found, want)
+			}
+		}
+	}
+}
+
+const blazegraphActionSentinel = "x-downstream-sentinel: preserve me"
+
+func appendActionSentinel(t *testing.T, projectDir string) {
+	t.Helper()
+	path := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync", blazegraphCleanupFiles[0])
+	contents := strings.TrimRight(readTestFile(t, path), "\n") + "\n" + blazegraphActionSentinel + "\n"
+	writeTestFile(t, path, contents)
+}
+
+func assertActionSentinel(t *testing.T, projectDir string, want bool) {
+	t.Helper()
+	path := filepath.Join(projectDir, DefaultDrupalRootfs, "config", "sync", blazegraphCleanupFiles[0])
+	data, exists := readOptionalTestFile(t, path)
+	got := exists && strings.Contains(string(data), blazegraphActionSentinel)
+	if got != want {
+		t.Fatalf("Blazegraph action sentinel present = %t, want %t (file exists=%t)", got, want, exists)
+	}
+}
+
+func testYAMLPathValue(data []byte, path string) (any, bool, error) {
+	var root map[string]any
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, false, err
+	}
+	segments := strings.Split(strings.TrimPrefix(path, "."), ".")
+	var current any = root
+	for _, segment := range segments {
+		mapping, ok := current.(map[string]any)
+		if !ok {
+			return nil, false, nil
+		}
+		current, ok = mapping[segment]
+		if !ok {
+			return nil, false, nil
+		}
+	}
+	return current, true, nil
+}
+
+func yamlTreeHasMappingKey(value any, target string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if key == target || yamlTreeHasMappingKey(child, target) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if yamlTreeHasMappingKey(child, target) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func repositoryComponentSnapshot(t *testing.T, projectDir string) string {
+	t.Helper()
+	paths := []string{
+		"docker-compose.yml",
+		"conf/traefik/fcrepo.yml",
+		"scripts/init-database.sh",
+	}
+	seen := map[string]bool{}
+	for _, name := range append(append([]string{}, fedoraCleanupFiles...), blazegraphCleanupFiles...) {
+		rel := filepath.Join(DefaultDrupalRootfs, "config", "sync", name)
+		if !seen[rel] {
+			paths = append(paths, rel)
+			seen[rel] = true
+		}
+	}
+	for _, spec := range repositoryContextSpecs {
+		rel := filepath.Join(DefaultDrupalRootfs, "config", "sync", spec.Name)
+		if !seen[rel] {
+			paths = append(paths, rel)
+			seen[rel] = true
+		}
+	}
+
+	var snapshot strings.Builder
+	for _, rel := range paths {
+		data, exists := readOptionalTestFile(t, filepath.Join(projectDir, rel))
+		fmt.Fprintf(&snapshot, "--- %s exists=%t\n", filepath.ToSlash(rel), exists)
+		if exists {
+			snapshot.Write(data)
+		}
+	}
+	return snapshot.String()
+}
+
+func readOptionalTestFile(t *testing.T, path string) ([]byte, bool) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return data, true
+	}
+	if os.IsNotExist(err) {
+		return nil, false
+	}
+	t.Fatalf("ReadFile(%s) error = %v", path, err)
+	return nil, false
+}
+
+func testFileExists(t *testing.T, path string) bool {
+	t.Helper()
+	_, exists := readOptionalTestFile(t, path)
+	return exists
 }
 
 func writeTestFile(t *testing.T, path, contents string) {

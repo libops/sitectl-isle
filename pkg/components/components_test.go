@@ -76,9 +76,25 @@ func TestFcrepoDefinition(t *testing.T) {
 	assertHasRule(t, definition.On.Compose.Rules, OpRestore, ".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_URL")
 	assertHasRule(t, definition.Off.Compose.Rules, OpSet, ".services.alpaca.environment.ALPACA_FCREPO_INDEXER_ENABLED")
 	assertHasRule(t, definition.On.Compose.Rules, OpSet, ".services.alpaca.environment.ALPACA_FCREPO_INDEXER_ENABLED")
-	assertHasRule(t, definition.Off.Drupal.Rules, OpDelete, ".")
+	assertHasWholeFileRule(t, definition.Off.Drupal.Rules, OpDelete, "context.context.external_files.yml")
+	assertHasWholeFileRule(t, definition.On.Drupal.Rules, OpRestore, "context.context.external_files.yml")
+	assertDoesNotHaveWholeFileRule(t, definition.Off.Drupal.Rules, OpDelete, "context.context.all_media.yml")
+	assertDoesNotHaveWholeFileRule(t, definition.Off.Drupal.Rules, OpDelete, "context.context.repository_content.yml")
+	assertDoesNotHaveWholeFileRule(t, definition.Off.Drupal.Rules, OpDelete, "context.context.taxonomy_terms.yml")
+	assertDoesNotHaveWholeFileRule(t, definition.On.Drupal.Rules, OpRestore, "context.context.all_media.yml")
+	assertDoesNotHaveWholeFileRule(t, definition.On.Drupal.Rules, OpRestore, "context.context.repository_content.yml")
+	assertDoesNotHaveWholeFileRule(t, definition.On.Drupal.Rules, OpRestore, "context.context.taxonomy_terms.yml")
+	assertHasRule(t, definition.Off.Drupal.Rules, OpDelete, ".reactions.index.actions.index_media_in_fedora")
+	assertHasRule(t, definition.Off.Drupal.Rules, OpDelete, ".reactions.index.actions.index_node_in_fedora")
+	assertHasRule(t, definition.Off.Drupal.Rules, OpDelete, ".reactions.delete.actions.delete_node_from_fedora")
+	assertHasRule(t, definition.Off.Drupal.Rules, OpDelete, ".reactions.index.actions.index_taxonomy_term_in_fedora")
+	assertHasRule(t, definition.Off.Drupal.Rules, OpDelete, ".reactions.delete.actions.delete_taxonomy_term_in_fedora")
+	assertHasSetRule(t, definition.On.Drupal.Rules, ".reactions.index.actions.index_media_in_fedora", "index_media_in_fedora")
+	assertHasSetRule(t, definition.On.Drupal.Rules, ".reactions.index.actions.index_node_in_fedora", "index_node_in_fedora")
+	assertHasSetRule(t, definition.On.Drupal.Rules, ".reactions.delete.actions.delete_node_from_fedora", "delete_node_from_fedora")
+	assertHasSetRule(t, definition.On.Drupal.Rules, ".reactions.index.actions.index_taxonomy_term_in_fedora", "index_taxonomy_term_in_fedora")
+	assertHasSetRule(t, definition.On.Drupal.Rules, ".reactions.delete.actions.delete_taxonomy_term_in_fedora", "delete_taxonomy_term_in_fedora")
 	assertHasRule(t, definition.Off.Drupal.Rules, OpDelete, ".**.fedoraadmin")
-	assertHasRule(t, definition.On.Drupal.Rules, OpRestore, ".")
 }
 
 func TestBlazegraphDefinition(t *testing.T) {
@@ -146,8 +162,12 @@ func TestBlazegraphDefinition(t *testing.T) {
 	assertHasRule(t, definition.Off.Drupal.Rules, OpDelete, ".reactions.delete.actions.delete_node_from_triplestore")
 	assertHasRule(t, definition.Off.Drupal.Rules, OpDelete, ".reactions.index.actions.index_taxonomy_term_in_the_triplestore")
 	assertHasRule(t, definition.Off.Drupal.Rules, OpDelete, ".reactions.delete.actions.delete_taxonomy_term_in_triplestore")
-	assertHasRule(t, definition.On.Drupal.Rules, OpRestore, ".reactions.index.actions.index_node_in_triplestore")
-	assertHasRule(t, definition.On.Drupal.Rules, OpRestore, ".reactions.delete.actions.delete_taxonomy_term_in_triplestore")
+	assertHasSetRule(t, definition.On.Drupal.Rules, ".reactions.index.actions.index_media_in_triplestore", "index_media_in_triplestore")
+	assertHasSetRule(t, definition.On.Drupal.Rules, ".reactions.delete.actions.delete_media_from_triplestore", "delete_media_from_triplestore")
+	assertHasSetRule(t, definition.On.Drupal.Rules, ".reactions.index.actions.index_node_in_triplestore", "index_node_in_triplestore")
+	assertHasSetRule(t, definition.On.Drupal.Rules, ".reactions.delete.actions.delete_node_from_triplestore", "delete_node_from_triplestore")
+	assertHasSetRule(t, definition.On.Drupal.Rules, ".reactions.index.actions.index_taxonomy_term_in_the_triplestore", "index_taxonomy_term_in_the_triplestore")
+	assertHasSetRule(t, definition.On.Drupal.Rules, ".reactions.delete.actions.delete_taxonomy_term_in_triplestore", "delete_taxonomy_term_in_triplestore")
 }
 
 func TestExternalCantaloupeDefinition(t *testing.T) {
@@ -256,6 +276,16 @@ func assertHasWholeFileRule(t *testing.T, rules []YAMLRule, op RuleOp, file stri
 	t.Fatalf("expected whole-file rule op=%q file=%q not found", op, file)
 }
 
+func assertDoesNotHaveWholeFileRule(t *testing.T, rules []YAMLRule, op RuleOp, file string) {
+	t.Helper()
+
+	for _, rule := range rules {
+		if rule.Op == op && rule.Path == "." && containsString(rule.Files, file) {
+			t.Fatalf("unexpected whole-file rule op=%q file=%q", op, file)
+		}
+	}
+}
+
 func assertHasRule(t *testing.T, rules []YAMLRule, op RuleOp, path string) {
 	t.Helper()
 
@@ -266,6 +296,18 @@ func assertHasRule(t *testing.T, rules []YAMLRule, op RuleOp, path string) {
 	}
 
 	t.Fatalf("expected rule op=%q path=%q not found", op, path)
+}
+
+func assertHasSetRule(t *testing.T, rules []YAMLRule, path, value string) {
+	t.Helper()
+
+	for _, rule := range rules {
+		if rule.Op == OpSet && rule.Path == path && rule.Value == value {
+			return
+		}
+	}
+
+	t.Fatalf("expected set rule path=%q value=%q not found", path, value)
 }
 
 func containsString(values []string, target string) bool {

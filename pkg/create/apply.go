@@ -1,6 +1,9 @@
 package create
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
@@ -58,10 +61,7 @@ const (
 const DefaultTrustedHostPatterns = "^localhost$"
 
 var fedoraCleanupFiles = []string{
-	"context.context.all_media.yml",
 	"context.context.external_files.yml",
-	"context.context.repository_content.yml",
-	"context.context.taxonomy_terms.yml",
 	"system.action.delete_file_as_fedora_external_content.yml",
 	"system.action.delete_node_from_fedora.yml",
 	"system.action.delete_taxonomy_term_in_fedora.yml",
@@ -82,6 +82,52 @@ var blazegraphCleanupFiles = []string{
 	"system.action.index_media_in_triplestore.yml",
 	"system.action.index_node_in_triplestore.yml",
 	"system.action.index_taxonomy_term_in_the_triplestore.yml",
+}
+
+type indexingReaction struct {
+	Path  string
+	Value string
+}
+
+type repositoryContextSpec struct {
+	Name                string
+	FcrepoReactions     []indexingReaction
+	BlazegraphReactions []indexingReaction
+}
+
+var repositoryContextSpecs = []repositoryContextSpec{
+	{
+		Name: "context.context.all_media.yml",
+		FcrepoReactions: []indexingReaction{
+			{Path: ".reactions.index.actions.index_media_in_fedora", Value: "index_media_in_fedora"},
+		},
+		BlazegraphReactions: []indexingReaction{
+			{Path: ".reactions.index.actions.index_media_in_triplestore", Value: "index_media_in_triplestore"},
+			{Path: ".reactions.delete.actions.delete_media_from_triplestore", Value: "delete_media_from_triplestore"},
+		},
+	},
+	{
+		Name: "context.context.repository_content.yml",
+		FcrepoReactions: []indexingReaction{
+			{Path: ".reactions.index.actions.index_node_in_fedora", Value: "index_node_in_fedora"},
+			{Path: ".reactions.delete.actions.delete_node_from_fedora", Value: "delete_node_from_fedora"},
+		},
+		BlazegraphReactions: []indexingReaction{
+			{Path: ".reactions.index.actions.index_node_in_triplestore", Value: "index_node_in_triplestore"},
+			{Path: ".reactions.delete.actions.delete_node_from_triplestore", Value: "delete_node_from_triplestore"},
+		},
+	},
+	{
+		Name: "context.context.taxonomy_terms.yml",
+		FcrepoReactions: []indexingReaction{
+			{Path: ".reactions.index.actions.index_taxonomy_term_in_fedora", Value: "index_taxonomy_term_in_fedora"},
+			{Path: ".reactions.delete.actions.delete_taxonomy_term_in_fedora", Value: "delete_taxonomy_term_in_fedora"},
+		},
+		BlazegraphReactions: []indexingReaction{
+			{Path: ".reactions.index.actions.index_taxonomy_term_in_the_triplestore", Value: "index_taxonomy_term_in_the_triplestore"},
+			{Path: ".reactions.delete.actions.delete_taxonomy_term_in_triplestore", Value: "delete_taxonomy_term_in_triplestore"},
+		},
+	},
 }
 
 var mediaSchemeFiles = []string{
@@ -170,24 +216,8 @@ func Apply(opts Options) error {
 		opts.DrupalRootfs = corecomponent.DefaultDrupalRootfs
 	}
 
-	if opts.Fcrepo == FcrepoStateOn {
-		if err := applyFcrepoOn(opts.Path, opts.DrupalRootfs); err != nil {
-			return fmt.Errorf("apply fcrepo=on: %w", err)
-		}
-	} else {
-		if err := applyFcrepoOff(opts.Path, opts.DrupalRootfs, opts.ISLEFileSystemURI); err != nil {
-			return fmt.Errorf("apply fcrepo=off: %w", err)
-		}
-	}
-
-	if opts.Blazegraph == FcrepoStateOn {
-		if err := applyBlazegraphOn(opts.Path); err != nil {
-			return fmt.Errorf("apply blazegraph=on: %w", err)
-		}
-	} else {
-		if err := applyBlazegraphOff(opts.Path, opts.DrupalRootfs); err != nil {
-			return fmt.Errorf("apply blazegraph=off: %w", err)
-		}
+	if err := applyRepositoryComponents(opts); err != nil {
+		return err
 	}
 
 	if err := ApplyIIIF(opts); err != nil {
@@ -207,6 +237,42 @@ func Apply(opts Options) error {
 		return fmt.Errorf("sync local Drupal ingress: %w", err)
 	}
 
+	return nil
+}
+
+// applyRepositoryComponents reconciles the independent runtime and whole-file
+// assets before touching the three Drupal context files shared by Fcrepo and
+// Blazegraph. Shared contexts are seeded only when absent; subsequent applies
+// mutate only the exact reaction keys owned by each component.
+func applyRepositoryComponents(opts Options) error {
+	if opts.Fcrepo == FcrepoStateOn {
+		if err := applyFcrepoOn(opts.Path, opts.DrupalRootfs); err != nil {
+			return fmt.Errorf("apply fcrepo=on: %w", err)
+		}
+	} else {
+		if err := applyFcrepoOff(opts.Path, opts.DrupalRootfs, opts.ISLEFileSystemURI); err != nil {
+			return fmt.Errorf("apply fcrepo=off: %w", err)
+		}
+	}
+
+	if opts.Blazegraph == FcrepoStateOn {
+		if err := applyBlazegraphOn(opts.Path, opts.DrupalRootfs); err != nil {
+			return fmt.Errorf("apply blazegraph=on: %w", err)
+		}
+	} else {
+		if err := applyBlazegraphOff(opts.Path, opts.DrupalRootfs); err != nil {
+			return fmt.Errorf("apply blazegraph=off: %w", err)
+		}
+	}
+
+	if err := reconcileRepositoryContexts(
+		opts.Path,
+		opts.DrupalRootfs,
+		opts.Fcrepo == FcrepoStateOn,
+		opts.Blazegraph == FcrepoStateOn,
+	); err != nil {
+		return fmt.Errorf("reconcile shared repository contexts: %w", err)
+	}
 	return nil
 }
 
@@ -809,13 +875,26 @@ func replaceInFile(path string, replacements map[string]string) error {
 }
 
 func writeFilePreserveMode(path string, data []byte) error {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("open parent directory for %s: %w", path, err)
+	}
+	defer root.Close()
+
+	name := filepath.Base(path)
 	mode := fs.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
+	if info, err := root.Lstat(name); err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", path)
+		}
 		mode = info.Mode().Perm()
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("stat %s: %w", path, err)
 	}
-	return os.WriteFile(path, data, mode) // #nosec G306 -- generated project files are non-secret.
+	if err := replaceRootFile(root, name, data, mode); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
 func applyFcrepoOn(projectDir, drupalRootfs string) error {
@@ -895,8 +974,7 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 	if err := restoreFcrepoTraefikRoute(projectDir); err != nil {
 		return err
 	}
-	configDir := corecomponent.ResolveDrupalLayout(projectDir, drupalRootfs).ConfigSyncDir()
-	return restoreFcrepoDrupalConfig(configDir)
+	return restoreFcrepoDrupalConfig(projectDir, drupalRootfs)
 }
 
 func ensureFcrepoDatabaseInitScript(projectDir string) error {
@@ -929,7 +1007,7 @@ func ensureFcrepoDatabaseInitScript(projectDir string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- generated project script directories must be traversable by the compose stack.
 		return fmt.Errorf("create fcrepo database initializer directory: %w", err)
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755) // #nosec G304,G306 -- the project-scoped non-secret script must be executable inside the compose service.
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755) // #nosec G302,G304,G306 -- the project-scoped non-secret script must be executable inside the compose service.
 	if err != nil {
 		if os.IsExist(err) {
 			return ensureFcrepoDatabaseInitScript(projectDir)
@@ -945,7 +1023,7 @@ func ensureFcrepoDatabaseInitScript(projectDir string) error {
 		_ = os.Remove(path)
 		return fmt.Errorf("close fcrepo database initializer: %w", err)
 	}
-	if err := os.Chmod(path, 0o755); err != nil {
+	if err := os.Chmod(path, 0o755); err != nil { // #nosec G302 -- the generated initializer must be executable by the compose service user.
 		return fmt.Errorf("make generated fcrepo database initializer executable: %w", err)
 	}
 	return nil
@@ -970,17 +1048,263 @@ func removeFcrepoTraefikRoute(projectDir string) error {
 	return nil
 }
 
-func restoreFcrepoDrupalConfig(configDir string) error {
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
+func openDrupalConfigRoot(projectDir, drupalRootfs string, create bool) (*os.Root, error) {
+	layout := corecomponent.ResolveDrupalLayout(projectDir, drupalRootfs)
+	drupalRoot, err := openSelectedDrupalRoot(projectDir, drupalRootfs, layout.Root, create)
+	if err != nil {
+		if !create && os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("open Drupal root: %w", err)
 	}
+
+	configPath := filepath.FromSlash("config/sync")
+	if create {
+		if err := drupalRoot.MkdirAll(configPath, 0o755); err != nil { // #nosec G301 -- generated Drupal config must remain readable by the application.
+			_ = drupalRoot.Close()
+			return nil, fmt.Errorf("create config dir: %w", err)
+		}
+	}
+	configRoot, openErr := drupalRoot.OpenRoot(configPath)
+	closeErr := drupalRoot.Close()
+	if openErr != nil {
+		if !create && os.IsNotExist(openErr) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("open config dir: %w", openErr)
+	}
+	if closeErr != nil {
+		_ = configRoot.Close()
+		return nil, fmt.Errorf("close Drupal root: %w", closeErr)
+	}
+	return configRoot, nil
+}
+
+func openSelectedDrupalRoot(projectDir, drupalRootfs, resolvedRoot string, create bool) (*os.Root, error) {
+	projectAbs, err := filepath.Abs(filepath.Clean(projectDir))
+	if err != nil {
+		return nil, fmt.Errorf("resolve project root: %w", err)
+	}
+	rootAbs, err := filepath.Abs(filepath.Clean(resolvedRoot))
+	if err != nil {
+		return nil, fmt.Errorf("resolve Drupal root: %w", err)
+	}
+	rel, err := filepath.Rel(projectAbs, rootAbs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Drupal root relative to project: %w", err)
+	}
+	insideProject := rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	if insideProject {
+		projectRoot, err := os.OpenRoot(projectAbs)
+		if err != nil {
+			return nil, err
+		}
+		if create {
+			if err := projectRoot.MkdirAll(rel, 0o755); err != nil { // #nosec G301 -- the selected Drupal root must remain traversable by the application.
+				_ = projectRoot.Close()
+				return nil, err
+			}
+		}
+		root, openErr := projectRoot.OpenRoot(rel)
+		closeErr := projectRoot.Close()
+		if openErr != nil {
+			return nil, openErr
+		}
+		if closeErr != nil {
+			_ = root.Close()
+			return nil, closeErr
+		}
+		return root, nil
+	}
+
+	if !filepath.IsAbs(strings.TrimSpace(drupalRootfs)) {
+		return nil, fmt.Errorf("relative Drupal root %q escapes project root", drupalRootfs)
+	}
+	if create {
+		if err := os.MkdirAll(rootAbs, 0o755); err != nil { // #nosec G301 -- an explicitly selected absolute Drupal root must remain traversable by the application.
+			return nil, err
+		}
+	}
+	return os.OpenRoot(rootAbs)
+}
+
+func rootRegularFile(root *os.Root, name string) (bool, error) {
+	info, err := root.Lstat(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("%s is not a regular file", name)
+	}
+	return true, nil
+}
+
+func readRootFile(root *os.Root, name string) ([]byte, bool, error) {
+	exists, err := rootRegularFile(root, name)
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+	data, err := root.ReadFile(name)
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
+}
+
+func writeRootFile(root *os.Root, name string, data []byte, overwrite bool) error {
+	mode := fs.FileMode(0o644)
+	info, err := root.Lstat(name)
+	exists := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if exists {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", name)
+		}
+		if !overwrite {
+			return nil
+		}
+		mode = info.Mode().Perm()
+	}
+	if overwrite {
+		return replaceRootFile(root, name, data, mode)
+	}
+	return createRootFile(root, name, data, mode)
+}
+
+func createRootFile(root *os.Root, name string, data []byte, mode fs.FileMode) error {
+	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode) // #nosec G306 -- generated Drupal config is non-secret project configuration.
+	if err != nil {
+		if os.IsExist(err) {
+			return writeRootFile(root, name, data, false)
+		}
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = root.Remove(name)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = root.Remove(name)
+		return err
+	}
+	return nil
+}
+
+func replaceRootFile(root *os.Root, name string, data []byte, mode fs.FileMode) error {
+	random := make([]byte, 8)
+	if _, err := rand.Read(random); err != nil {
+		return fmt.Errorf("generate temporary file name: %w", err)
+	}
+	tempName := ".sitectl-" + filepath.Base(name) + "-" + hex.EncodeToString(random) + ".tmp"
+	file, err := root.OpenFile(tempName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode) // #nosec G306 -- generated Drupal config is non-secret project configuration.
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = root.Remove(tempName)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = root.Remove(tempName)
+		return err
+	}
+	if err := root.Rename(tempName, name); err != nil {
+		_ = root.Remove(tempName)
+		return err
+	}
+	return nil
+}
+
+func restoreFcrepoDrupalConfig(projectDir, drupalRootfs string) error {
+	root, err := openDrupalConfigRoot(projectDir, drupalRootfs, true)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
 	for _, name := range fedoraCleanupFiles {
 		data, err := readFcrepoAsset(name)
 		if err != nil {
 			return fmt.Errorf("read fcrepo config asset %s: %w", name, err)
 		}
-		if err := os.WriteFile(filepath.Join(configDir, name), data, 0o644); err != nil { // #nosec G306 -- generated Drupal config is non-secret project configuration.
+		if err := writeRootFile(root, name, data, true); err != nil {
 			return fmt.Errorf("write %s: %w", name, err)
+		}
+	}
+	return restoreFcrepoStorageConfig(root)
+}
+
+func restoreFcrepoStorageConfig(root *os.Root) error {
+	schemes := map[string]struct{}{}
+	for _, name := range mediaSchemeFiles {
+		data, exists, err := readRootFile(root, name)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", name, err)
+		}
+		if !exists {
+			continue
+		}
+		var field struct {
+			Settings struct {
+				URIScheme string `yaml:"uri_scheme"`
+			} `yaml:"settings"`
+		}
+		if err := yaml.Unmarshal(data, &field); err != nil {
+			return fmt.Errorf("parse %s: %w", name, err)
+		}
+		if scheme := strings.TrimSpace(field.Settings.URIScheme); scheme != "" && scheme != "fedora" {
+			schemes[scheme] = struct{}{}
+		}
+		doc, err := corecomponent.LoadYAMLDocument(data)
+		if err != nil {
+			return fmt.Errorf("load %s: %w", name, err)
+		}
+		if err := doc.SetString(".settings.uri_scheme", "fedora"); err != nil {
+			return fmt.Errorf("set Fedora uri_scheme in %s: %w", name, err)
+		}
+		updated, err := doc.Bytes()
+		if err != nil {
+			return fmt.Errorf("render %s: %w", name, err)
+		}
+		if err := writeRootFile(root, name, updated, true); err != nil {
+			return fmt.Errorf("write %s: %w", name, err)
+		}
+	}
+
+	if len(schemes) == 0 {
+		return nil
+	}
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return fmt.Errorf("read config dir: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yml" || entry.Name() == "jsonld.settings.yml" {
+			continue
+		}
+		data, exists, err := readRootFile(root, entry.Name())
+		if err != nil {
+			return fmt.Errorf("read %s: %w", entry.Name(), err)
+		}
+		if !exists {
+			continue
+		}
+		updated := string(data)
+		for scheme := range schemes {
+			updated = strings.ReplaceAll(updated, scheme+"://", "fedora://")
+		}
+		if updated == string(data) {
+			continue
+		}
+		if err := writeRootFile(root, entry.Name(), []byte(updated), true); err != nil {
+			return fmt.Errorf("write %s: %w", entry.Name(), err)
 		}
 	}
 	return nil
@@ -1129,7 +1453,7 @@ func millinerRestoreServiceBlock(image, commonMerge string) string {
       - source: JWT_PUBLIC_KEY`
 }
 
-func applyBlazegraphOn(projectDir string) error {
+func applyBlazegraphOn(projectDir, drupalRootfs string) error {
 	composePath := filepath.Join(projectDir, "docker-compose.yml")
 	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
@@ -1158,7 +1482,11 @@ func applyBlazegraphOn(projectDir string) error {
 	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE", "islandora"); err != nil {
 		return err
 	}
-	return compose.Save()
+	if err := compose.Save(); err != nil {
+		return err
+	}
+
+	return restoreBlazegraphDrupalConfig(projectDir, drupalRootfs)
 }
 
 func blazegraphRestoreServiceBlock(composePath string) (string, error) {
@@ -1176,8 +1504,7 @@ func applyFcrepoOff(projectDir, drupalRootfs, targetScheme string) error {
 		return err
 	}
 
-	configDir := corecomponent.ResolveDrupalLayout(projectDir, drupalRootfs).ConfigSyncDir()
-	if err := cleanupDrupalConfig(configDir, targetScheme); err != nil {
+	if err := cleanupDrupalConfig(projectDir, drupalRootfs, targetScheme); err != nil {
 		return err
 	}
 
@@ -1189,8 +1516,7 @@ func applyBlazegraphOff(projectDir, drupalRootfs string) error {
 		return err
 	}
 
-	configDir := corecomponent.ResolveDrupalLayout(projectDir, drupalRootfs).ConfigSyncDir()
-	if err := cleanupBlazegraphConfig(configDir); err != nil {
+	if err := cleanupBlazegraphConfig(projectDir, drupalRootfs); err != nil {
 		return err
 	}
 
@@ -1349,10 +1675,13 @@ func updateComposeForBlazegraphOff(composePath string) error {
 	return compose.Save()
 }
 
-func cleanupDrupalConfig(configDir, targetScheme string) error {
-	root, err := os.OpenRoot(filepath.Clean(configDir))
+func cleanupDrupalConfig(projectDir, drupalRootfs, targetScheme string) error {
+	root, err := openDrupalConfigRoot(projectDir, drupalRootfs, false)
 	if err != nil {
-		return fmt.Errorf("open config dir: %w", err)
+		return err
+	}
+	if root == nil {
+		return nil
 	}
 	defer root.Close()
 
@@ -1371,12 +1700,19 @@ func cleanupDrupalConfig(configDir, targetScheme string) error {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yml" {
 			continue
 		}
-		data, err := root.ReadFile(entry.Name())
+		data, exists, err := readRootFile(root, entry.Name())
 		if err != nil {
 			return fmt.Errorf("read %s: %w", entry.Name(), err)
 		}
+		if !exists {
+			continue
+		}
 
-		updated := removeFedoraAdminLines(string(data))
+		updatedData, err := removeYAMLMappingKey(data, "fedoraadmin")
+		if err != nil {
+			return fmt.Errorf("remove fedoraadmin keys from %s: %w", entry.Name(), err)
+		}
+		updated := string(updatedData)
 		if entry.Name() != "jsonld.settings.yml" {
 			updated = strings.ReplaceAll(updated, "fedora://", targetScheme+"://")
 		}
@@ -1388,7 +1724,7 @@ func cleanupDrupalConfig(configDir, targetScheme string) error {
 			}
 		}
 
-		if err := root.WriteFile(entry.Name(), []byte(updated), 0o644); err != nil { // #nosec G306 -- generated Drupal config is non-secret project configuration.
+		if err := writeRootFile(root, entry.Name(), []byte(updated), true); err != nil {
 			return fmt.Errorf("write %s: %w", entry.Name(), err)
 		}
 	}
@@ -1396,10 +1732,106 @@ func cleanupDrupalConfig(configDir, targetScheme string) error {
 	return nil
 }
 
-func cleanupBlazegraphConfig(configDir string) error {
-	root, err := os.OpenRoot(filepath.Clean(configDir))
+func restoreBlazegraphDrupalConfig(projectDir, drupalRootfs string) error {
+	root, err := openDrupalConfigRoot(projectDir, drupalRootfs, true)
 	if err != nil {
-		return fmt.Errorf("open config dir: %w", err)
+		return err
+	}
+	defer root.Close()
+
+	for _, name := range blazegraphCleanupFiles {
+		data, err := readBlazegraphAsset(name)
+		if err != nil {
+			return fmt.Errorf("read blazegraph config asset %s: %w", name, err)
+		}
+		// OpRestore status checks file presence. Preserve an existing action file
+		// byte-for-byte so apply and status agree that its contents are downstream
+		// owned; the embedded canonical file is only the missing-file seed.
+		if err := writeRootFile(root, name, data, false); err != nil {
+			return fmt.Errorf("write %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func reconcileRepositoryContexts(projectDir, drupalRootfs string, fcrepoEnabled, blazegraphEnabled bool) error {
+	root, err := openDrupalConfigRoot(projectDir, drupalRootfs, fcrepoEnabled || blazegraphEnabled)
+	if err != nil {
+		return err
+	}
+	if root == nil {
+		return nil
+	}
+	defer root.Close()
+
+	for _, spec := range repositoryContextSpecs {
+		data, exists, err := readRootFile(root, spec.Name)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", spec.Name, err)
+		}
+		if !exists {
+			if !fcrepoEnabled && !blazegraphEnabled {
+				continue
+			}
+			seed, err := readFcrepoAsset(spec.Name)
+			if err != nil {
+				return fmt.Errorf("read shared context asset %s: %w", spec.Name, err)
+			}
+			if err := writeRootFile(root, spec.Name, seed, false); err != nil {
+				return fmt.Errorf("seed %s: %w", spec.Name, err)
+			}
+			data, exists, err = readRootFile(root, spec.Name)
+			if err != nil {
+				return fmt.Errorf("read seeded %s: %w", spec.Name, err)
+			}
+			if !exists {
+				return fmt.Errorf("seeded shared context %s is missing", spec.Name)
+			}
+		}
+		doc, err := corecomponent.LoadYAMLDocument(data)
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", spec.Name, err)
+		}
+		if err := reconcileRepositoryReactions(doc, spec.Name, spec.FcrepoReactions, fcrepoEnabled); err != nil {
+			return err
+		}
+		if err := reconcileRepositoryReactions(doc, spec.Name, spec.BlazegraphReactions, blazegraphEnabled); err != nil {
+			return err
+		}
+		rendered, err := doc.Bytes()
+		if err != nil {
+			return fmt.Errorf("render %s: %w", spec.Name, err)
+		}
+		if err := writeRootFile(root, spec.Name, rendered, true); err != nil {
+			return fmt.Errorf("write %s: %w", spec.Name, err)
+		}
+	}
+
+	return nil
+}
+
+func reconcileRepositoryReactions(doc *corecomponent.YAMLDocument, name string, reactions []indexingReaction, enabled bool) error {
+	for _, reaction := range reactions {
+		if enabled {
+			if err := doc.SetString(reaction.Path, reaction.Value); err != nil {
+				return fmt.Errorf("set repository reaction %s in %s: %w", reaction.Path, name, err)
+			}
+			continue
+		}
+		if err := doc.DeletePath(reaction.Path); err != nil {
+			return fmt.Errorf("remove repository reaction %s from %s: %w", reaction.Path, name, err)
+		}
+	}
+	return nil
+}
+
+func cleanupBlazegraphConfig(projectDir, drupalRootfs string) error {
+	root, err := openDrupalConfigRoot(projectDir, drupalRootfs, false)
+	if err != nil {
+		return err
+	}
+	if root == nil {
+		return nil
 	}
 	defer root.Close()
 
@@ -1409,53 +1841,54 @@ func cleanupBlazegraphConfig(configDir string) error {
 		}
 	}
 
-	contextReplacements := map[string][]string{
-		"context.context.all_media.yml": {
-			"      index_media_in_triplestore: index_media_in_triplestore",
-			"      delete_media_from_triplestore: delete_media_from_triplestore",
-		},
-		"context.context.repository_content.yml": {
-			"      index_node_in_triplestore: index_node_in_triplestore",
-			"      delete_node_from_triplestore: delete_node_from_triplestore",
-		},
-		"context.context.taxonomy_terms.yml": {
-			"      index_taxonomy_term_in_the_triplestore: index_taxonomy_term_in_the_triplestore",
-			"      delete_taxonomy_term_in_triplestore: delete_taxonomy_term_in_triplestore",
-		},
-	}
-
-	for name, removals := range contextReplacements {
-		data, err := root.ReadFile(name)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return fmt.Errorf("read %s: %w", name, err)
-		}
-
-		updated := string(data)
-		for _, removal := range removals {
-			updated = strings.ReplaceAll(updated, removal+"\n", "")
-		}
-
-		if err := root.WriteFile(name, []byte(updated), 0o644); err != nil { // #nosec G306 -- generated Drupal config is non-secret project configuration.
-			return fmt.Errorf("write %s: %w", name, err)
-		}
-	}
-
 	return nil
 }
 
-func removeFedoraAdminLines(input string) string {
-	lines := strings.Split(input, "\n")
-	filtered := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if strings.Contains(line, "fedoraadmin: '0'") {
-			continue
-		}
-		filtered = append(filtered, line)
+func removeYAMLMappingKey(data []byte, target string) ([]byte, error) {
+	if !bytes.Contains(data, []byte(target)) {
+		return data, nil
 	}
-	return strings.Join(filtered, "\n")
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	if !deleteYAMLMappingKey(&doc, target) {
+		return data, nil
+	}
+	updated, err := yaml.Marshal(&doc)
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+func deleteYAMLMappingKey(node *yaml.Node, target string) bool {
+	if node == nil {
+		return false
+	}
+	changed := false
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); {
+			key := node.Content[i]
+			value := node.Content[i+1]
+			if key.Value == target {
+				node.Content = append(node.Content[:i], node.Content[i+2:]...)
+				changed = true
+				continue
+			}
+			if deleteYAMLMappingKey(value, target) {
+				changed = true
+			}
+			i += 2
+		}
+		return changed
+	}
+	for _, child := range node.Content {
+		if deleteYAMLMappingKey(child, target) {
+			changed = true
+		}
+	}
+	return changed
 }
 
 func setTopLevelScalar(input, dottedPath, value string) (string, error) {
