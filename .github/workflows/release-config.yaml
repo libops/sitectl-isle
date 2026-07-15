@@ -31,6 +31,35 @@ jobs:
           install-only: true
 
       - name: Validate release configuration
+        shell: bash
         env:
           GORELEASER_DISABLE_SCM_RELEASE: "false"
-        run: goreleaser check
+        run: |
+          set -euo pipefail
+
+          set +e
+          output="$(goreleaser check 2>&1)"
+          status=$?
+          set -e
+
+          printf '%s\n' "$output"
+
+          if [[ "$status" -eq 0 ]]; then
+            exit 0
+          fi
+
+          if [[ "$status" -ne 2 ]]; then
+            exit "$status"
+          fi
+
+          plain_output="$(printf '%s\n' "$output" | sed $'s/\033\\[[0-9;]*m//g')"
+          if ! grep -Fq "configuration is valid, but uses deprecated properties" <<<"$plain_output"; then
+            echo "GoReleaser did not report a valid deprecated configuration" >&2
+            exit 1
+          fi
+
+          mapfile -t deprecations < <(grep -F "DEPRECATED:" <<<"$plain_output" || true)
+          if [[ "${#deprecations[@]}" -ne 1 ]] || [[ "${deprecations[0]}" != *brews* ]]; then
+            echo "Only the reviewed brews deprecation is allowed" >&2
+            exit 1
+          fi
