@@ -52,7 +52,7 @@ var (
 
 const (
 	defaultTemplateRepo   = "https://github.com/libops/isle"
-	defaultTemplateBranch = "main"
+	defaultTemplateBranch = "v1.0.0"
 )
 
 type createRequest struct {

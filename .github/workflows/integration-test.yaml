@@ -36,7 +36,7 @@ jobs:
             iiif_implementation: triplet
             iiif_topology: disabled
             bot_mitigation_state: on
-    uses: libops/.github/.github/workflows/sitectl-create-smoke-test.yaml@da242aa070fa29b4028c5e03884b69857ea13fdf # main
+    uses: libops/.github/.github/workflows/sitectl-create-smoke-test.yaml@4f6b4fe8dfb145a627fe7b73ceddd7304547f1a2 # main
     with:
       plugin: isle
       create-definition: default
@@ -62,6 +62,9 @@ jobs:
       project-path: isle-site-template
       local-plugin-path: sitectl-isle
       sitectl-repository: libops/sitectl
-      sitectl-ref: 72c60889d65fd5d7e5d6a2e644a30b53d1699bcd # v0.38.0
-      packages: sitectl-drupal
+      sitectl-ref: 9bae54578003bfdfab0bb44c13ad4149501a7fc8 # v0.40.0
+      packages: sitectl sitectl-drupal
+      package-versions: sitectl=0.40.0 sitectl-drupal=0.11.0
+      allow-unversioned-packages: false
+      expected-template-lock-revision: v1.0.0
       timeout-minutes: 120

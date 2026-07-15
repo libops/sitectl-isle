@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-minimum="${1:-v0.38.0}"
+minimum="${1:-v0.40.0}"
 version="$(GOWORK=off go list -m -f '{{.Version}}' github.com/libops/sitectl)"
 
 case "$version" in
