@@ -1,4 +1,6 @@
 version: 2
+release:
+  disable: "{{ .Env.GORELEASER_DISABLE_SCM_RELEASE }}"
 before:
   hooks:
     - ./scripts/check-sitectl-core-version.sh v0.40.0
@@ -41,14 +43,23 @@ changelog:
       - "^.github"
 brews:
   - name: sitectl-isle
+    description: "A sitectl plugin for Islandora stacks"
     homepage: "https://github.com/libops/sitectl-isle"
+    license: MIT
     commit_author:
       name: sitectl-dev[bot]
       email: 2408410+sitectl-dev[bot]@users.noreply.github.com
     repository:
       owner: libops
       name: homebrew
+      branch: "{{ .ProjectName }}-{{ .Version }}"
       token: "{{ .Env.HOMEBREW_REPO_TOKEN }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: libops
+          name: homebrew
+          branch: main
     dependencies:
       - name: "libops/homebrew/sitectl"
       - name: "libops/homebrew/sitectl-drupal"

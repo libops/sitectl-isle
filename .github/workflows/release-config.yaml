@@ -1,0 +1,36 @@
+name: release-config
+
+on:
+  pull_request:
+    paths:
+      - ".goreleaser.yaml"
+      - ".github/workflows/goreleaser.yaml"
+      - ".github/workflows/release-config.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-config-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          distribution: goreleaser
+          version: v2.17.0
+          install-only: true
+
+      - name: Validate release configuration
+        env:
+          GORELEASER_DISABLE_SCM_RELEASE: "false"
+        run: goreleaser check
