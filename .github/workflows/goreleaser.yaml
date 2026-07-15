@@ -2,6 +2,20 @@ name: goreleaser
 
 on:
   workflow_dispatch:
+    inputs:
+      release-mode:
+        description: Recovery mode; full is only valid from a new tag ref
+        required: true
+        type: choice
+        default: packages-only
+        options:
+          - packages-only
+          - homebrew-only
+          - full
+      release-version:
+        description: Existing vMAJOR.MINOR.PATCH tag for a recovery mode
+        required: false
+        type: string
   push:
     tags:
       - "*"
@@ -12,11 +26,13 @@ permissions:
 
 jobs:
   goreleaser:
-    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@69fc4b92079cd51606e1d4757031c6e9b645bb5a # main
+    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@66905c983e1ec673e936a7dc4b4d5c2ad0016b49 # main
     permissions:
       contents: write
       id-token: write
     secrets: inherit
     with:
-      go-version: "1.26.x"
+      go-version: "1.26.5"
+      release-mode: ${{ inputs.release-mode || 'full' }}
+      release-version: ${{ inputs.release-version }}
       package-name: sitectl-isle
