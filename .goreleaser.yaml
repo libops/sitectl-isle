@@ -45,6 +45,7 @@ brews:
   - name: sitectl-isle
     description: "A sitectl plugin for Islandora stacks"
     homepage: "https://github.com/libops/sitectl-isle"
+    url_template: "https://github.com/libops/sitectl-isle/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     license: MIT
     commit_author:
       name: sitectl-dev[bot]

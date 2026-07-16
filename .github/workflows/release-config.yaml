@@ -63,3 +63,16 @@ jobs:
             echo "Only the reviewed brews deprecation is allowed" >&2
             exit 1
           fi
+
+      - name: Verify recovery-safe Homebrew source URL
+        shell: bash
+        env:
+          EXPECTED_BREW_URL: '    url_template: "https://github.com/${{ github.repository }}/releases/download/{{ .Tag }}/{{ .ArtifactName }}"'
+        run: |
+          set -euo pipefail
+
+          matches="$(grep -Fxc "$EXPECTED_BREW_URL" .goreleaser.yaml || true)"
+          if [[ "$matches" -ne 1 ]]; then
+            echo "Expected exactly one recovery-safe Homebrew url_template" >&2
+            exit 1
+          fi
