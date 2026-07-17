@@ -10,7 +10,6 @@ func TestDerivativeServiceCatalogMatchesISLETemplateImages(t *testing.T) {
 		"homarus":   "libops/homarus:8.1.2@sha256:dede2629a054497e8220f5cd4602f2f5d5bc249a430cb12ece61f8ef15819e9a",
 		"houdini":   "libops/houdini:8.18.2@sha256:347005f6ba008b48e0f0e5b10d5cd30582883dab9bd514dae72ff59bd5eac8e2",
 		"hypercube": "libops/hypercube:5.5.2@sha256:d9ebaf350cb09ae814ae4fb2b4f38182c6f04032b05fff4cb8c2ad24f8006e9a",
-		"mergepdf":  "libops/mergepdf:main@sha256:8ee2a3cd7d2b02e84af559518b9f7f85e1abe87a4ee337db415619f75d2047a8",
 	}
 	for _, spec := range DerivativeServiceSpecs() {
 		if spec.ImageRef != want[spec.Name] {
@@ -20,5 +19,15 @@ func TestDerivativeServiceCatalogMatchesISLETemplateImages(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Fatalf("catalog missing expected services: %#v", want)
+	}
+}
+
+func TestMergePDFIsManagedAsAFeatureBundle(t *testing.T) {
+	t.Parallel()
+	if IsDerivativeService(FeatureBundleMergePDF) {
+		t.Fatal("mergepdf must not be registered as a service-only derivative component")
+	}
+	if !IsFeatureBundle(FeatureBundleMergePDF) {
+		t.Fatal("mergepdf feature bundle is not registered")
 	}
 }

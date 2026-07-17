@@ -89,6 +89,15 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	if req.Apply.ISLEFileSystemURI != "public" {
 		t.Fatalf("expected prompted isle-file-system-uri public, got %q", req.Apply.ISLEFileSystemURI)
 	}
+	if req.Apply.FeatureBundles[createpkg.FeatureBundleMergePDF] != string(corecomponent.StateOn) || req.Apply.FeatureBundles[createpkg.FeatureBundleHOCRSearch] != string(corecomponent.StateOn) {
+		t.Fatalf("expected current-template feature defaults enabled, got %+v", req.Apply.FeatureBundles)
+	}
+	if got := req.Apply.FeatureBundleOptions[createpkg.FeatureBundleHOCRSearch][createpkg.HOCRStructuredTextTermOption]; got != "56" {
+		t.Fatalf("expected default hOCR term ID 56, got %q", got)
+	}
+	if got := req.Apply.FeatureBundleOptions[createpkg.FeatureBundleMergePDF][createpkg.IslandoraTagOption]; got != "6.3.19" {
+		t.Fatalf("expected default Islandora tag 6.3.19, got %q", got)
+	}
 	if req.TemplateRepo != defaultTemplateRepo {
 		t.Fatalf("expected template repo %q, got %q", defaultTemplateRepo, req.TemplateRepo)
 	}
@@ -145,6 +154,9 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	_ = cmd.Flags().Set("upload-timeout", "10m")
 	_ = cmd.Flags().Set("bot-mitigation", "on")
 	_ = cmd.Flags().Set("homarus", "distributed")
+	_ = cmd.Flags().Set("mergepdf", "disabled")
+	_ = cmd.Flags().Set("hocr-search", "enabled")
+	_ = cmd.Flags().Set("hocr-term-id", "77")
 	_ = cmd.Flags().Set("isle-file-system-uri", "public")
 
 	req, err := resolveCreateRequest(cmd)
@@ -160,6 +172,15 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	}
 	if req.Apply.DerivativeServices["homarus"] != createpkg.DerivativeTopologyDistributed {
 		t.Fatalf("expected homarus distributed option, got %+v", req.Apply.DerivativeServices)
+	}
+	if req.Apply.FeatureBundles[createpkg.FeatureBundleMergePDF] != string(corecomponent.StateOff) || req.Apply.FeatureBundles[createpkg.FeatureBundleHOCRSearch] != string(corecomponent.StateOn) {
+		t.Fatalf("unexpected feature-bundle options: %+v", req.Apply.FeatureBundles)
+	}
+	if got := req.Apply.FeatureBundleOptions[createpkg.FeatureBundleHOCRSearch][createpkg.HOCRStructuredTextTermOption]; got != "77" {
+		t.Fatalf("expected explicit hOCR term ID 77, got %q", got)
+	}
+	if got := req.Apply.FeatureBundleOptions[createpkg.FeatureBundleMergePDF]; len(got) != 0 {
+		t.Fatalf("disabled mergepdf should not retain an enabled-only tag option: %+v", req.Apply.FeatureBundleOptions)
 	}
 	if req.IngressState != "on" || req.IngressMode != coretraefik.IngressModeHTTPSCustom || req.IngressDomain != "repo.example.org" || req.IngressTrustedIPs != "10.0.0.0/8,203.0.113.4" {
 		t.Fatalf("expected ingress enabled with overrides, got state=%q mode=%q domain=%q trusted=%q", req.IngressState, req.IngressMode, req.IngressDomain, req.IngressTrustedIPs)
@@ -622,6 +643,14 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 			Fcrepo:            createpkg.FcrepoStateOn,
 			Blazegraph:        createpkg.FcrepoStateOff,
 			ISLEFileSystemURI: createpkg.PublicISLEFileSystemURI,
+			FeatureBundles: map[string]string{
+				createpkg.FeatureBundleMergePDF:   string(corecomponent.StateOn),
+				createpkg.FeatureBundleHOCRSearch: string(corecomponent.StateOn),
+			},
+			FeatureBundleOptions: map[string]map[string]string{
+				createpkg.FeatureBundleMergePDF:   {createpkg.IslandoraTagOption: "6.3.20"},
+				createpkg.FeatureBundleHOCRSearch: {createpkg.HOCRStructuredTextTermOption: "77"},
+			},
 		},
 	})
 	if err != nil {
@@ -649,6 +678,9 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "--fcrepo=on") || !strings.Contains(rendered, "--blazegraph=off") {
 		t.Fatalf("expected recreate command with component flags, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "--mergepdf=enabled") || !strings.Contains(rendered, `--islandora-tag="6.3.20"`) || !strings.Contains(rendered, "--hocr-search=enabled") || !strings.Contains(rendered, `--hocr-term-id="77"`) {
+		t.Fatalf("expected recreate command with feature-bundle flags, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "git remote add origin git@github.com:your-org/your-repo.git") {
 		t.Fatalf("expected git remote setup guidance, got:\n%s", rendered)

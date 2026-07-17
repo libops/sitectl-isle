@@ -96,6 +96,30 @@ func runIsleValidation(ctx *config.Context, drupalRootfs string) ([]sitevalidate
 		}
 		results = append(results, result)
 	}
+	for _, name := range createpkg.FeatureBundleNames() {
+		status, ok := statusByName[name]
+		if !ok || status.State != corecomponent.DetectedState(corecomponent.StateOn) {
+			continue
+		}
+		result := sitevalidate.Result{
+			Name:   "feature-requirements:" + name,
+			Status: sitevalidate.StatusOK,
+			Detail: "Compose compatibility requirements satisfied",
+		}
+		if err := createpkg.CheckFeatureBundleProject(createpkg.Options{
+			Path:         ctx.ProjectDir,
+			DrupalRootfs: drupalRootfs,
+			EnvFiles:     append([]string{}, ctx.EnvFile...),
+			FeatureBundleOptions: map[string]map[string]string{
+				name: createpkg.FeatureBundleCurrentOptions(ctx.ProjectDir, drupalRootfs, ctx.EnvFile, name),
+			},
+		}, name); err != nil {
+			result.Status = sitevalidate.StatusFailed
+			result.Detail = err.Error()
+			result.FixHint = "update the referenced Compose image or required secret definitions, then rerun validation"
+		}
+		results = append(results, result)
+	}
 
 	if statusByName["iiif"].Disposition == corecomponent.DispositionTriplet {
 		results = append(results,

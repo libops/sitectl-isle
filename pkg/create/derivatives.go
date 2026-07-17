@@ -69,14 +69,6 @@ var derivativeServiceSpecs = []DerivativeServiceSpec{
 		ExternalURL: microservicesBaseURL + "/hypercube",
 		NeedsJWT:    true,
 	},
-	{
-		Name:        "mergepdf",
-		ImageRef:    "libops/mergepdf:main@sha256:8ee2a3cd7d2b02e84af559518b9f7f85e1abe87a4ee337db415619f75d2047a8",
-		AlpacaEnv:   "ALPACA_DERIVATIVE_MERGEPDF_URL",
-		LocalURL:    "http://mergepdf:8080/",
-		ExternalURL: microservicesBaseURL + "/mergepdf",
-		NeedsJWT:    true,
-	},
 }
 
 // DerivativeServiceSpecs returns the canonical derivative service catalog.

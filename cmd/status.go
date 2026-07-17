@@ -162,6 +162,31 @@ func detectComponentViewsForDefinitions(siteCtx *config.Context, drupalRootfs st
 			}
 		case coretraefik.IngressName:
 			followUps = currentIngressFollowUps(siteCtx)
+		case createpkg.FeatureBundleMergePDF, createpkg.FeatureBundleHOCRSearch:
+			followUps = createpkg.FeatureBundleCurrentOptions(siteCtx.ProjectDir, drupalRootfs, siteCtx.EnvFile, sdkStatuses[i].Name)
+			if state == corecomponent.DetectedState(corecomponent.StateOn) || state == corecomponent.DetectedState(corecomponent.StateOff) {
+				enabled := state == corecomponent.DetectedState(corecomponent.StateOn)
+				if err := createpkg.ValidateFeatureBundleObservedState(createpkg.Options{
+					Path:                 siteCtx.ProjectDir,
+					DrupalRootfs:         drupalRootfs,
+					EnvFiles:             append([]string{}, siteCtx.EnvFile...),
+					FeatureBundleOptions: map[string]map[string]string{sdkStatuses[i].Name: followUps},
+				}, sdkStatuses[i].Name, enabled); err != nil {
+					check := &sdkStatuses[i].Off
+					if enabled {
+						check = &sdkStatuses[i].On
+					}
+					check.Failed++
+					check.Results = append(check.Results, corecomponent.RuleCheckResult{
+						Domain: "feature",
+						Match:  false,
+						Detail: err.Error(),
+					})
+					sdkStatuses[i].State = corecomponent.StateDrifted
+					state = corecomponent.StateDrifted
+					disposition = dispositionFromDetectedState(state)
+				}
+			}
 		default:
 			if createpkg.IsDerivativeService(sdkStatuses[i].Name) {
 				disposition = derivativeServiceDisposition(state)

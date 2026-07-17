@@ -14,10 +14,12 @@ type DrupalModuleDependencyMode = corecomponent.DrupalModuleDependencyMode
 type StateGuidance = corecomponent.StateGuidance
 
 const (
-	OpSet     = corecomponent.OpSet
-	OpDelete  = corecomponent.OpDelete
-	OpRestore = corecomponent.OpRestore
-	OpReplace = corecomponent.OpReplace
+	OpSet         = corecomponent.OpSet
+	OpDelete      = corecomponent.OpDelete
+	OpRestore     = corecomponent.OpRestore
+	OpReplace     = corecomponent.OpReplace
+	OpContains    = corecomponent.OpContains
+	OpNotContains = corecomponent.OpNotContains
 
 	DrupalModuleDependencyStrict     = corecomponent.DrupalModuleDependencyStrict
 	DrupalModuleDependencyEnableOnly = corecomponent.DrupalModuleDependencyEnableOnly

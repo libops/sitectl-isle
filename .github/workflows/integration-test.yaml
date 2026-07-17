@@ -48,6 +48,10 @@ jobs:
         --iiif ${{ matrix.iiif_implementation }}
         --iiif-topology ${{ matrix.iiif_topology }}
         --bot-mitigation ${{ matrix.bot_mitigation_state }}
+        --mergepdf enabled
+        --islandora-tag 6.3.19
+        --hocr-search enabled
+        --hocr-term-id 56
       run-verify: true
       verify-args: >-
         --fcrepo ${{ matrix.fcrepo_state }}
@@ -62,9 +66,9 @@ jobs:
       project-path: isle-site-template
       local-plugin-path: sitectl-isle
       sitectl-repository: libops/sitectl
-      sitectl-ref: 9bae54578003bfdfab0bb44c13ad4149501a7fc8 # v0.40.0
+      sitectl-ref: 65cfde137a58ba14aaa9a1512d88b943888872f3 # v1.0.0
       packages: sitectl sitectl-drupal
-      package-versions: sitectl=0.40.0 sitectl-drupal=0.11.0
+      package-versions: sitectl=1.0.0 sitectl-drupal=1.0.0
       allow-unversioned-packages: false
       expected-template-lock-revision: v1.0.0
       timeout-minutes: 120
