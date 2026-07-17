@@ -368,11 +368,11 @@ func preflightFeatureBundleFiles(opts Options, spec FeatureBundleSpec) error {
 		}
 		current, exists := featureYAMLValue(data, mutation.Path)
 		if !exists {
-			return fmt.Errorf("Drupal config %s is missing required baseline path %s", mutation.File, mutation.Path)
+			return fmt.Errorf("drupal config %s is missing required baseline path %s", mutation.File, mutation.Path)
 		}
 		desired := resolveFeatureMutationValue(mutation, opts.FeatureBundleOptions[spec.Name])
 		if fmt.Sprint(current) != fmt.Sprint(desired) && fmt.Sprint(current) != fmt.Sprint(mutation.DisableValue) {
-			return fmt.Errorf("Drupal config %s path %s has downstream value %v; expected feature value %v or baseline %v", mutation.File, mutation.Path, current, desired, mutation.DisableValue)
+			return fmt.Errorf("drupal config %s path %s has downstream value %v; expected feature value %v or baseline %v", mutation.File, mutation.Path, current, desired, mutation.DisableValue)
 		}
 	}
 
@@ -397,7 +397,7 @@ func preflightFeatureBundleFiles(opts Options, spec FeatureBundleSpec) error {
 			return fmt.Errorf("resolve Islandora image tag: %w", err)
 		}
 		if !dockerTagPattern.MatchString(tag) {
-			return fmt.Errorf("Islandora image tag %q is not a valid Docker tag", tag)
+			return fmt.Errorf("islandora image tag %q is not a valid Docker tag", tag)
 		}
 		compatible, err := featureVersionAtLeast(tag, defaultIslandoraTag)
 		if err != nil {
