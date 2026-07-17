@@ -401,7 +401,7 @@ func preflightFeatureBundleFiles(opts Options, spec FeatureBundleSpec) error {
 		}
 		compatible, err := featureVersionAtLeast(tag, defaultIslandoraTag)
 		if err != nil {
-			return fmt.Errorf("Islandora image tag %q cannot be compared with %s: %w", tag, defaultIslandoraTag, err)
+			return fmt.Errorf("islandora image tag %q cannot be compared with %s: %w", tag, defaultIslandoraTag, err)
 		}
 		if !compatible {
 			return fmt.Errorf("mergepdf requires Islandora image tag %s or newer, got %s", defaultIslandoraTag, tag)
@@ -448,7 +448,7 @@ func preflightFeatureBundleDisable(opts Options, spec FeatureBundleSpec) error {
 		}
 		desired := resolveFeatureMutationValue(mutation, opts.FeatureBundleOptions[spec.Name])
 		if fmt.Sprint(current) != fmt.Sprint(desired) && fmt.Sprint(current) != fmt.Sprint(mutation.DisableValue) {
-			return fmt.Errorf("Drupal config %s path %s has downstream value %v; refusing to replace it with baseline %v", mutation.File, mutation.Path, current, mutation.DisableValue)
+			return fmt.Errorf("drupal config %s path %s has downstream value %v; refusing to replace it with baseline %v", mutation.File, mutation.Path, current, mutation.DisableValue)
 		}
 	}
 	if len(spec.ComposerRequirements) == 0 {
@@ -547,13 +547,13 @@ func ValidateFeatureBundleObservedState(opts Options, name string, enabled bool)
 	rawExtensions, exists := featureYAMLValue(extensionsData, ".settings.file_extensions")
 	if !exists {
 		if enabled {
-			return fmt.Errorf("Drupal file extension configuration is missing .settings.file_extensions")
+			return fmt.Errorf("drupal file extension configuration is missing .settings.file_extensions")
 		}
 		return nil
 	}
 	extensions, ok := rawExtensions.(string)
 	if !ok {
-		return fmt.Errorf("Drupal file extension configuration must be a string")
+		return fmt.Errorf("drupal file extension configuration must be a string")
 	}
 	for _, token := range []string{"htm", "html"} {
 		present := featureStringTokenPresent(extensions, token)
@@ -578,7 +578,7 @@ func ValidateFeatureBundleObservedState(opts Options, name string, enabled bool)
 		path := ".display." + display + ".display_options.style.options.structured_text_term"
 		value, exists := featureYAMLValue(manifest, path)
 		if !exists {
-			return fmt.Errorf("Drupal config views.view.iiif_manifest.yml is missing %s", path)
+			return fmt.Errorf("drupal config views.view.iiif_manifest.yml is missing %s", path)
 		}
 		termID, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value)))
 		if err != nil || termID <= 0 {
