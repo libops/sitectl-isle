@@ -27,7 +27,7 @@ func newComponentSetTestCommand() *cobra.Command {
 	cmd.Flags().StringVar(&path, "path", "", "Path to the checked out ISLE project. Defaults to the active sitectl context project directory")
 	addCodebaseRootfsFlags(cmd, &codebaseRootfs, &drupalRootfs, createpkg.DefaultDrupalRootfs)
 	cmd.Flags().StringVar(&state, "state", "", "Component state to apply. Valid values are on or off. If omitted, the command prompts interactively.")
-	cmd.Flags().StringVar(&disposition, "disposition", "", "Component disposition to apply. Valid values depend on the component, commonly disabled, superceded, enabled, or distributed.")
+	cmd.Flags().StringVar(&disposition, "disposition", "", "Component disposition to apply. Valid values depend on the component, commonly disabled, superseded, enabled, or distributed.")
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Apply the component change without confirmation")
 	addComponentSetFollowUpFlags(cmd, managedComponentDefinitions())
 	return cmd
@@ -82,7 +82,7 @@ func TestRunComponentSetPreservesOtherDetectedState(t *testing.T) {
 	if got.ISLEFileSystemURI != createpkg.DefaultISLEFileSystemURI {
 		t.Fatalf("expected default filesystem uri %q, got %q", createpkg.DefaultISLEFileSystemURI, got.ISLEFileSystemURI)
 	}
-	if !strings.Contains(out.String(), "fcrepo: superceded") {
+	if !strings.Contains(out.String(), "fcrepo: superseded") {
 		t.Fatalf("expected command output, got:\n%s", out.String())
 	}
 }
@@ -353,7 +353,7 @@ func TestRunComponentSetUsesContextRootfsAfterCodebaseGitRoot(t *testing.T) {
 	if err := fcrepoCmd.Flags().Set("isle-file-system-uri", "private"); err != nil {
 		t.Fatalf("Flags().Set(isle-file-system-uri) error = %v", err)
 	}
-	if err := runComponentSet(fcrepoCmd, "fcrepo", "superceded"); err != nil {
+	if err := runComponentSet(fcrepoCmd, "fcrepo", "superseded"); err != nil {
 		t.Fatalf("runComponentSet(fcrepo) error = %v", err)
 	}
 	if err := runComponentSet(newComponentSetTestCommand(), "blazegraph", "disabled"); err != nil {
