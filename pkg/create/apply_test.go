@@ -1580,8 +1580,8 @@ services:
     environment: {}
   homarus:
     image: libops/homarus:test
-  mergepdf:
-    image: islandora/mergepdf:test
+  hypercube:
+    image: libops/hypercube:test
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}
@@ -1589,8 +1589,8 @@ services:
 	if err := ApplyDerivativeServices(Options{
 		Path: projectDir,
 		DerivativeServices: map[string]string{
-			"homarus":  DerivativeTopologyDistributed,
-			"mergepdf": DerivativeTopologyDistributed,
+			"homarus":   DerivativeTopologyDistributed,
+			"hypercube": DerivativeTopologyDistributed,
 		},
 	}); err != nil {
 		t.Fatalf("ApplyDerivativeServices() error = %v", err)
@@ -1601,14 +1601,14 @@ services:
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
 	compose := string(composeData)
-	for _, service := range []string{"homarus", "mergepdf"} {
+	for _, service := range []string{"homarus", "hypercube"} {
 		if strings.Contains(compose, "\n  "+service+":\n") {
 			t.Fatalf("expected %s service removed, got:\n%s", service, compose)
 		}
 	}
 	for _, want := range []string{
 		`ALPACA_DERIVATIVE_HOMARUS_URL: "https://microservices.libops.site/homarus"`,
-		`ALPACA_DERIVATIVE_MERGEPDF_URL: "https://microservices.libops.site/mergepdf"`,
+		`ALPACA_DERIVATIVE_OCR_URL: "https://microservices.libops.site/hypercube"`,
 	} {
 		if !strings.Contains(compose, want) {
 			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
@@ -1620,14 +1620,14 @@ services:
 		t.Fatalf("ReadFile(dev compose) error = %v", err)
 	}
 	devCompose := string(devComposeData)
-	for _, service := range []string{"homarus", "mergepdf"} {
+	for _, service := range []string{"homarus", "hypercube"} {
 		if !strings.Contains(devCompose, "\n  "+service+":\n") {
 			t.Fatalf("expected dev compose to contain %s service, got:\n%s", service, devCompose)
 		}
 	}
 	for _, want := range []string{
 		`ALPACA_DERIVATIVE_HOMARUS_URL: "http://homarus:8080/"`,
-		`ALPACA_DERIVATIVE_MERGEPDF_URL: "http://mergepdf:8080/"`,
+		`ALPACA_DERIVATIVE_OCR_URL: "http://hypercube:8080/"`,
 	} {
 		if !strings.Contains(devCompose, want) {
 			t.Fatalf("expected dev compose to contain %q, got:\n%s", want, devCompose)

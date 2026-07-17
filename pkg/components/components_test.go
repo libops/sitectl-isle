@@ -1,6 +1,7 @@
 package components
 
 import (
+	"fmt"
 	"testing"
 
 	corecomponent "github.com/libops/sitectl/pkg/component"
@@ -262,6 +263,58 @@ func TestDerivativeServiceDefinition(t *testing.T) {
 	assertHasRule(t, definition.On.Compose.Rules, OpSet, ".services.alpaca.environment.ALPACA_DERIVATIVE_HOMARUS_URL")
 	assertHasRule(t, definition.Off.Compose.Rules, OpRestore, ".services.homarus")
 	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.alpaca.environment.ALPACA_DERIVATIVE_HOMARUS_URL")
+}
+
+func TestFeatureBundleDefinitionsOwnCrossDomainChanges(t *testing.T) {
+	t.Parallel()
+
+	definitions := map[string]Definition{}
+	for _, definition := range FeatureBundles(TemplateSource{Repo: "libops/isle", Ref: "v1.0.0"}) {
+		definitions[definition.Name] = definition
+	}
+	mergepdf := definitions["mergepdf"]
+	if mergepdf.DefaultState != corecomponent.StateOn || mergepdf.DefaultDisposition != corecomponent.DispositionEnabled {
+		t.Fatalf("unexpected mergepdf defaults: %#v", mergepdf)
+	}
+	assertHasRule(t, mergepdf.On.Compose.Rules, OpRestore, ".services.mergepdf")
+	assertHasWholeFileRule(t, mergepdf.On.Drupal.Rules, OpRestore, "system.action.paged_content_created_aggregated_pdf.yml")
+	assertHasRule(t, mergepdf.Off.Compose.Rules, OpDelete, ".services.mergepdf")
+	assertHasWholeFileRule(t, mergepdf.Off.Drupal.Rules, OpDelete, "system.action.paged_content_created_aggregated_pdf.yml")
+	assertHasRuleWithValue(t, mergepdf.On.Compose.Rules, OpSet, ".services.mergepdf.image", "islandora/mergepdf:${ISLANDORA_TAG}")
+	assertHasRuleWithValue(t, mergepdf.On.Compose.Rules, OpSet, ".services.mergepdf.secrets", []any{
+		map[string]any{"source": "CERT_PUBLIC_KEY"},
+		map[string]any{"source": "CERT_AUTHORITY"},
+		map[string]any{"source": "JWT_ADMIN_TOKEN"},
+		map[string]any{"source": "JWT_PUBLIC_KEY"},
+	})
+	if len(mergepdf.FollowUps) != 1 || mergepdf.FollowUps[0].FlagName != "islandora-tag" || mergepdf.FollowUps[0].DefaultValue != "6.3.19" {
+		t.Fatalf("unexpected mergepdf tag follow-up: %#v", mergepdf.FollowUps)
+	}
+
+	hocr := definitions["hocr-search"]
+	if hocr.DefaultState != corecomponent.StateOn || !hocr.Behavior.Idempotent {
+		t.Fatalf("unexpected hOCR defaults: %#v", hocr)
+	}
+	if len(hocr.Dependencies.DrupalModules) != 2 || len(hocr.ComposerPackagesForEnable()) != 2 {
+		t.Fatalf("unexpected hOCR dependencies: %#v", hocr.Dependencies)
+	}
+	if len(hocr.FollowUps) != 1 || hocr.FollowUps[0].FlagName != "hocr-term-id" || !hocr.FollowUps[0].Required {
+		t.Fatalf("unexpected hOCR term follow-up: %#v", hocr.FollowUps)
+	}
+	assertHasWholeFileRule(t, hocr.On.Drupal.Rules, OpRestore, "views.view.search_in_hocr.yml")
+	assertHasRule(t, hocr.On.Drupal.Rules, OpContains, ".dependencies.module")
+	assertHasRule(t, hocr.Off.Drupal.Rules, OpNotContains, ".dependencies.module")
+	assertHasRuleWithValue(t, hocr.Off.Drupal.Rules, OpSet, ".display.rest_export_1.display_options.style.options.iiif_tile_field.field_media_file", "field_media_file")
+}
+
+func assertHasRuleWithValue(t *testing.T, rules []YAMLRule, op RuleOp, path string, value any) {
+	t.Helper()
+	for _, rule := range rules {
+		if rule.Op == op && rule.Path == path && fmt.Sprint(rule.Value) == fmt.Sprint(value) {
+			return
+		}
+	}
+	t.Fatalf("expected rule op=%q path=%q value=%v not found", op, path, value)
 }
 
 func assertHasWholeFileRule(t *testing.T, rules []YAMLRule, op RuleOp, file string) {

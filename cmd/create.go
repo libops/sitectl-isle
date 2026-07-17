@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -233,6 +234,18 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 		}
 		opts.DerivativeServices[name] = createDerivativeTopologyValue(decision.Disposition)
 	}
+	for _, name := range createpkg.FeatureBundleNames() {
+		decision, ok := resolved.Decisions[name]
+		if !ok {
+			continue
+		}
+		if opts.FeatureBundles == nil {
+			opts.FeatureBundles = map[string]string{}
+			opts.FeatureBundleOptions = map[string]map[string]string{}
+		}
+		opts.FeatureBundles[name] = string(decision.State)
+		opts.FeatureBundleOptions[name] = maps.Clone(decision.Options)
+	}
 	if opts.ISLEFileSystemURI == "" {
 		opts.ISLEFileSystemURI = createpkg.DefaultISLEFileSystemURI
 	}
@@ -298,6 +311,7 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	req.ContextName = ctx.Name
 	req.Path = ctx.ProjectDir
 	req.Apply.Path = ctx.ProjectDir
+	req.Apply.EnvFiles = append([]string{}, ctx.EnvFile...)
 	cloned, err := ensureClonedCheckoutForContext(progress, ctx, req)
 	if err != nil {
 		return err
@@ -992,6 +1006,25 @@ func buildRecreateCommand(req createRequest) string {
 			continue
 		}
 		args = append(args, `--`+name+`=`+derivativeTopologyDispositionFlagValue(topology))
+	}
+	for _, name := range createpkg.FeatureBundleNames() {
+		state, ok := req.Apply.FeatureBundles[name]
+		if !ok {
+			continue
+		}
+		args = append(args, `--`+name+`=`+string(corecomponent.StateToDisposition(corecomponent.State(state))))
+		if name == createpkg.FeatureBundleMergePDF && corecomponent.State(state) == corecomponent.StateOn {
+			tag := strings.TrimSpace(req.Apply.FeatureBundleOptions[name][createpkg.IslandoraTagOption])
+			if tag != "" {
+				args = append(args, `--islandora-tag=`+shellDoubleQuote(tag))
+			}
+		}
+		if name == createpkg.FeatureBundleHOCRSearch && corecomponent.State(state) == corecomponent.StateOn {
+			termID := strings.TrimSpace(req.Apply.FeatureBundleOptions[name][createpkg.HOCRStructuredTextTermOption])
+			if termID != "" {
+				args = append(args, `--hocr-term-id=`+shellDoubleQuote(termID))
+			}
+		}
 	}
 	if req.SetDefaultContext {
 		args = append(args, "--default-context")

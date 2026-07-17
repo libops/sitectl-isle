@@ -140,18 +140,21 @@ var mediaSchemeFiles = []string{
 }
 
 type Options struct {
-	Path               string
-	DrupalRootfs       string
-	Fcrepo             string
-	Blazegraph         string
-	IIIF               string
-	IIIFTopology       string
-	IIIFUpstreamURL    string
-	BotMitigation      string
-	ComposeOverride    string
-	ISLEFileSystemURI  string
-	DerivativeServices map[string]string
-	Codebase           string
+	Path                 string
+	DrupalRootfs         string
+	Fcrepo               string
+	Blazegraph           string
+	IIIF                 string
+	IIIFTopology         string
+	IIIFUpstreamURL      string
+	BotMitigation        string
+	ComposeOverride      string
+	ISLEFileSystemURI    string
+	DerivativeServices   map[string]string
+	FeatureBundles       map[string]string
+	FeatureBundleOptions map[string]map[string]string
+	EnvFiles             []string
+	Codebase             string
 }
 
 func Apply(opts Options) error {
@@ -226,6 +229,11 @@ func Apply(opts Options) error {
 	if len(opts.DerivativeServices) > 0 {
 		if err := ApplyDerivativeServices(opts); err != nil {
 			return fmt.Errorf("apply derivative services: %w", err)
+		}
+	}
+	if len(opts.FeatureBundles) > 0 {
+		if err := ApplyFeatureBundles(opts); err != nil {
+			return fmt.Errorf("apply feature bundles: %w", err)
 		}
 	}
 	if opts.BotMitigation == coretraefik.BotMitigationStateOn {

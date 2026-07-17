@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
@@ -37,6 +38,7 @@ type componentReviewDecision struct {
 	TrustedIPs    string
 	MaxUploadSize string
 	UploadTimeout string
+	Options       map[string]string
 }
 
 type promptReviewDecision = corecomponent.ReviewDecision
@@ -230,6 +232,7 @@ func mergeCurrentComponentReviewDecisions(statuses []componentView, decisions ma
 			TrustedIPs:    strings.TrimSpace(status.FollowUpValues["trusted-ip"]),
 			MaxUploadSize: strings.TrimSpace(status.FollowUpValues["max-upload-size"]),
 			UploadTimeout: strings.TrimSpace(status.FollowUpValues["upload-timeout"]),
+			Options:       maps.Clone(status.FollowUpValues),
 		}
 		if decision.State == "" {
 			switch status.State {
@@ -279,6 +282,7 @@ func convertComponentReviewDecisions(raw map[string]promptReviewDecision) map[st
 			TrustedIPs:    strings.TrimSpace(decision.Options["trusted-ip"]),
 			MaxUploadSize: strings.TrimSpace(decision.Options["max-upload-size"]),
 			UploadTimeout: strings.TrimSpace(decision.Options["upload-timeout"]),
+			Options:       maps.Clone(decision.Options),
 		}
 	}
 	return decisions
@@ -286,16 +290,19 @@ func convertComponentReviewDecisions(raw map[string]promptReviewDecision) map[st
 
 func applyComponentReview(ctx *config.Context, drupalRootfs, pathOverride string, decisions map[string]componentReviewDecision) error {
 	opts := createpkg.Options{
-		Path:               ctx.ProjectDir,
-		DrupalRootfs:       drupalRootfs,
-		Fcrepo:             string(decisions["fcrepo"].State),
-		Blazegraph:         string(decisions["blazegraph"].State),
-		IIIF:               reviewIIIFCreateValue(decisions["iiif"]),
-		IIIFTopology:       reviewIIIFTopologyCreateValue(decisions["iiif-topology"]),
-		IIIFUpstreamURL:    strings.TrimSpace(decisions["iiif-topology"].UpstreamURL),
-		ComposeOverride:    resolveEnvironmentOverridePath(ctx),
-		DerivativeServices: reviewDerivativeServiceTopologies(decisions),
-		Codebase:           reviewCodebaseCreateValue(decisions["codebase"]),
+		Path:                 ctx.ProjectDir,
+		DrupalRootfs:         drupalRootfs,
+		Fcrepo:               string(decisions["fcrepo"].State),
+		Blazegraph:           string(decisions["blazegraph"].State),
+		IIIF:                 reviewIIIFCreateValue(decisions["iiif"]),
+		IIIFTopology:         reviewIIIFTopologyCreateValue(decisions["iiif-topology"]),
+		IIIFUpstreamURL:      strings.TrimSpace(decisions["iiif-topology"].UpstreamURL),
+		ComposeOverride:      resolveEnvironmentOverridePath(ctx),
+		DerivativeServices:   reviewDerivativeServiceTopologies(decisions),
+		FeatureBundles:       reviewFeatureBundleStates(decisions),
+		FeatureBundleOptions: reviewFeatureBundleOptions(decisions),
+		EnvFiles:             append([]string{}, ctx.EnvFile...),
+		Codebase:             reviewCodebaseCreateValue(decisions["codebase"]),
 	}
 	if opts.Fcrepo == "" {
 		opts.Fcrepo = createpkg.FcrepoStateOff
@@ -422,6 +429,36 @@ func reviewDerivativeServiceTopologies(decisions map[string]componentReviewDecis
 		} else {
 			out[name] = createpkg.DerivativeTopologyLocal
 		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func reviewFeatureBundleStates(decisions map[string]componentReviewDecision) map[string]string {
+	out := map[string]string{}
+	for _, name := range createpkg.FeatureBundleNames() {
+		decision, ok := decisions[name]
+		if !ok || decision.State == "" {
+			continue
+		}
+		out[name] = string(decision.State)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func reviewFeatureBundleOptions(decisions map[string]componentReviewDecision) map[string]map[string]string {
+	out := map[string]map[string]string{}
+	for _, name := range createpkg.FeatureBundleNames() {
+		decision, ok := decisions[name]
+		if !ok || len(decision.Options) == 0 {
+			continue
+		}
+		out[name] = maps.Clone(decision.Options)
 	}
 	if len(out) == 0 {
 		return nil

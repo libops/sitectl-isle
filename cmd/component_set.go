@@ -173,6 +173,9 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	if createpkg.IsDerivativeService(name) {
 		return runDerivativeServiceComponentSet(cmd, ctx, name, disposition)
 	}
+	if createpkg.IsFeatureBundle(name) {
+		return runFeatureBundleComponentSet(cmd, ctx, rootfs, name, state, followUps)
+	}
 	if name == coretraefik.IngressName {
 		return runIngressComponentSet(cmd, ctx, disposition, state, followUps)
 	}
@@ -272,6 +275,7 @@ func orderedComponentDefinitions() []corecomponent.Definition {
 		isleDevModeDefinition(),
 		coretraefik.BotMitigation(createpkg.BotMitigationOptions()),
 	}
+	defs = append(defs, components.FeatureBundles(components.TemplateSource{})...)
 	defs = append(defs, components.DerivativeServices()...)
 	return defs
 }
@@ -285,7 +289,7 @@ func componentCatalogDefinitions() []corecomponent.Definition {
 }
 
 func blocksComponentSetOnDrift(targetName, driftedName string) bool {
-	if createpkg.IsDerivativeService(targetName) {
+	if createpkg.IsDerivativeService(targetName) || createpkg.IsFeatureBundle(targetName) {
 		return false
 	}
 	switch targetName {
@@ -296,7 +300,7 @@ func blocksComponentSetOnDrift(targetName, driftedName string) bool {
 	case "iiif", "iiif-topology", "codebase", coredevmode.Name, coretraefik.IngressName, coretraefik.BotMitigationName:
 		return false
 	default:
-		return !createpkg.IsDerivativeService(driftedName)
+		return !createpkg.IsDerivativeService(driftedName) && !createpkg.IsFeatureBundle(driftedName)
 	}
 }
 
@@ -512,6 +516,40 @@ func runDerivativeServiceComponentSet(cmd *cobra.Command, ctx *config.Context, n
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", name, disposition)
+	return nil
+}
+
+func runFeatureBundleComponentSet(cmd *cobra.Command, ctx *config.Context, drupalRootfs, name string, state corecomponent.State, followUps map[string]string) error {
+	opts := createpkg.Options{
+		Path:         ctx.ProjectDir,
+		DrupalRootfs: drupalRootfs,
+		EnvFiles:     append([]string{}, ctx.EnvFile...),
+		FeatureBundles: map[string]string{
+			name: string(state),
+		},
+		FeatureBundleOptions: map[string]map[string]string{
+			name: followUps,
+		},
+	}
+	if err := createpkg.ApplyFeatureBundles(opts); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", name, corecomponent.StateToDisposition(state))
+	if state == corecomponent.StateOn {
+		switch name {
+		case createpkg.FeatureBundleMergePDF:
+			fmt.Fprintln(cmd.OutOrStdout(), "Next: rebuild and deploy Drupal, import configuration, then backfill aggregated PDFs for existing paged content if needed.")
+		case createpkg.FeatureBundleHOCRSearch:
+			fmt.Fprintln(cmd.OutOrStdout(), "Next: update the Composer lock file for the hOCR packages, rebuild and deploy Drupal, import configuration, generate hOCR for existing images, then reindex Solr.")
+		}
+	} else {
+		switch name {
+		case createpkg.FeatureBundleMergePDF:
+			fmt.Fprintln(cmd.OutOrStdout(), "Next: rebuild and redeploy the Compose project, then import Drupal configuration. Existing aggregated PDFs are retained.")
+		case createpkg.FeatureBundleHOCRSearch:
+			fmt.Fprintln(cmd.OutOrStdout(), "Next: update the Composer lock file, rebuild and deploy Drupal, import configuration, then clear or reindex stale hOCR search data as required.")
+		}
+	}
 	return nil
 }
 

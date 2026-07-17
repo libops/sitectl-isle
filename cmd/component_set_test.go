@@ -1406,7 +1406,7 @@ func TestRunComponentSetPromptsForStateWhenMissing(t *testing.T) {
 }
 
 func TestComponentExtensionSetRegistersFollowUpFlags(t *testing.T) {
-	for _, name := range []string{"codebase-rootfs", "drupal-rootfs", "isle-file-system-uri", "iiif-upstream-url", "mode", "domain", "acme-email", "trusted-ip", "max-upload-size", "upload-timeout"} {
+	for _, name := range []string{"codebase-rootfs", "drupal-rootfs", "isle-file-system-uri", "iiif-upstream-url", "mode", "domain", "acme-email", "trusted-ip", "max-upload-size", "upload-timeout", "islandora-tag", "hocr-term-id"} {
 		if componentExtensionSetCmd.Flags().Lookup(name) == nil {
 			t.Fatalf("expected component set handler to register --%s", name)
 		}
@@ -1538,7 +1538,6 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 `)
 	for _, rel := range []string{
 		"assets/default_settings.txt",
-		"composer.json",
 		"composer.lock",
 		"recipes/README.txt",
 		"web/modules/custom/.gitkeep",
@@ -1546,6 +1545,7 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 	} {
 		writeFileForTest(t, filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, rel), rel+"\n")
 	}
+	writeFileForTest(t, filepath.Join(projectDir, createpkg.DefaultDrupalRootfs, "composer.json"), "{\"require\": {}}\n")
 
 	composePath := filepath.Join(projectDir, "docker-compose.yml")
 	compose := readFileForTest(t, composePath)
