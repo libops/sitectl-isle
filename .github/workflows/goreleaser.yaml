@@ -33,6 +33,9 @@ jobs:
     secrets: inherit
     with:
       go-version: "1.26.5"
-      release-mode: ${{ inputs.release-mode || 'full' }}
+      # The release bumper dispatches this workflow at the new tag without
+      # inputs. Force every tag ref through the full release path instead of
+      # inheriting the manual recovery default.
+      release-mode: ${{ github.ref_type == 'tag' && 'full' || inputs.release-mode }}
       release-version: ${{ inputs.release-version }}
       package-name: sitectl-isle
