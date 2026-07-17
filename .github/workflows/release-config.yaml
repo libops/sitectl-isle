@@ -87,3 +87,16 @@ jobs:
             echo "Every tag dispatch must select the full release path" >&2
             exit 1
           fi
+
+      - name: Verify trusted package publisher workflow
+        shell: bash
+        env:
+          EXPECTED_WORKFLOW: "libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@77724fe807ede3e0808d4556f47e4ad0ae266bac"
+        run: |
+          set -euo pipefail
+
+          matches="$(grep -Fc "uses: ${EXPECTED_WORKFLOW} # main" .github/workflows/goreleaser.yaml || true)"
+          if [[ "$matches" -ne 1 ]]; then
+            echo "Release publication must use the reviewed shared workflow commit" >&2
+            exit 1
+          fi
