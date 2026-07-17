@@ -76,3 +76,14 @@ jobs:
             echo "Expected exactly one recovery-safe Homebrew url_template" >&2
             exit 1
           fi
+
+      - name: Verify tag dispatch selects a full release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          matches="$(grep -Fc "github.ref_type == 'tag' && 'full' || inputs.release-mode" .github/workflows/goreleaser.yaml || true)"
+          if [[ "$matches" -ne 1 ]]; then
+            echo "Every tag dispatch must select the full release path" >&2
+            exit 1
+          fi
