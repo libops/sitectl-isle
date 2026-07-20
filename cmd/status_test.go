@@ -563,9 +563,6 @@ services:
       DRUPAL_ENABLE_HTTPS: "true"
   fcrepo:
     image: islandora/fcrepo6
-  fcrepo-database-init:
-    environment:
-      DB_NAME: fcrepo
   milliner:
     image: islandora/milliner
   traefik:
@@ -753,9 +750,6 @@ services:
     image: islandora/cantaloupe
   fcrepo:
     image: islandora/fcrepo6
-  fcrepo-database-init:
-    environment:
-      DB_NAME: fcrepo
   milliner:
     image: islandora/milliner
   traefik:

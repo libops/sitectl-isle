@@ -911,9 +911,6 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureFcrepoDatabaseInitScript(projectDir); err != nil {
-		return err
-	}
 	images := inferFcrepoRestoreImages(compose)
 	commonMerge := commonMergeLine(composePath)
 	secretBlocks := []struct {
@@ -937,11 +934,6 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 	}
 	if !compose.HasService("fcrepo") {
 		if err := compose.AddServiceBlock("fcrepo", fcrepoRestoreServiceBlock(images.Fcrepo, commonMerge)); err != nil {
-			return err
-		}
-	}
-	if !compose.HasService("fcrepo-database-init") {
-		if err := compose.AddServiceBlock("fcrepo-database-init", fcrepoDatabaseInitServiceBlock(databaseInitImage(compose))); err != nil {
 			return err
 		}
 	}
@@ -983,58 +975,6 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 		return err
 	}
 	return restoreFcrepoDrupalConfig(projectDir, drupalRootfs)
-}
-
-func ensureFcrepoDatabaseInitScript(projectDir string) error {
-	path := filepath.Join(projectDir, "scripts", "init-database.sh")
-	info, err := os.Lstat(path)
-	if err == nil {
-		if info.IsDir() {
-			return fmt.Errorf("fcrepo database initializer %s is a directory", path)
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("fcrepo database initializer %s is not a regular file", path)
-		}
-		mode := info.Mode().Perm() | 0o111
-		if mode == info.Mode().Perm() {
-			return nil
-		}
-		if err := os.Chmod(path, mode); err != nil {
-			return fmt.Errorf("make fcrepo database initializer executable: %w", err)
-		}
-		return nil
-	}
-	if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect fcrepo database initializer: %w", err)
-	}
-
-	data, err := readFcrepoAsset("init-database.sh")
-	if err != nil {
-		return fmt.Errorf("read fcrepo database initializer asset: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- generated project script directories must be traversable by the compose stack.
-		return fmt.Errorf("create fcrepo database initializer directory: %w", err)
-	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755) // #nosec G302,G304,G306 -- the project-scoped non-secret script must be executable inside the compose service.
-	if err != nil {
-		if os.IsExist(err) {
-			return ensureFcrepoDatabaseInitScript(projectDir)
-		}
-		return fmt.Errorf("create fcrepo database initializer: %w", err)
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
-		return fmt.Errorf("write fcrepo database initializer: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(path)
-		return fmt.Errorf("close fcrepo database initializer: %w", err)
-	}
-	if err := os.Chmod(path, 0o755); err != nil { // #nosec G302 -- the generated initializer must be executable by the compose service user.
-		return fmt.Errorf("make generated fcrepo database initializer executable: %w", err)
-	}
-	return nil
 }
 
 func restoreFcrepoTraefikRoute(projectDir string) error {
@@ -1396,8 +1336,6 @@ func fcrepoRestoreServiceBlock(image, commonMerge string) string {
 ` + commonMerge + `    depends_on:
       activemq:
         condition: service_healthy
-      fcrepo-database-init:
-        condition: service_completed_successfully
     environment:
       DB_HOST: mariadb
       DB_PORT: 3306
@@ -1406,6 +1344,7 @@ func fcrepoRestoreServiceBlock(image, commonMerge string) string {
       FCREPO_PERSISTENCE_TYPE: mysql
     image: ` + image + `
     secrets:
+      - source: DB_ROOT_PASSWORD
       - source: FCREPO_DB_PASSWORD
         target: DB_PASSWORD
       - source: TOMCAT_ADMIN_PASSWORD
@@ -1413,40 +1352,6 @@ func fcrepoRestoreServiceBlock(image, commonMerge string) string {
       - source: JWT_PUBLIC_KEY
     volumes:
       - fcrepo-data:/data:rw`
-}
-
-func databaseInitImage(compose *corecomponent.ComposeFile) string {
-	if block, ok := compose.ServiceBlock("database-init"); ok {
-		if image, ok := composeImageRef(block); ok {
-			return image
-		}
-	}
-	return "libops/base:3"
-}
-
-func fcrepoDatabaseInitServiceBlock(image string) string {
-	return `  fcrepo-database-init:
-    image: ` + image + `
-    restart: "no"
-    networks:
-      default:
-    environment:
-      DB_HOST: mariadb
-      DB_PORT: "3306"
-      DB_NAME: fcrepo
-      DB_USER: fcrepo
-      DB_CHARACTER_SET: utf8mb4
-      DB_COLLATION: utf8mb4_unicode_ci
-    secrets:
-      - source: DB_ROOT_PASSWORD
-      - source: FCREPO_DB_PASSWORD
-        target: DB_PASSWORD
-    volumes:
-      - ./scripts/init-database.sh:/usr/local/bin/init-database.sh:ro,z
-    entrypoint: /usr/local/bin/init-database.sh
-    depends_on:
-      mariadb:
-        condition: service_healthy`
 }
 
 func millinerRestoreServiceBlock(image, commonMerge string) string {
@@ -1537,9 +1442,6 @@ func updateComposeForFcrepoOff(composePath string) error {
 		return err
 	}
 	if err := compose.DeleteService("fcrepo"); err != nil {
-		return err
-	}
-	if err := compose.DeleteService("fcrepo-database-init"); err != nil {
 		return err
 	}
 	if err := compose.DeleteService("milliner"); err != nil {

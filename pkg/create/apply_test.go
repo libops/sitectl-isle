@@ -44,8 +44,6 @@ services:
       DRUSH_OPTIONS_URI: http://drupal.internal
   fcrepo:
     image: islandora/fcrepo6
-  fcrepo-database-init:
-    image: libops/base:3
   milliner:
     image: islandora/milliner
 volumes:
@@ -234,21 +232,9 @@ volumes: {}
 	if !ok {
 		t.Fatal("expected fcrepo service block")
 	}
-	if strings.Contains(fcrepoBlock, "DB_ROOT_PASSWORD") {
-		t.Fatalf("fcrepo app must not receive database root credentials:\n%s", fcrepoBlock)
-	}
-	for _, want := range []string{"fcrepo-database-init:", "condition: service_completed_successfully", "source: FCREPO_DB_PASSWORD", "target: DB_PASSWORD", "source: TOMCAT_ADMIN_PASSWORD"} {
+	for _, want := range []string{"source: DB_ROOT_PASSWORD", "source: FCREPO_DB_PASSWORD", "target: DB_PASSWORD", "source: TOMCAT_ADMIN_PASSWORD"} {
 		if !strings.Contains(fcrepoBlock, want) {
 			t.Fatalf("fcrepo block missing %q:\n%s", want, fcrepoBlock)
-		}
-	}
-	initBlock, ok := parsed.ServiceBlock("fcrepo-database-init")
-	if !ok {
-		t.Fatal("expected fcrepo database init service")
-	}
-	for _, want := range []string{"image: libops/base:3@sha256:test", "DB_NAME: fcrepo", "DB_USER: fcrepo", "source: DB_ROOT_PASSWORD", "source: FCREPO_DB_PASSWORD", "./scripts/init-database.sh"} {
-		if !strings.Contains(initBlock, want) {
-			t.Fatalf("fcrepo database init block missing %q:\n%s", want, initBlock)
 		}
 	}
 	if _, ok := parsed.SectionEntryBlock("secrets", "TOMCAT_ADMIN_PASSWORD"); !ok {
@@ -262,72 +248,6 @@ volumes: {}
 		if !strings.Contains(string(route), want) {
 			t.Fatalf("restored fcrepo route missing %q:\n%s", want, route)
 		}
-	}
-	initScriptPath := filepath.Join(projectDir, "scripts", "init-database.sh")
-	initScript, err := os.ReadFile(initScriptPath)
-	if err != nil {
-		t.Fatalf("ReadFile(fcrepo database initializer) error = %v", err)
-	}
-	initScriptAsset, err := readFcrepoAsset("init-database.sh")
-	if err != nil {
-		t.Fatalf("readFcrepoAsset(init-database.sh) error = %v", err)
-	}
-	if string(initScript) != string(initScriptAsset) {
-		t.Fatal("generated fcrepo database initializer does not match the embedded asset")
-	}
-	initScriptInfo, err := os.Stat(initScriptPath)
-	if err != nil {
-		t.Fatalf("Stat(fcrepo database initializer) error = %v", err)
-	}
-	if initScriptInfo.Mode().Perm()&0o111 != 0o111 {
-		t.Fatalf("generated fcrepo database initializer mode = %o, want all executable bits", initScriptInfo.Mode().Perm())
-	}
-}
-
-func TestApplyFcrepoOnPreservesCustomDatabaseInitScript(t *testing.T) {
-	t.Parallel()
-
-	projectDir := t.TempDir()
-	writeFcrepoOnScriptTestCompose(t, projectDir)
-	scriptPath := filepath.Join(projectDir, "scripts", "init-database.sh")
-	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
-		t.Fatalf("MkdirAll(scripts) error = %v", err)
-	}
-	const customScript = "#!/bin/sh\necho custom initializer\n"
-	const customMode = os.FileMode(0o640)
-	if err := os.WriteFile(scriptPath, []byte(customScript), customMode); err != nil {
-		t.Fatalf("WriteFile(custom initializer) error = %v", err)
-	}
-
-	if err := applyFcrepoOn(projectDir, DefaultDrupalRootfs); err != nil {
-		t.Fatalf("applyFcrepoOn() error = %v", err)
-	}
-
-	if got := readTestFile(t, scriptPath); got != customScript {
-		t.Fatalf("custom initializer content changed:\n%s", got)
-	}
-	info, err := os.Stat(scriptPath)
-	if err != nil {
-		t.Fatalf("Stat(custom initializer) error = %v", err)
-	}
-	if want := customMode | 0o111; info.Mode().Perm() != want {
-		t.Fatalf("custom initializer mode = %o, want %o", info.Mode().Perm(), want)
-	}
-}
-
-func TestApplyFcrepoOnRejectsDatabaseInitScriptDirectory(t *testing.T) {
-	t.Parallel()
-
-	projectDir := t.TempDir()
-	writeFcrepoOnScriptTestCompose(t, projectDir)
-	scriptPath := filepath.Join(projectDir, "scripts", "init-database.sh")
-	if err := os.MkdirAll(scriptPath, 0o755); err != nil {
-		t.Fatalf("MkdirAll(initializer path) error = %v", err)
-	}
-
-	err := applyFcrepoOn(projectDir, DefaultDrupalRootfs)
-	if err == nil || !strings.Contains(err.Error(), "is a directory") {
-		t.Fatalf("applyFcrepoOn() error = %v, want initializer directory error", err)
 	}
 }
 
@@ -918,7 +838,7 @@ volumes:
 	if !strings.Contains(compose, "\n  triplet:\n") {
 		t.Fatalf("expected triplet service, got:\n%s", compose)
 	}
-	for _, absent := range []string{"\n  fcrepo:\n", "\n  fcrepo-database-init:\n", "\n  milliner:\n", "\n  blazegraph:\n", "fcrepo-data", "blazegraph-data", "condition: service_healthy", "source: fcrepo-data"} {
+	for _, absent := range []string{"\n  fcrepo:\n", "\n  milliner:\n", "\n  blazegraph:\n", "fcrepo-data", "blazegraph-data", "condition: service_healthy", "source: fcrepo-data"} {
 		if strings.Contains(compose, absent) {
 			t.Fatalf("expected %q removed, got:\n%s", absent, compose)
 		}
@@ -1967,7 +1887,6 @@ func repositoryComponentSnapshot(t *testing.T, projectDir string) string {
 	paths := []string{
 		"docker-compose.yml",
 		"conf/traefik/fcrepo.yml",
-		"scripts/init-database.sh",
 	}
 	seen := map[string]bool{}
 	for _, name := range append(append([]string{}, fedoraCleanupFiles...), blazegraphCleanupFiles...) {
@@ -2032,19 +1951,6 @@ func readTestFile(t *testing.T, path string) string {
 		t.Fatalf("ReadFile(%s) error = %v", path, err)
 	}
 	return string(data)
-}
-
-func writeFcrepoOnScriptTestCompose(t *testing.T, projectDir string) {
-	t.Helper()
-	writeTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `services:
-  alpaca:
-    environment: {}
-  database-init:
-    image: libops/base:3
-  drupal:
-    environment: {}
-volumes: {}
-`)
 }
 
 func writeApplyMatrixProject(t *testing.T, projectDir string) {

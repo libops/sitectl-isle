@@ -69,8 +69,6 @@ func TestFcrepoDefinition(t *testing.T) {
 	assertHasRule(t, definition.On.Compose.Rules, OpRestore, ".services.fcrepo")
 	assertHasWholeFileRule(t, definition.Off.Compose.Rules, OpDelete, "conf/traefik/fcrepo.yml")
 	assertHasWholeFileRule(t, definition.On.Compose.Rules, OpRestore, "conf/traefik/fcrepo.yml")
-	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.fcrepo-database-init")
-	assertHasRule(t, definition.On.Compose.Rules, OpSet, ".services.fcrepo-database-init.environment.DB_NAME")
 	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.milliner")
 	assertHasRule(t, definition.On.Compose.Rules, OpRestore, ".services.milliner")
 	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_URL")
