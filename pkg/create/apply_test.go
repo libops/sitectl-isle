@@ -251,16 +251,13 @@ volumes: {}
 	if !ok {
 		t.Fatal("expected fcrepo service block")
 	}
-	for _, want := range []string{`DB_BOOTSTRAP_ENABLED: "true"`, "source: DB_ROOT_PASSWORD", "source: FCREPO_DB_PASSWORD", "target: DB_PASSWORD", "source: JWT_ADMIN_TOKEN", "source: JWT_PUBLIC_KEY"} {
+	for _, want := range []string{`DB_BOOTSTRAP_ENABLED: "true"`, "source: DB_ROOT_PASSWORD", "source: FCREPO_DB_PASSWORD", "target: DB_PASSWORD", "source: TOMCAT_ADMIN_PASSWORD", "source: JWT_ADMIN_TOKEN", "source: JWT_PUBLIC_KEY"} {
 		if !strings.Contains(fcrepoBlock, want) {
 			t.Fatalf("fcrepo block missing %q:\n%s", want, fcrepoBlock)
 		}
 	}
-	if strings.Contains(fcrepoBlock, "TOMCAT_ADMIN_PASSWORD") {
-		t.Fatalf("fcrepo block should not mount the optional Tomcat manager password:\n%s", fcrepoBlock)
-	}
-	if strings.Contains(fcrepoBlock, "FCREPO_PERSISTENCE_TYPE") {
-		t.Fatalf("fcrepo block should not contain the obsolete Fedora persistence setting:\n%s", fcrepoBlock)
+	if _, ok := parsed.SectionEntryBlock("secrets", "TOMCAT_ADMIN_PASSWORD"); !ok {
+		t.Fatal("expected TOMCAT_ADMIN_PASSWORD top-level secret")
 	}
 	if parsed.HasService(legacyFcrepoDatabaseInit) {
 		t.Fatal("expected legacy fcrepo database initializer removed")
@@ -1033,8 +1030,6 @@ func TestApplyFcrepoOnNoOp(t *testing.T) {
         condition: service_healthy
       fcrepo-database-init:
         condition: service_completed_successfully
-    environment:
-      FCREPO_PERSISTENCE_TYPE: mysql
     image: islandora/fcrepo6
   fcrepo-database-init:
     image: libops/base:3
@@ -1079,9 +1074,6 @@ func TestApplyFcrepoOnNoOp(t *testing.T) {
 	}
 	if parsed.HasService(legacyFcrepoDatabaseInit) || strings.Contains(fcrepoBlock, legacyFcrepoDatabaseInit) {
 		t.Fatalf("expected legacy fcrepo initializer and dependency removed:\n%s", rendered)
-	}
-	if strings.Contains(fcrepoBlock, "FCREPO_PERSISTENCE_TYPE") {
-		t.Fatalf("expected obsolete Fedora persistence setting removed:\n%s", fcrepoBlock)
 	}
 }
 
@@ -1850,10 +1842,15 @@ func assertApplicationDatabaseBootstrap(t *testing.T, projectDir string) {
 	if !ok {
 		t.Fatal("expected drupal service")
 	}
-	for _, want := range []string{`DB_BOOTSTRAP_ENABLED: "true"`, "source: DB_ROOT_PASSWORD"} {
-		if !strings.Contains(drupalBlock, want) {
-			t.Fatalf("drupal block missing %q:\n%s", want, drupalBlock)
-		}
+	if !strings.Contains(drupalBlock, `DB_BOOTSTRAP_ENABLED: "true"`) {
+		t.Fatalf("drupal block missing database bootstrap flag:\n%s", drupalBlock)
+	}
+	hasRootSecret, err := composeServiceHasSecret(data, "drupal", "DB_ROOT_PASSWORD")
+	if err != nil {
+		t.Fatalf("composeServiceHasSecret() error = %v", err)
+	}
+	if !hasRootSecret {
+		t.Fatalf("drupal block missing DB_ROOT_PASSWORD secret:\n%s", drupalBlock)
 	}
 	if strings.Contains(drupalBlock, databaseInitServiceName+":") {
 		t.Fatalf("drupal block retains standalone database initializer dependency:\n%s", drupalBlock)

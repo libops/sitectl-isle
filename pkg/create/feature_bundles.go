@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,17 +20,14 @@ import (
 const (
 	FeatureBundleMergePDF   = "mergepdf"
 	FeatureBundleHOCRSearch = "hocr-search"
+	DefaultMergePDFImage    = "islandora/mergepdf:6.3.19"
 
 	featureMutationSet         = "set"
 	featureMutationAppend      = "append"
 	featureMutationAppendToken = "append-token"
 
 	HOCRStructuredTextTermOption = "structured-text-term"
-	IslandoraTagOption           = "islandora-tag"
-	defaultIslandoraTag          = "6.3.19"
 )
-
-var dockerTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 
 //go:embed assets/feature-bundles/*/*
 var featureBundleAssets embed.FS
@@ -287,13 +283,6 @@ func CheckFeatureBundleRequirements(opts Options, name string) error {
 	if err != nil {
 		return fmt.Errorf("load Compose environment for %s: %w", name, err)
 	}
-	if name == FeatureBundleMergePDF {
-		selected, err := resolvedFeatureIslandoraTag(opts)
-		if err != nil {
-			return fmt.Errorf("resolve Islandora image tag for %s: %w", name, err)
-		}
-		env["ISLANDORA_TAG"] = selected
-	}
 	services := featureMap(compose["services"])
 	for _, requirement := range spec.ImageRequirements {
 		service := featureMap(services[requirement.Service])
@@ -389,22 +378,6 @@ func preflightFeatureBundleFiles(opts Options, spec FeatureBundleSpec) error {
 		termID, err := strconv.Atoi(value)
 		if err != nil || termID <= 0 {
 			return fmt.Errorf("hOCR media-use term ID must be a positive integer, got %q", value)
-		}
-	}
-	if spec.Name == FeatureBundleMergePDF {
-		tag, err := resolvedFeatureIslandoraTag(opts)
-		if err != nil {
-			return fmt.Errorf("resolve Islandora image tag: %w", err)
-		}
-		if !dockerTagPattern.MatchString(tag) {
-			return fmt.Errorf("islandora image tag %q is not a valid Docker tag", tag)
-		}
-		compatible, err := featureVersionAtLeast(tag, defaultIslandoraTag)
-		if err != nil {
-			return fmt.Errorf("islandora image tag %q cannot be compared with %s: %w", tag, defaultIslandoraTag, err)
-		}
-		if !compatible {
-			return fmt.Errorf("mergepdf requires Islandora image tag %s or newer, got %s", defaultIslandoraTag, tag)
 		}
 	}
 	return nil
@@ -505,13 +478,6 @@ func validateFeatureComposerFile(path string) error {
 // checkout so interactive review preserves downstream choices.
 func FeatureBundleCurrentOptions(projectDir, drupalRootfs string, envFiles []string, name string) map[string]string {
 	options := map[string]string{}
-	if name == FeatureBundleMergePDF {
-		env, err := loadFeatureComposeEnvironment(projectDir, envFiles)
-		if err == nil && strings.TrimSpace(env["ISLANDORA_TAG"]) != "" {
-			options[IslandoraTagOption] = strings.TrimSpace(env["ISLANDORA_TAG"])
-		}
-		return options
-	}
 	if name != FeatureBundleHOCRSearch {
 		return options
 	}
@@ -532,6 +498,20 @@ func FeatureBundleCurrentOptions(projectDir, drupalRootfs string, envFiles []str
 // generic YAML rules cannot express exactly, such as whitespace-delimited
 // scalar tokens and equality across several Drupal configuration paths.
 func ValidateFeatureBundleObservedState(opts Options, name string, enabled bool) error {
+	if name == FeatureBundleMergePDF {
+		if !enabled {
+			return nil
+		}
+		composePath := filepath.Join(opts.Path, "docker-compose.yml")
+		composeData, err := os.ReadFile(composePath) // #nosec G304 -- selected project Compose path.
+		if err != nil {
+			return fmt.Errorf("read Compose file for mergepdf image: %w", err)
+		}
+		if preservableMergePDFImage(composeData) == "" {
+			return fmt.Errorf("mergepdf image must be an explicit compatible %s reference or newer", DefaultMergePDFImage)
+		}
+		return nil
+	}
 	if name != FeatureBundleHOCRSearch {
 		return nil
 	}
@@ -608,11 +588,6 @@ func featureStringTokenPresent(value, token string) bool {
 }
 
 func applyFeatureBundle(opts Options, spec FeatureBundleSpec, enabled bool) error {
-	if enabled && spec.Name == FeatureBundleMergePDF {
-		if err := applyFeatureIslandoraTag(opts); err != nil {
-			return err
-		}
-	}
 	if err := applyFeatureCompose(opts.Path, spec, enabled); err != nil {
 		return err
 	}
@@ -624,74 +599,6 @@ func applyFeatureBundle(opts Options, spec FeatureBundleSpec, enabled bool) erro
 		return err
 	}
 	return applyFeatureComposerRequirements(layout.ComposerJSONPath(), spec.ComposerRequirements, enabled)
-}
-
-func applyFeatureIslandoraTag(opts Options) error {
-	tag, err := resolvedFeatureIslandoraTag(opts)
-	if err != nil {
-		return fmt.Errorf("resolve Islandora image tag: %w", err)
-	}
-	path := filepath.Join(opts.Path, ".env")
-	if len(opts.EnvFiles) > 0 {
-		candidate := strings.TrimSpace(opts.EnvFiles[len(opts.EnvFiles)-1])
-		if candidate != "" {
-			path = candidate
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(opts.Path, path)
-			}
-		}
-	}
-	data, err := os.ReadFile(path) // #nosec G304 -- selected project Compose env file.
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read Compose environment: %w", err)
-	}
-	updated := upsertFeatureEnvValue(data, "ISLANDORA_TAG", tag)
-	if bytes.Equal(data, updated) {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- project directory permissions.
-		return fmt.Errorf("create Compose environment directory: %w", err)
-	}
-	if err := writeFilePreserveMode(path, updated); err != nil {
-		return fmt.Errorf("write Compose environment: %w", err)
-	}
-	return nil
-}
-
-func resolvedFeatureIslandoraTag(opts Options) (string, error) {
-	if tag := strings.TrimSpace(opts.FeatureBundleOptions[FeatureBundleMergePDF][IslandoraTagOption]); tag != "" {
-		return tag, nil
-	}
-	env, err := loadFeatureComposeEnvironment(opts.Path, opts.EnvFiles)
-	if err != nil {
-		return "", err
-	}
-	if tag := strings.TrimSpace(env["ISLANDORA_TAG"]); tag != "" {
-		return tag, nil
-	}
-	return defaultIslandoraTag, nil
-}
-
-func upsertFeatureEnvValue(data []byte, key, value string) []byte {
-	lines := strings.Split(string(data), "\n")
-	found := false
-	for index, line := range lines {
-		candidate := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "export "))
-		parts := strings.SplitN(candidate, "=", 2)
-		if len(parts) != 2 || strings.TrimSpace(parts[0]) != key {
-			continue
-		}
-		lines[index] = key + "=" + value
-		found = true
-	}
-	if found {
-		return []byte(strings.Join(lines, "\n"))
-	}
-	updated := bytes.Clone(data)
-	if len(updated) > 0 && updated[len(updated)-1] != '\n' {
-		updated = append(updated, '\n')
-	}
-	return append(updated, []byte(key+"="+value+"\n")...)
 }
 
 func applyFeatureCompose(projectDir string, spec FeatureBundleSpec, enabled bool) error {
@@ -724,13 +631,44 @@ func applyFeatureCompose(projectDir string, spec FeatureBundleSpec, enabled bool
 	if current, ok := compose.ServiceBlock(spec.ComposeService); ok && strings.TrimSpace(current) == strings.TrimSpace(asset) {
 		return nil
 	}
+	preservedImage := ""
+	if spec.Name == FeatureBundleMergePDF {
+		preservedImage = preservableMergePDFImage(original)
+	}
 	if err := compose.DeleteService(spec.ComposeService); err != nil {
 		return err
 	}
 	if err := compose.AddServiceBlock(spec.ComposeService, asset); err != nil {
 		return err
 	}
+	if preservedImage != "" && preservedImage != DefaultMergePDFImage {
+		if err := compose.SetServiceScalar(spec.ComposeService, "image", preservedImage); err != nil {
+			return err
+		}
+	}
 	return saveValidatedFeatureCompose(composePath, original, compose)
+}
+
+func preservableMergePDFImage(composeData []byte) string {
+	var compose map[string]any
+	if err := yaml.Unmarshal(composeData, &compose); err != nil {
+		return ""
+	}
+	service := featureMap(featureMap(compose["services"])[FeatureBundleMergePDF])
+	image := strings.TrimSpace(fmt.Sprint(service["image"]))
+	if image == "" || image == "<nil>" || strings.Contains(image, "$") {
+		return ""
+	}
+	repository, tag := splitFeatureImageReference(image)
+	defaultRepository, minimumTag := splitFeatureImageReference(DefaultMergePDFImage)
+	if !featureRepositoryMatches(repository, defaultRepository) {
+		return ""
+	}
+	compatible, err := featureVersionAtLeast(tag, minimumTag)
+	if err != nil || !compatible {
+		return ""
+	}
+	return image
 }
 
 func saveValidatedFeatureCompose(path string, original []byte, compose interface{ Save() error }) error {

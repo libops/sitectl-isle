@@ -49,7 +49,6 @@ jobs:
         --iiif-topology ${{ matrix.iiif_topology }}
         --bot-mitigation ${{ matrix.bot_mitigation_state }}
         --mergepdf enabled
-        --islandora-tag 6.3.19
         --hocr-search enabled
         --hocr-term-id 56
       run-verify: true

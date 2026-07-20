@@ -98,11 +98,6 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 						Path:  ".services.fcrepo.depends_on.fcrepo-database-init",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
-						Op:    OpDelete,
-						Path:  ".services.fcrepo.environment.FCREPO_PERSISTENCE_TYPE",
-					},
-					{
 						Files:       []string{"docker-compose.yml"},
 						SourceFiles: []string{"docker-compose.yml"},
 						Op:          OpRestore,

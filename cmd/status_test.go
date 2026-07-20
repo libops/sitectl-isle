@@ -337,6 +337,8 @@ services:
       DRUPAL_DEFAULT_FCREPO_URL: http://fcrepo.example/fcrepo/rest/
       DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE: ""
   fcrepo:
+    environment:
+      DB_BOOTSTRAP_ENABLED: "true"
     image: islandora/fcrepo6
 volumes:
   fcrepo-data: {}
@@ -749,6 +751,8 @@ services:
   cantaloupe:
     image: islandora/cantaloupe
   fcrepo:
+    environment:
+      DB_BOOTSTRAP_ENABLED: "true"
     image: islandora/fcrepo6
   milliner:
     image: islandora/milliner

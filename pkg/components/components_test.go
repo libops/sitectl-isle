@@ -75,7 +75,6 @@ func TestFcrepoDefinition(t *testing.T) {
 	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.milliner")
 	assertHasRule(t, definition.On.Compose.Rules, OpRestore, ".services.milliner")
 	assertHasSetRule(t, definition.On.Compose.Rules, ".services.fcrepo.environment.DB_BOOTSTRAP_ENABLED", "true")
-	assertHasRule(t, definition.On.Compose.Rules, OpDelete, ".services.fcrepo.environment.FCREPO_PERSISTENCE_TYPE")
 	assertHasRule(t, definition.Off.Compose.Rules, OpDelete, ".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_URL")
 	assertHasRule(t, definition.On.Compose.Rules, OpRestore, ".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_URL")
 	assertHasRule(t, definition.Off.Compose.Rules, OpSet, ".services.alpaca.environment.ALPACA_FCREPO_INDEXER_ENABLED")
@@ -283,15 +282,15 @@ func TestFeatureBundleDefinitionsOwnCrossDomainChanges(t *testing.T) {
 	assertHasWholeFileRule(t, mergepdf.On.Drupal.Rules, OpRestore, "system.action.paged_content_created_aggregated_pdf.yml")
 	assertHasRule(t, mergepdf.Off.Compose.Rules, OpDelete, ".services.mergepdf")
 	assertHasWholeFileRule(t, mergepdf.Off.Drupal.Rules, OpDelete, "system.action.paged_content_created_aggregated_pdf.yml")
-	assertHasRuleWithValue(t, mergepdf.On.Compose.Rules, OpSet, ".services.mergepdf.image", "islandora/mergepdf:${ISLANDORA_TAG}")
+	assertDoesNotHaveRulePath(t, mergepdf.On.Compose.Rules, ".services.mergepdf.image")
 	assertHasRuleWithValue(t, mergepdf.On.Compose.Rules, OpSet, ".services.mergepdf.secrets", []any{
 		map[string]any{"source": "CERT_PUBLIC_KEY"},
 		map[string]any{"source": "CERT_AUTHORITY"},
 		map[string]any{"source": "JWT_ADMIN_TOKEN"},
 		map[string]any{"source": "JWT_PUBLIC_KEY"},
 	})
-	if len(mergepdf.FollowUps) != 1 || mergepdf.FollowUps[0].FlagName != "islandora-tag" || mergepdf.FollowUps[0].DefaultValue != "6.3.19" {
-		t.Fatalf("unexpected mergepdf tag follow-up: %#v", mergepdf.FollowUps)
+	if len(mergepdf.FollowUps) != 0 {
+		t.Fatalf("mergepdf should not expose release-wide image overrides: %#v", mergepdf.FollowUps)
 	}
 
 	hocr := definitions["hocr-search"]
@@ -352,6 +351,16 @@ func assertHasRule(t *testing.T, rules []YAMLRule, op RuleOp, path string) {
 	}
 
 	t.Fatalf("expected rule op=%q path=%q not found", op, path)
+}
+
+func assertDoesNotHaveRulePath(t *testing.T, rules []YAMLRule, path string) {
+	t.Helper()
+
+	for _, rule := range rules {
+		if rule.Path == path {
+			t.Fatalf("unexpected rule path=%q", path)
+		}
+	}
 }
 
 func assertHasSetRule(t *testing.T, rules []YAMLRule, path, value string) {

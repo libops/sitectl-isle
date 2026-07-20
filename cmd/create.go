@@ -1013,12 +1013,6 @@ func buildRecreateCommand(req createRequest) string {
 			continue
 		}
 		args = append(args, `--`+name+`=`+string(corecomponent.StateToDisposition(corecomponent.State(state))))
-		if name == createpkg.FeatureBundleMergePDF && corecomponent.State(state) == corecomponent.StateOn {
-			tag := strings.TrimSpace(req.Apply.FeatureBundleOptions[name][createpkg.IslandoraTagOption])
-			if tag != "" {
-				args = append(args, `--islandora-tag=`+shellDoubleQuote(tag))
-			}
-		}
 		if name == createpkg.FeatureBundleHOCRSearch && corecomponent.State(state) == corecomponent.StateOn {
 			termID := strings.TrimSpace(req.Apply.FeatureBundleOptions[name][createpkg.HOCRStructuredTextTermOption])
 			if termID != "" {

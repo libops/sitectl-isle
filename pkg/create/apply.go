@@ -917,39 +917,39 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 	if err != nil {
 		return fmt.Errorf("read compose file: %w", err)
 	}
-	doc, err := corecomponent.LoadYAMLDocument(data)
-	if err != nil {
-		return fmt.Errorf("parse compose file: %w", err)
-	}
-	if err := doc.DeletePath(".services." + databaseInitServiceName); err != nil {
-		return err
-	}
-	if err := doc.DeletePath(".services.drupal.depends_on." + databaseInitServiceName); err != nil {
-		return err
-	}
-	if err := deletePathIfEmptyYAMLMap(doc, ".services.drupal.depends_on"); err != nil {
-		return err
-	}
-	if err := doc.SetString(".services.drupal.environment.DB_BOOTSTRAP_ENABLED", "true"); err != nil {
-		return err
-	}
-	hasRootSecret, err := doc.HasPath(".secrets.DB_ROOT_PASSWORD")
+	data, err = removeComposeServiceDependency(data, "drupal", databaseInitServiceName)
 	if err != nil {
 		return err
 	}
-	if !hasRootSecret {
-		if err := doc.SetValue(".secrets.DB_ROOT_PASSWORD", map[string]string{"file": "./secrets/DB_ROOT_PASSWORD"}); err != nil {
+	data = expandEmptyComposeSection(data, "secrets")
+	data = expandEmptyComposeSection(data, "volumes")
+	if err := writeFilePreserveMode(composePath, data); err != nil {
+		return err
+	}
+
+	compose, err := corecomponent.LoadComposeFile(composePath)
+	if err != nil {
+		return err
+	}
+	if err := compose.DeleteService(databaseInitServiceName); err != nil {
+		return err
+	}
+	if err := compose.SetServiceEnv("drupal", "DB_BOOTSTRAP_ENABLED", "true"); err != nil {
+		return err
+	}
+	if _, ok := compose.SectionEntryBlock("secrets", "DB_ROOT_PASSWORD"); !ok {
+		if err := compose.AddSectionEntryBlock("secrets", "DB_ROOT_PASSWORD", `  DB_ROOT_PASSWORD:
+    file: "./secrets/DB_ROOT_PASSWORD"`); err != nil {
 			return err
 		}
 	}
-	if _, err := ensureYAMLDocumentServiceSecret(doc, "drupal", "DB_ROOT_PASSWORD"); err != nil {
+	if err := compose.Save(); err != nil {
+		return err
+	}
+	if err := ensureComposeServiceSecret(composePath, "drupal", "DB_ROOT_PASSWORD"); err != nil {
 		return fmt.Errorf("mount database root password for Drupal bootstrap: %w", err)
 	}
-	updated, err := doc.Bytes()
-	if err != nil {
-		return fmt.Errorf("marshal compose file: %w", err)
-	}
-	return writeFilePreserveMode(composePath, updated)
+	return nil
 }
 
 func ensureComposeServiceSecret(composePath, service, source string) error {
@@ -957,43 +957,24 @@ func ensureComposeServiceSecret(composePath, service, source string) error {
 	if err != nil {
 		return fmt.Errorf("read compose file: %w", err)
 	}
-	doc, err := corecomponent.LoadYAMLDocument(data)
-	if err != nil {
-		return fmt.Errorf("parse compose file: %w", err)
-	}
-	changed, err := ensureYAMLDocumentServiceSecret(doc, service, source)
+	hasSecret, err := composeServiceHasSecret(data, service, source)
 	if err != nil {
 		return err
 	}
-	if !changed {
+	if hasSecret {
 		return nil
 	}
-	updated, err := doc.Bytes()
+	updated, err := appendComposeServiceSecret(data, service, source)
 	if err != nil {
-		return fmt.Errorf("marshal compose file: %w", err)
+		return err
 	}
 	return writeFilePreserveMode(composePath, updated)
 }
 
-func ensureYAMLDocumentServiceSecret(doc *corecomponent.YAMLDocument, service, source string) (bool, error) {
-	hasSecret, err := yamlDocumentServiceHasSecret(doc, service, source)
-	if err != nil || hasSecret {
-		return false, err
-	}
-	if err := doc.AppendUniqueString(".services."+service+".secrets", source); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func yamlDocumentServiceHasSecret(doc *corecomponent.YAMLDocument, service, source string) (bool, error) {
-	data, err := doc.Bytes()
-	if err != nil {
-		return false, err
-	}
+func composeServiceHasSecret(data []byte, service, source string) (bool, error) {
 	var root map[string]any
 	if err := yaml.Unmarshal(data, &root); err != nil {
-		return false, err
+		return false, fmt.Errorf("parse compose file: %w", err)
 	}
 	services := yamlMap(root["services"])
 	serviceConfig := yamlMap(services[service])
@@ -1023,29 +1004,161 @@ func yamlDocumentServiceHasSecret(doc *corecomponent.YAMLDocument, service, sour
 	return false, nil
 }
 
+func expandEmptyComposeSection(data []byte, section string) []byte {
+	lines := strings.Split(string(data), "\n")
+	for index, line := range lines {
+		if leadingSpaceCount(line) != 0 {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == section+": {}" || trimmed == section+": { }" {
+			lines[index] = section + ":"
+			break
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+func removeComposeServiceDependency(data []byte, service, dependency string) ([]byte, error) {
+	lines := strings.Split(string(data), "\n")
+	serviceStart, serviceEnd, ok := composeServiceLineBounds(lines, service)
+	if !ok {
+		return data, nil
+	}
+	dependsIndex, ok := findComposeMappingLine(lines, serviceStart+1, serviceEnd, 4, "depends_on")
+	if !ok {
+		return data, nil
+	}
+	dependsEnd := composeMappingLineEnd(lines, dependsIndex, serviceEnd, 4)
+	dependencyIndex, ok := findComposeMappingLine(lines, dependsIndex+1, dependsEnd, 6, dependency)
+	if !ok {
+		return data, nil
+	}
+	dependencyEnd := composeMappingLineEnd(lines, dependencyIndex, dependsEnd, 6)
+	lines = removeComposeLines(lines, dependencyIndex, dependencyEnd)
+	dependsEnd -= dependencyEnd - dependencyIndex
+	if !composeMappingHasChildren(lines, dependsIndex, dependsEnd, 4) {
+		lines = removeComposeLines(lines, dependsIndex, dependsIndex+1)
+	}
+	return []byte(strings.Join(lines, "\n")), nil
+}
+
+func appendComposeServiceSecret(data []byte, service, source string) ([]byte, error) {
+	lines := strings.Split(string(data), "\n")
+	serviceStart, serviceEnd, ok := composeServiceLineBounds(lines, service)
+	if !ok {
+		return nil, fmt.Errorf("service %q not found in compose file", service)
+	}
+	secretLine := "      - source: " + source
+	secretsIndex, ok := findComposeMappingLine(lines, serviceStart+1, serviceEnd, 4, "secrets")
+	if !ok {
+		insertAt := composeInsertionIndex(lines, serviceStart+1, serviceEnd)
+		return []byte(strings.Join(insertComposeLines(lines, insertAt, "    secrets:", secretLine), "\n")), nil
+	}
+	trimmed := strings.TrimSpace(lines[secretsIndex])
+	if trimmed == "secrets: []" {
+		lines[secretsIndex] = "    secrets:"
+		return []byte(strings.Join(insertComposeLines(lines, secretsIndex+1, secretLine), "\n")), nil
+	}
+	if trimmed != "secrets:" {
+		return nil, fmt.Errorf("service %q secrets must be a sequence", service)
+	}
+	secretsEnd := composeMappingLineEnd(lines, secretsIndex, serviceEnd, 4)
+	insertAt := composeInsertionIndex(lines, secretsIndex+1, secretsEnd)
+	return []byte(strings.Join(insertComposeLines(lines, insertAt, secretLine), "\n")), nil
+}
+
+func composeServiceLineBounds(lines []string, service string) (int, int, bool) {
+	servicesIndex, ok := findComposeMappingLine(lines, 0, len(lines), 0, "services")
+	if !ok {
+		return 0, 0, false
+	}
+	servicesEnd := composeMappingLineEnd(lines, servicesIndex, len(lines), 0)
+	serviceIndex, ok := findComposeMappingLine(lines, servicesIndex+1, servicesEnd, 2, service)
+	if !ok {
+		return 0, 0, false
+	}
+	return serviceIndex, composeMappingLineEnd(lines, serviceIndex, servicesEnd, 2), true
+}
+
+func findComposeMappingLine(lines []string, start, end, indent int, key string) (int, bool) {
+	for index := start; index < end; index++ {
+		if leadingSpaceCount(lines[index]) != indent {
+			continue
+		}
+		trimmed := strings.TrimSpace(lines[index])
+		if trimmed == key+":" || strings.HasPrefix(trimmed, key+": ") {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func composeMappingLineEnd(lines []string, start, limit, indent int) int {
+	for index := start + 1; index < limit; index++ {
+		trimmed := strings.TrimSpace(lines[index])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if leadingSpaceCount(lines[index]) <= indent {
+			return index
+		}
+	}
+	return limit
+}
+
+func composeMappingHasChildren(lines []string, start, end, indent int) bool {
+	for index := start + 1; index < end; index++ {
+		trimmed := strings.TrimSpace(lines[index])
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") && leadingSpaceCount(lines[index]) > indent {
+			return true
+		}
+	}
+	return false
+}
+
+func composeInsertionIndex(lines []string, start, end int) int {
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	return end
+}
+
+func leadingSpaceCount(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " "))
+}
+
+func insertComposeLines(lines []string, index int, additions ...string) []string {
+	lines = append(lines, make([]string, len(additions))...)
+	copy(lines[index+len(additions):], lines[index:len(lines)-len(additions)])
+	copy(lines[index:], additions)
+	return lines
+}
+
+func removeComposeLines(lines []string, start, end int) []string {
+	return append(lines[:start], lines[end:]...)
+}
+
 func removeLegacyFcrepoDatabaseInitializer(composePath string) error {
 	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
 	if err != nil {
 		return fmt.Errorf("read compose file: %w", err)
 	}
-	doc, err := corecomponent.LoadYAMLDocument(data)
+	data, err = removeComposeServiceDependency(data, "fcrepo", legacyFcrepoDatabaseInit)
 	if err != nil {
-		return fmt.Errorf("parse compose file: %w", err)
-	}
-	if err := doc.DeletePath(".services." + legacyFcrepoDatabaseInit); err != nil {
 		return err
 	}
-	if err := doc.DeletePath(".services.fcrepo.depends_on." + legacyFcrepoDatabaseInit); err != nil {
+	if err := writeFilePreserveMode(composePath, data); err != nil {
 		return err
 	}
-	if err := deletePathIfEmptyYAMLMap(doc, ".services.fcrepo.depends_on"); err != nil {
-		return err
-	}
-	updated, err := doc.Bytes()
+	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
-		return fmt.Errorf("marshal compose file: %w", err)
+		return err
 	}
-	return writeFilePreserveMode(composePath, updated)
+	if err := compose.DeleteService(legacyFcrepoDatabaseInit); err != nil {
+		return err
+	}
+	return compose.Save()
 }
 
 func applyFcrepoOn(projectDir, drupalRootfs string) error {
@@ -1067,6 +1180,8 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
     file: "./secrets/DB_ROOT_PASSWORD"`},
 		{name: "FCREPO_DB_PASSWORD", block: `  FCREPO_DB_PASSWORD:
     file: "./secrets/FCREPO_DB_PASSWORD"`},
+		{name: "TOMCAT_ADMIN_PASSWORD", block: `  TOMCAT_ADMIN_PASSWORD:
+    file: "./secrets/TOMCAT_ADMIN_PASSWORD"`},
 	}
 	for _, secret := range secretBlocks {
 		if err := compose.AddSectionEntryBlock("secrets", secret.name, secret.block); err != nil {
@@ -1089,9 +1204,6 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 		}
 	}
 	if err := compose.SetServiceEnv("fcrepo", "DB_BOOTSTRAP_ENABLED", "true"); err != nil {
-		return err
-	}
-	if err := compose.DeleteServiceEnv("fcrepo", "FCREPO_PERSISTENCE_TYPE"); err != nil {
 		return err
 	}
 	for key, value := range map[string]string{
@@ -1497,11 +1609,13 @@ func fcrepoRestoreServiceBlock(image, commonMerge string) string {
       DB_PORT: 3306
       FCREPO_ALLOW_EXTERNAL_DEFAULT: http://default/
       FCREPO_ALLOW_EXTERNAL_DRUPAL: http://localhost/
+      FCREPO_PERSISTENCE_TYPE: mysql
     image: ` + image + `
     secrets:
       - source: DB_ROOT_PASSWORD
       - source: FCREPO_DB_PASSWORD
         target: DB_PASSWORD
+      - source: TOMCAT_ADMIN_PASSWORD
       - source: JWT_ADMIN_TOKEN
       - source: JWT_PUBLIC_KEY
     volumes:
