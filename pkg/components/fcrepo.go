@@ -76,10 +76,31 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 						Path:  ".",
 					},
 					{
+						Files: []string{"docker-compose.yml"},
+						Op:    OpDelete,
+						Path:  ".services.fcrepo-database-init",
+					},
+					{
 						Files:       []string{"docker-compose.yml"},
 						SourceFiles: []string{"docker-compose.yml"},
 						Op:          OpRestore,
 						Path:        ".services.fcrepo",
+					},
+					{
+						Files: []string{"docker-compose.yml"},
+						Op:    OpSet,
+						Path:  ".services.fcrepo.environment.DB_BOOTSTRAP_ENABLED",
+						Value: "true",
+					},
+					{
+						Files: []string{"docker-compose.yml"},
+						Op:    OpDelete,
+						Path:  ".services.fcrepo.depends_on.fcrepo-database-init",
+					},
+					{
+						Files: []string{"docker-compose.yml"},
+						Op:    OpDelete,
+						Path:  ".services.fcrepo.environment.FCREPO_PERSISTENCE_TYPE",
 					},
 					{
 						Files:       []string{"docker-compose.yml"},
@@ -196,6 +217,11 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 						Files: []string{"conf/traefik/fcrepo.yml"},
 						Op:    OpDelete,
 						Path:  ".",
+					},
+					{
+						Files: []string{"docker-compose.yml"},
+						Op:    OpDelete,
+						Path:  ".services.fcrepo-database-init",
 					},
 					{
 						Files:       []string{"docker-compose.yml"},

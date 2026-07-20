@@ -41,6 +41,8 @@ const (
 	PublicISLEFileSystemURI  = "public"
 	PrivateISLEFileSystemURI = "private"
 	drupalFcrepoInternalURL  = "http://fcrepo:8080/fcrepo/rest/"
+	databaseInitServiceName  = "database-init"
+	legacyFcrepoDatabaseInit = "fcrepo-database-init"
 
 	drupalRouterName = "drupal"
 	localDrupalHost  = "drupal.internal"
@@ -253,6 +255,10 @@ func Apply(opts Options) error {
 // Blazegraph. Shared contexts are seeded only when absent; subsequent applies
 // mutate only the exact reaction keys owned by each component.
 func applyRepositoryComponents(opts Options) error {
+	if err := applyApplicationDatabaseBootstrap(opts.Path); err != nil {
+		return fmt.Errorf("apply application database bootstrap: %w", err)
+	}
+
 	if opts.Fcrepo == FcrepoStateOn {
 		if err := applyFcrepoOn(opts.Path, opts.DrupalRootfs); err != nil {
 			return fmt.Errorf("apply fcrepo=on: %w", err)
@@ -905,8 +911,148 @@ func writeFilePreserveMode(path string, data []byte) error {
 	return nil
 }
 
+func applyApplicationDatabaseBootstrap(projectDir string) error {
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
+	if err != nil {
+		return fmt.Errorf("read compose file: %w", err)
+	}
+	doc, err := corecomponent.LoadYAMLDocument(data)
+	if err != nil {
+		return fmt.Errorf("parse compose file: %w", err)
+	}
+	if err := doc.DeletePath(".services." + databaseInitServiceName); err != nil {
+		return err
+	}
+	if err := doc.DeletePath(".services.drupal.depends_on." + databaseInitServiceName); err != nil {
+		return err
+	}
+	if err := deletePathIfEmptyYAMLMap(doc, ".services.drupal.depends_on"); err != nil {
+		return err
+	}
+	if err := doc.SetString(".services.drupal.environment.DB_BOOTSTRAP_ENABLED", "true"); err != nil {
+		return err
+	}
+	hasRootSecret, err := doc.HasPath(".secrets.DB_ROOT_PASSWORD")
+	if err != nil {
+		return err
+	}
+	if !hasRootSecret {
+		if err := doc.SetValue(".secrets.DB_ROOT_PASSWORD", map[string]string{"file": "./secrets/DB_ROOT_PASSWORD"}); err != nil {
+			return err
+		}
+	}
+	if _, err := ensureYAMLDocumentServiceSecret(doc, "drupal", "DB_ROOT_PASSWORD"); err != nil {
+		return fmt.Errorf("mount database root password for Drupal bootstrap: %w", err)
+	}
+	updated, err := doc.Bytes()
+	if err != nil {
+		return fmt.Errorf("marshal compose file: %w", err)
+	}
+	return writeFilePreserveMode(composePath, updated)
+}
+
+func ensureComposeServiceSecret(composePath, service, source string) error {
+	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
+	if err != nil {
+		return fmt.Errorf("read compose file: %w", err)
+	}
+	doc, err := corecomponent.LoadYAMLDocument(data)
+	if err != nil {
+		return fmt.Errorf("parse compose file: %w", err)
+	}
+	changed, err := ensureYAMLDocumentServiceSecret(doc, service, source)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	updated, err := doc.Bytes()
+	if err != nil {
+		return fmt.Errorf("marshal compose file: %w", err)
+	}
+	return writeFilePreserveMode(composePath, updated)
+}
+
+func ensureYAMLDocumentServiceSecret(doc *corecomponent.YAMLDocument, service, source string) (bool, error) {
+	hasSecret, err := yamlDocumentServiceHasSecret(doc, service, source)
+	if err != nil || hasSecret {
+		return false, err
+	}
+	if err := doc.AppendUniqueString(".services."+service+".secrets", source); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func yamlDocumentServiceHasSecret(doc *corecomponent.YAMLDocument, service, source string) (bool, error) {
+	data, err := doc.Bytes()
+	if err != nil {
+		return false, err
+	}
+	var root map[string]any
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return false, err
+	}
+	services := yamlMap(root["services"])
+	serviceConfig := yamlMap(services[service])
+	if serviceConfig == nil {
+		return false, fmt.Errorf("service %q not found in compose file", service)
+	}
+	value, ok := serviceConfig["secrets"]
+	if !ok || value == nil {
+		return false, nil
+	}
+	secrets, ok := value.([]any)
+	if !ok {
+		return false, fmt.Errorf("service %q secrets must be a sequence", service)
+	}
+	for _, secret := range secrets {
+		switch secret := secret.(type) {
+		case string:
+			if secret == source {
+				return true, nil
+			}
+		default:
+			if stringMapValue(yamlMap(secret), "source") == source {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func removeLegacyFcrepoDatabaseInitializer(composePath string) error {
+	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
+	if err != nil {
+		return fmt.Errorf("read compose file: %w", err)
+	}
+	doc, err := corecomponent.LoadYAMLDocument(data)
+	if err != nil {
+		return fmt.Errorf("parse compose file: %w", err)
+	}
+	if err := doc.DeletePath(".services." + legacyFcrepoDatabaseInit); err != nil {
+		return err
+	}
+	if err := doc.DeletePath(".services.fcrepo.depends_on." + legacyFcrepoDatabaseInit); err != nil {
+		return err
+	}
+	if err := deletePathIfEmptyYAMLMap(doc, ".services.fcrepo.depends_on"); err != nil {
+		return err
+	}
+	updated, err := doc.Bytes()
+	if err != nil {
+		return fmt.Errorf("marshal compose file: %w", err)
+	}
+	return writeFilePreserveMode(composePath, updated)
+}
+
 func applyFcrepoOn(projectDir, drupalRootfs string) error {
 	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	if err := removeLegacyFcrepoDatabaseInitializer(composePath); err != nil {
+		return err
+	}
 	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
 		return err
@@ -917,10 +1063,10 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 		name  string
 		block string
 	}{
+		{name: "DB_ROOT_PASSWORD", block: `  DB_ROOT_PASSWORD:
+    file: "./secrets/DB_ROOT_PASSWORD"`},
 		{name: "FCREPO_DB_PASSWORD", block: `  FCREPO_DB_PASSWORD:
     file: "./secrets/FCREPO_DB_PASSWORD"`},
-		{name: "TOMCAT_ADMIN_PASSWORD", block: `  TOMCAT_ADMIN_PASSWORD:
-    file: "./secrets/TOMCAT_ADMIN_PASSWORD"`},
 	}
 	for _, secret := range secretBlocks {
 		if err := compose.AddSectionEntryBlock("secrets", secret.name, secret.block); err != nil {
@@ -941,6 +1087,12 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 		if err := compose.AddServiceBlock("milliner", millinerRestoreServiceBlock(images.Milliner, commonMerge)); err != nil {
 			return err
 		}
+	}
+	if err := compose.SetServiceEnv("fcrepo", "DB_BOOTSTRAP_ENABLED", "true"); err != nil {
+		return err
+	}
+	if err := compose.DeleteServiceEnv("fcrepo", "FCREPO_PERSISTENCE_TYPE"); err != nil {
+		return err
 	}
 	for key, value := range map[string]string{
 		"DRUPAL_DEFAULT_FCREPO_HOST": "fcrepo",
@@ -970,6 +1122,9 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 	}
 	if err := compose.Save(); err != nil {
 		return err
+	}
+	if err := ensureComposeServiceSecret(composePath, "fcrepo", "DB_ROOT_PASSWORD"); err != nil {
+		return fmt.Errorf("mount database root password for Fcrepo bootstrap: %w", err)
 	}
 	if err := restoreFcrepoTraefikRoute(projectDir); err != nil {
 		return err
@@ -1337,17 +1492,16 @@ func fcrepoRestoreServiceBlock(image, commonMerge string) string {
       activemq:
         condition: service_healthy
     environment:
+      DB_BOOTSTRAP_ENABLED: "true"
       DB_HOST: mariadb
       DB_PORT: 3306
       FCREPO_ALLOW_EXTERNAL_DEFAULT: http://default/
       FCREPO_ALLOW_EXTERNAL_DRUPAL: http://localhost/
-      FCREPO_PERSISTENCE_TYPE: mysql
     image: ` + image + `
     secrets:
       - source: DB_ROOT_PASSWORD
       - source: FCREPO_DB_PASSWORD
         target: DB_PASSWORD
-      - source: TOMCAT_ADMIN_PASSWORD
       - source: JWT_ADMIN_TOKEN
       - source: JWT_PUBLIC_KEY
     volumes:
@@ -1437,6 +1591,9 @@ func applyBlazegraphOff(projectDir, drupalRootfs string) error {
 }
 
 func updateComposeForFcrepoOff(composePath string) error {
+	if err := removeLegacyFcrepoDatabaseInitializer(composePath); err != nil {
+		return err
+	}
 	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
 		return err
