@@ -53,14 +53,7 @@ brews:
     repository:
       owner: libops
       name: homebrew
-      branch: "{{ .ProjectName }}-{{ .Version }}"
       token: "{{ .Env.HOMEBREW_REPO_TOKEN }}"
-      pull_request:
-        enabled: true
-        base:
-          owner: libops
-          name: homebrew
-          branch: main
     dependencies:
       - name: "libops/homebrew/sitectl"
       - name: "libops/homebrew/sitectl-drupal"

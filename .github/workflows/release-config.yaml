@@ -77,6 +77,16 @@ jobs:
             exit 1
           fi
 
+      - name: Verify direct Homebrew publication
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if grep -Eq '^[[:space:]]+(branch|pull_request):' .goreleaser.yaml; then
+            echo "Homebrew publication must update the tap default branch directly" >&2
+            exit 1
+          fi
+
       - name: Verify tag dispatch selects a full release
         shell: bash
         run: |
