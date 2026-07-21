@@ -95,9 +95,6 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	if got := req.Apply.FeatureBundleOptions[createpkg.FeatureBundleHOCRSearch][createpkg.HOCRStructuredTextTermOption]; got != "56" {
 		t.Fatalf("expected default hOCR term ID 56, got %q", got)
 	}
-	if got := req.Apply.FeatureBundleOptions[createpkg.FeatureBundleMergePDF][createpkg.IslandoraTagOption]; got != "6.3.19" {
-		t.Fatalf("expected default Islandora tag 6.3.19, got %q", got)
-	}
 	if req.TemplateRepo != defaultTemplateRepo {
 		t.Fatalf("expected template repo %q, got %q", defaultTemplateRepo, req.TemplateRepo)
 	}
@@ -648,7 +645,6 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 				createpkg.FeatureBundleHOCRSearch: string(corecomponent.StateOn),
 			},
 			FeatureBundleOptions: map[string]map[string]string{
-				createpkg.FeatureBundleMergePDF:   {createpkg.IslandoraTagOption: "6.3.20"},
 				createpkg.FeatureBundleHOCRSearch: {createpkg.HOCRStructuredTextTermOption: "77"},
 			},
 		},
@@ -679,8 +675,11 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	if !strings.Contains(rendered, "--fcrepo=on") || !strings.Contains(rendered, "--blazegraph=off") {
 		t.Fatalf("expected recreate command with component flags, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "--mergepdf=enabled") || !strings.Contains(rendered, `--islandora-tag="6.3.20"`) || !strings.Contains(rendered, "--hocr-search=enabled") || !strings.Contains(rendered, `--hocr-term-id="77"`) {
+	if !strings.Contains(rendered, "--mergepdf=enabled") || !strings.Contains(rendered, "--hocr-search=enabled") || !strings.Contains(rendered, `--hocr-term-id="77"`) {
 		t.Fatalf("expected recreate command with feature-bundle flags, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "--islandora-tag") {
+		t.Fatalf("recreate command contains retired Islandora tag override:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "git remote add origin git@github.com:your-org/your-repo.git") {
 		t.Fatalf("expected git remote setup guidance, got:\n%s", rendered)

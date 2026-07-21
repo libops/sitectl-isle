@@ -1406,7 +1406,7 @@ func TestRunComponentSetPromptsForStateWhenMissing(t *testing.T) {
 }
 
 func TestComponentExtensionSetRegistersFollowUpFlags(t *testing.T) {
-	for _, name := range []string{"codebase-rootfs", "drupal-rootfs", "isle-file-system-uri", "iiif-upstream-url", "mode", "domain", "acme-email", "trusted-ip", "max-upload-size", "upload-timeout", "islandora-tag", "hocr-term-id"} {
+	for _, name := range []string{"codebase-rootfs", "drupal-rootfs", "isle-file-system-uri", "iiif-upstream-url", "mode", "domain", "acme-email", "trusted-ip", "max-upload-size", "upload-timeout", "hocr-term-id"} {
 		if componentExtensionSetCmd.Flags().Lookup(name) == nil {
 			t.Fatalf("expected component set handler to register --%s", name)
 		}

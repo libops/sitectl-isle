@@ -14,7 +14,6 @@ import (
 func TestMergePDFFeatureBundleConvergesComposeAndDrupal(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	writeFeatureTestFile(t, filepath.Join(projectDir, ".env"), "ISLANDORA_TAG=6.3.19\n")
 	writeFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `x-common: &common
   restart: unless-stopped
 secrets:
@@ -24,7 +23,7 @@ secrets:
   JWT_PUBLIC_KEY: {file: ./secrets/JWT_PUBLIC_KEY}
 services:
   alpaca:
-    image: islandora/alpaca:${ISLANDORA_TAG}
+    image: islandora/alpaca:6.3.19
 `)
 
 	opts := Options{
@@ -44,7 +43,7 @@ services:
 	for _, want := range []string{
 		"  mergepdf:\n",
 		"    <<: *common\n",
-		"    image: islandora/mergepdf:${ISLANDORA_TAG}\n",
+		"    image: islandora/mergepdf:6.3.19\n",
 		"      - source: JWT_PUBLIC_KEY\n",
 	} {
 		if !strings.Contains(compose, want) {
@@ -79,7 +78,7 @@ services:
 	}
 }
 
-func TestMergePDFFeatureBundleWritesDefaultIslandoraTagForLibOpsTemplate(t *testing.T) {
+func TestMergePDFFeatureBundleConvergesToHardcodedImage(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
 	writeFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `x-common: &common
@@ -101,10 +100,10 @@ services:
 	if err := ApplyFeatureBundles(opts); err != nil {
 		t.Fatalf("ApplyFeatureBundles(on) error = %v", err)
 	}
-	if got := readFeatureTestFile(t, filepath.Join(projectDir, ".env")); got != "ISLANDORA_TAG=6.3.19\n" {
-		t.Fatalf("unexpected generated Compose environment: %q", got)
+	if _, err := os.Stat(filepath.Join(projectDir, ".env")); !os.IsNotExist(err) {
+		t.Fatalf("apply unexpectedly wrote a Compose environment file: %v", err)
 	}
-	if compose := readFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml")); !strings.Contains(compose, "image: islandora/mergepdf:${ISLANDORA_TAG}") || strings.Contains(compose, "libops/mergepdf") || strings.Contains(compose, "DOWNSTREAM_DRIFT") {
+	if compose := readFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml")); !strings.Contains(compose, "image: islandora/mergepdf:6.3.19") || strings.Contains(compose, "libops/mergepdf") || strings.Contains(compose, "DOWNSTREAM_DRIFT") {
 		t.Fatalf("expected drifted service to converge to the exact upstream mergepdf contract:\n%s", compose)
 	}
 
@@ -112,12 +111,12 @@ services:
 	if err := ApplyFeatureBundles(opts); err != nil {
 		t.Fatalf("ApplyFeatureBundles(off) error = %v", err)
 	}
-	if got := readFeatureTestFile(t, filepath.Join(projectDir, ".env")); got != "ISLANDORA_TAG=6.3.19\n" {
-		t.Fatalf("disable removed the shared Islandora tag: %q", got)
+	if _, err := os.Stat(filepath.Join(projectDir, ".env")); !os.IsNotExist(err) {
+		t.Fatalf("disable unexpectedly wrote a Compose environment file: %v", err)
 	}
 }
 
-func TestMergePDFFeatureBundleRejectsInvalidSelectedIslandoraTag(t *testing.T) {
+func TestMergePDFFeatureBundlePreservesCompatibleBumpedImage(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
 	writeFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `x-common: &common
@@ -130,27 +129,51 @@ secrets:
 services:
   alpaca:
     image: libops/alpaca:2.4
+  mergepdf:
+    image: islandora/mergepdf:6.3.20@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    environment:
+      DOWNSTREAM_DRIFT: present
 `)
-	err := ApplyFeatureBundles(Options{
-		Path:           projectDir,
-		DrupalRootfs:   ".",
-		FeatureBundles: map[string]string{FeatureBundleMergePDF: "on"},
-		FeatureBundleOptions: map[string]map[string]string{
-			FeatureBundleMergePDF: {IslandoraTagOption: "6.3.18"},
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "6.3.19 or newer") {
-		t.Fatalf("expected selected Islandora minimum-version error, got %v", err)
+	opts := Options{Path: projectDir, DrupalRootfs: ".", FeatureBundles: map[string]string{FeatureBundleMergePDF: "on"}}
+	if err := ApplyFeatureBundles(opts); err != nil {
+		t.Fatalf("ApplyFeatureBundles(on) error = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(projectDir, ".env")); !os.IsNotExist(err) {
-		t.Fatalf("failed tag preflight wrote .env: %v", err)
+	compose := readFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	if !strings.Contains(compose, "image: islandora/mergepdf:6.3.20@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
+		t.Fatalf("compatible bumped image was not preserved:\n%s", compose)
+	}
+	if strings.Contains(compose, "DOWNSTREAM_DRIFT") {
+		t.Fatalf("non-image service drift was not converged:\n%s", compose)
+	}
+
+	first := compose
+	if err := ApplyFeatureBundles(opts); err != nil {
+		t.Fatalf("ApplyFeatureBundles(second on) error = %v", err)
+	}
+	if got := readFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml")); got != first {
+		t.Fatalf("second apply changed compatible bumped image service:\n%s", got)
+	}
+}
+
+func TestValidateMergePDFObservedStateRequiresCompatibleDirectImage(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	writeFeatureTestFile(t, composePath, "services:\n  mergepdf:\n    image: islandora/mergepdf:6.3.20@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
+	if err := ValidateFeatureBundleObservedState(Options{Path: projectDir}, FeatureBundleMergePDF, true); err != nil {
+		t.Fatalf("ValidateFeatureBundleObservedState(compatible) error = %v", err)
+	}
+
+	writeFeatureTestFile(t, composePath, "services:\n  mergepdf:\n    image: islandora/mergepdf:${ISLANDORA_TAG}\n")
+	err := ValidateFeatureBundleObservedState(Options{Path: projectDir}, FeatureBundleMergePDF, true)
+	if err == nil || !strings.Contains(err.Error(), "explicit compatible") {
+		t.Fatalf("ValidateFeatureBundleObservedState(variable image) error = %v", err)
 	}
 }
 
 func TestMergePDFFeatureBundleRejectsOldIslandoraAlpacaBeforeMutation(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	writeFeatureTestFile(t, filepath.Join(projectDir, ".env"), "ISLANDORA_TAG=6.3.18\n")
 	composePath := filepath.Join(projectDir, "docker-compose.yml")
 	writeFeatureTestFile(t, composePath, `x-common: &common
   restart: unless-stopped
@@ -161,7 +184,7 @@ secrets:
   JWT_PUBLIC_KEY: {}
 services:
   alpaca:
-    image: islandora/alpaca:${ISLANDORA_TAG}
+    image: islandora/alpaca:6.3.18
 `)
 	original := readFeatureTestFile(t, composePath)
 	err := ApplyFeatureBundles(Options{Path: projectDir, DrupalRootfs: ".", FeatureBundles: map[string]string{FeatureBundleMergePDF: "on"}})
@@ -195,43 +218,6 @@ services:
 	}
 	if got := readFeatureTestFile(t, composePath); got != original {
 		t.Fatalf("failed preflight mutated compose:\n%s", got)
-	}
-}
-
-func TestMergePDFFeatureBundlePreservesActiveContextIslandoraTag(t *testing.T) {
-	t.Parallel()
-	projectDir := t.TempDir()
-	envPath := filepath.Join("deploy", "production.env")
-	writeFeatureTestFile(t, filepath.Join(projectDir, envPath), "ISLANDORA_TAG=6.3.25\n")
-	writeFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `x-common: &common
-  restart: unless-stopped
-secrets:
-  CERT_PUBLIC_KEY: {}
-  CERT_AUTHORITY: {}
-  JWT_ADMIN_TOKEN: {}
-  JWT_PUBLIC_KEY: {}
-services:
-  alpaca:
-    image: islandora/alpaca:${ISLANDORA_TAG}
-`)
-	opts := Options{
-		Path:           projectDir,
-		DrupalRootfs:   ".",
-		EnvFiles:       []string{envPath},
-		FeatureBundles: map[string]string{FeatureBundleMergePDF: "on"},
-	}
-	if err := ApplyFeatureBundles(opts); err != nil {
-		t.Fatalf("ApplyFeatureBundles(on) error = %v", err)
-	}
-	if got := readFeatureTestFile(t, filepath.Join(projectDir, envPath)); got != "ISLANDORA_TAG=6.3.25\n" {
-		t.Fatalf("active context tag was not preserved: %q", got)
-	}
-	if _, err := os.Stat(filepath.Join(projectDir, ".env")); !os.IsNotExist(err) {
-		t.Fatalf("apply unexpectedly wrote the default .env: %v", err)
-	}
-	options := FeatureBundleCurrentOptions(projectDir, ".", []string{envPath}, FeatureBundleMergePDF)
-	if options[IslandoraTagOption] != "6.3.25" {
-		t.Fatalf("current options did not use the context env file: %#v", options)
 	}
 }
 

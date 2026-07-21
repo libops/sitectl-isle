@@ -36,12 +36,6 @@ func FeatureBundle(source TemplateSource, name string) Definition {
 			Path:  ".services." + spec.ComposeService,
 		})
 		if spec.Name == createpkg.FeatureBundleMergePDF {
-			onComposeRules = append(onComposeRules, YAMLRule{
-				Files: []string{"docker-compose.yml"},
-				Op:    OpSet,
-				Path:  ".services.mergepdf.image",
-				Value: "islandora/mergepdf:${ISLANDORA_TAG}",
-			})
 			secrets := make([]any, 0, len(spec.RequiredSecrets))
 			for _, secret := range spec.RequiredSecrets {
 				secrets = append(secrets, map[string]any{"source": secret})
@@ -191,19 +185,6 @@ func FeatureBundle(source TemplateSource, name string) Definition {
 		}
 		definition.Behavior.Enable.Summary = "Adds the mergepdf Compose service and the paged-content aggregated-PDF action. Existing paged content may require a derivative backfill."
 		definition.Behavior.Disable.Summary = "Removes the mergepdf service and its owned Drupal action; existing PDFs are retained."
-		definition.FollowUps = []corecomponent.FollowUpSpec{
-			{
-				Name:                 createpkg.IslandoraTagOption,
-				Label:                "Islandora image tag",
-				FlagName:             "islandora-tag",
-				FlagUsage:            "Shared Islandora image tag for mergepdf (6.3.19 or newer)",
-				Question:             "Choose the Islandora release tag for mergepdf.",
-				DefaultValue:         "6.3.19",
-				Required:             true,
-				PromptOnCreate:       false,
-				AppliesToDisposition: corecomponent.DispositionEnabled,
-			},
-		}
 	case createpkg.FeatureBundleHOCRSearch:
 		definition.Guidance = corecomponent.StateGuidance{
 			Question:     "Enable hOCR generation, indexing, IIIF annotations, and search?",

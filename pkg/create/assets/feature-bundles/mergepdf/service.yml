@@ -1,6 +1,6 @@
   mergepdf:
     <<: *common
-    image: islandora/mergepdf:${ISLANDORA_TAG}
+    image: islandora/mergepdf:6.3.19
     secrets:
       - source: CERT_PUBLIC_KEY
       - source: CERT_AUTHORITY
