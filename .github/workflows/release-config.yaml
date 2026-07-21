@@ -91,7 +91,7 @@ jobs:
       - name: Verify trusted package publisher workflow
         shell: bash
         env:
-          EXPECTED_WORKFLOW: "libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@77724fe807ede3e0808d4556f47e4ad0ae266bac"
+          EXPECTED_WORKFLOW: "libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@5f44a8c8d157bb7e5cf6d9e1c98847a604e87455"
         run: |
           set -euo pipefail
 
