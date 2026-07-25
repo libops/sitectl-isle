@@ -21,21 +21,36 @@ import (
 )
 
 func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	oldInput := createInput
 	t.Cleanup(func() {
 		createInput = oldInput
 	})
 
-	var promptCount int
-	inputs := []string{"2", "1", "1", "1", "1"}
+	var componentPromptCount int
 	createInput = func(question ...string) (string, error) {
-		promptCount++
-		if len(inputs) == 0 {
+		prompt := strings.ToLower(stripANSI(strings.Join(question, "\n")))
+		switch {
+		case strings.Contains(prompt, "drupal filesystem uri"):
+			componentPromptCount++
+			return "public", nil
+		case strings.Contains(prompt, "fcrepo"):
+			componentPromptCount++
+			return "superseded", nil
+		case strings.Contains(prompt, "blazegraph"):
+			componentPromptCount++
+			return "enabled", nil
+		case strings.Contains(prompt, "iiif topology"), strings.Contains(prompt, "iiif-topology"):
+			return "", nil
+		case strings.Contains(prompt, "iiif"):
+			componentPromptCount++
+			return "cantaloupe", nil
+		case strings.Contains(prompt, "bot mitigation"), strings.Contains(prompt, "bot-mitigation"):
+			componentPromptCount++
+			return "disabled", nil
+		default:
 			return "", nil
 		}
-		value := inputs[0]
-		inputs = inputs[1:]
-		return value, nil
 	}
 
 	oldPath := createPath
@@ -65,11 +80,11 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if promptCount != 5 {
-		t.Fatalf("expected 5 prompts, got %d", promptCount)
+	if componentPromptCount != 5 {
+		t.Fatalf("expected 5 component prompts, got %d", componentPromptCount)
 	}
-	if req.ContextName != "" {
-		t.Fatalf("expected context name prompt path, got %q", req.ContextName)
+	if req.ContextName != "site" {
+		t.Fatalf("expected context name derived from the reviewed path, got %q", req.ContextName)
 	}
 	if req.Apply.Fcrepo != "off" {
 		t.Fatalf("expected prompted fcrepo state off, got %q", req.Apply.Fcrepo)
@@ -103,14 +118,16 @@ func TestResolveCreateRequestPromptsForMissingComponentFlags(t *testing.T) {
 	}
 }
 
-func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
+func TestResolveCreateRequestReviewsExplicitFlagsUsingThemAsDefaults(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	oldInput := createInput
 	t.Cleanup(func() {
 		createInput = oldInput
 	})
 
+	var promptCount int
 	createInput = func(question ...string) (string, error) {
-		t.Fatal("did not expect prompt")
+		promptCount++
 		return "", nil
 	}
 
@@ -160,6 +177,9 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
+	if promptCount == 0 {
+		t.Fatal("expected explicit flags to be reviewed")
+	}
 
 	if req.Apply.Fcrepo != "off" || req.Apply.Blazegraph != "on" || req.Apply.IIIF != createpkg.IIIFTriplet || req.Apply.IIIFTopology != createpkg.IIIFTopologyExternal || req.Apply.IIIFUpstreamURL != "https://iiif.example.org" || req.Apply.Codebase != createpkg.CodebaseGitRoot || req.Apply.BotMitigation != coretraefik.BotMitigationStateOn || req.Apply.ISLEFileSystemURI != "public" {
 		t.Fatalf("unexpected options %+v", req.Apply)
@@ -188,6 +208,7 @@ func TestResolveCreateRequestSkipsPromptForExplicitFlags(t *testing.T) {
 }
 
 func TestResolveCreateRequestAcceptsCustomISLEFileSystemURI(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	oldInput := createInput
 	t.Cleanup(func() {
 		createInput = oldInput
@@ -293,21 +314,26 @@ func TestBindCreateFlagsFallsBackToLocalComponentsWhenIncludedPluginMissing(t *t
 }
 
 func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	oldInput := createInput
 	t.Cleanup(func() {
 		createInput = oldInput
 	})
 
-	var promptCount int
-	inputs := []string{"2", "3", "archive", "1", "1", "1"}
+	var customPrompted bool
 	createInput = func(question ...string) (string, error) {
-		promptCount++
-		if len(inputs) == 0 {
+		prompt := strings.ToLower(stripANSI(strings.Join(question, "\n")))
+		switch {
+		case strings.Contains(prompt, "custom uri scheme"):
+			customPrompted = true
+			return "archive", nil
+		case strings.Contains(prompt, "drupal filesystem uri"):
+			return "custom", nil
+		case strings.Contains(prompt, "fcrepo"):
+			return "superseded", nil
+		default:
 			return "", nil
 		}
-		value := inputs[0]
-		inputs = inputs[1:]
-		return value, nil
 	}
 
 	oldPath := createPath
@@ -337,8 +363,8 @@ func TestResolveCreateRequestPromptsForCustomISLEFileSystemURI(t *testing.T) {
 		t.Fatalf("resolveCreateRequest() error = %v", err)
 	}
 
-	if promptCount < 6 {
-		t.Fatalf("expected at least 6 prompts, got %d", promptCount)
+	if !customPrompted {
+		t.Fatal("expected the custom filesystem URI prompt")
 	}
 	if req.Apply.ISLEFileSystemURI != "archive" {
 		t.Fatalf("expected prompted custom isle-file-system-uri archive, got %q", req.Apply.ISLEFileSystemURI)
@@ -548,7 +574,6 @@ func TestRefreshCreateContextComposeMetadataKeepsContextDerivedNameWithoutTempla
 		Plugin:             "isle",
 		DockerHostType:     config.ContextLocal,
 		ProjectDir:         projectDir,
-		ProjectName:        projectName,
 		ComposeProjectName: projectName,
 		ComposeNetwork:     projectName + "_default",
 	}
@@ -1024,6 +1049,7 @@ func newCreateCommandForTest() *cobra.Command {
 	}
 	_ = cmd.Flags().Set("type", "local")
 	_ = cmd.Flags().Set("checkout-source", "template")
+	_ = cmd.Flags().Set("path", "/tmp/site")
 	return cmd
 }
 
