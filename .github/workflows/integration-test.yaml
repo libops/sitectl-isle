@@ -51,6 +51,7 @@ jobs:
         --mergepdf enabled
         --hocr-search enabled
         --hocr-term-id 56
+        --yolo
       run-verify: true
       verify-args: >-
         --fcrepo ${{ matrix.fcrepo_state }}
