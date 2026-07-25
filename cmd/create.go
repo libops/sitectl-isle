@@ -342,6 +342,26 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		printCreateFailureSummary(summary, req)
 		return err
 	}
+	pluginName := strings.TrimSpace(ctx.Plugin)
+	if pluginName == "" {
+		pluginName = "isle"
+	}
+	definitions := orderedComponentDefinitions()
+	componentDecisions := make(map[string]corecomponent.ReviewDecision, len(definitions))
+	for _, definition := range definitions {
+		if decision, ok := req.Decisions[definition.Name]; ok {
+			componentDecisions[definition.Name] = decision
+		}
+	}
+	desired, err := corecomponent.DesiredStateFromDecisions(pluginName, definitions, componentDecisions)
+	if err != nil {
+		printCreateFailureSummary(summary, req)
+		return fmt.Errorf("build component desired state: %w", err)
+	}
+	if err := corecomponent.SaveDesiredState(ctx, desired); err != nil {
+		printCreateFailureSummary(summary, req)
+		return fmt.Errorf("save component desired state: %w", err)
+	}
 	if err := createRefreshContext(ctx); err != nil {
 		printCreateFailureSummary(summary, req)
 		return err

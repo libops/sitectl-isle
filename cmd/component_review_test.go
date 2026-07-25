@@ -10,6 +10,7 @@ import (
 
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	corecomponent "github.com/libops/sitectl/pkg/component"
+	"github.com/libops/sitectl/pkg/config"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
 )
@@ -190,7 +191,7 @@ func TestDriftedComponentViewsPreservesOnlyDrift(t *testing.T) {
 	}
 }
 
-func TestRunComponentReconcileDriftOnlyPreservesHealthyTopology(t *testing.T) {
+func TestRunComponentReconcileDesiredStatePreservesHealthyTopology(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
 	writeISLEDefaultCodebaseFixture(t, projectDir)
@@ -256,14 +257,10 @@ func TestRunComponentReconcileDriftOnlyPreservesHealthyTopology(t *testing.T) {
 		got = opts
 		return createpkg.Apply(opts)
 	}
-	var prompted []string
 	componentReviewPromptDisposition = nil
 	componentReviewPromptState = func(name string, guidance corecomponent.StateGuidance, input corecomponent.InputFunc) (corecomponent.State, error) {
-		prompted = append(prompted, name)
-		if name != "iiif" {
-			t.Fatalf("unexpected prompt for healthy component %q", name)
-		}
-		return corecomponent.StateOff, nil
+		t.Fatalf("unexpected desired-state prompt for %q", name)
+		return "", nil
 	}
 	componentReviewPromptChoice = func(name string, choices []corecomponent.Choice, defaultValue string, input corecomponent.InputFunc, sections ...string) (string, error) {
 		t.Fatalf("unexpected follow-up prompt for %q", name)
@@ -272,6 +269,23 @@ func TestRunComponentReconcileDriftOnlyPreservesHealthyTopology(t *testing.T) {
 	componentReviewInput = func(question ...string) (string, error) {
 		t.Fatalf("unexpected text prompt: %s", strings.Join(question, "\n"))
 		return "", nil
+	}
+	testContext := &config.Context{Plugin: "isle", DockerHostType: config.ContextLocal, ProjectDir: projectDir}
+	views, err := detectComponentViewsForContext(testContext, createpkg.DefaultDrupalRootfs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desiredDecisions := make(map[string]corecomponent.ReviewDecision, len(views))
+	for _, view := range views {
+		desiredDecisions[view.Name] = corecomponent.ReviewDecision{Disposition: view.Disposition, Options: view.FollowUpValues}
+	}
+	desiredDecisions["iiif"] = corecomponent.ReviewDecision{Disposition: corecomponent.DispositionCantaloupe}
+	desired, err := corecomponent.DesiredStateFromDecisions("isle", orderedComponentDefinitions(), desiredDecisions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := corecomponent.SaveDesiredState(testContext, desired); err != nil {
+		t.Fatal(err)
 	}
 
 	var out bytes.Buffer
@@ -285,10 +299,6 @@ func TestRunComponentReconcileDriftOnlyPreservesHealthyTopology(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("runComponentReconcile() error = %v", err)
 	}
-	if len(prompted) != 1 || prompted[0] != "iiif" {
-		t.Fatalf("prompted components = %v, want [iiif]", prompted)
-	}
-
 	if got.Fcrepo != createpkg.FcrepoStateOn || got.Blazegraph != createpkg.FcrepoStateOn {
 		t.Fatalf("healthy repository topology changed: fcrepo=%q blazegraph=%q", got.Fcrepo, got.Blazegraph)
 	}

@@ -119,35 +119,48 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 	if err != nil {
 		return err
 	}
-	if opts.Report {
-		return corecomponent.WriteComponentStatusReportWithFormat(cmd.OutOrStdout(), statuses, opts.Verbose, opts.Format)
+	if !opts.DriftOnly {
+		return runInteractiveComponentReview(cmd, ctx, rootfs, opts, remoteContext, componentName, allStatuses, statuses)
 	}
-	if opts.DriftOnly {
-		statuses = driftedComponentViews(statuses)
-		if len(statuses) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No component drift detected")
-			return nil
-		}
-	}
-
-	rawDecisions, err := corecomponent.RunReview(statuses, corecomponent.ReviewOptions{
-		Input:             componentReviewInput,
-		PromptState:       componentReviewPromptState,
-		PromptDisposition: componentReviewPromptDisposition,
-		PromptChoice:      componentReviewPromptChoice,
-		SummaryLine:       componentReviewSummaryLine,
-		Confirm: func(prompt string) (bool, error) {
-			if opts.Yolo {
-				return true, nil
-			}
-			return confirmComponentReview(prompt)
-		},
-	})
+	defs := orderedComponentDefinitions()
+	desired, err := corecomponent.LoadDesiredState(ctx)
 	if err != nil {
 		return err
 	}
-	decisions := convertComponentReviewDecisions(rawDecisions)
+	plan, err := corecomponent.BuildReconciliationPlan(ctx, ctx.ProjectDir, desired, corecomponent.DetectOptions{
+		ComposeRoot:  ctx.ProjectDir,
+		DrupalRootfs: rootfs,
+	}, defs...)
+	if err != nil {
+		return err
+	}
+	plan, err = corecomponent.FilterReconciliationPlan(plan, componentName)
+	if err != nil {
+		return err
+	}
+	if err := corecomponent.WriteReconciliationPlan(cmd.OutOrStdout(), plan, opts.Format); err != nil {
+		return err
+	}
+	if opts.Report || plan.InSync {
+		return nil
+	}
+	if !plan.Safe {
+		return fmt.Errorf("reconciliation is blocked because the plan contains unknowns")
+	}
+	if !opts.Yolo {
+		confirmed, err := confirmComponentReview("Apply the reviewed component reconciliation plan? [y/N]: ")
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return fmt.Errorf("component reconciliation cancelled")
+		}
+	}
+	decisions := desiredComponentReviewDecisions(desired, statuses)
 	if remoteContext {
+		if componentName == "" {
+			return fmt.Errorf("remote reconciliation requires --component")
+		}
 		if err := applyRemoteComponentReviewDecision(ctx, componentName, decisions[componentName]); err != nil {
 			return err
 		}
@@ -165,7 +178,7 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 		}
 		return nil
 	}
-	if opts.DriftOnly || strings.TrimSpace(componentName) != "" {
+	if opts.DriftOnly || componentName != "" {
 		decisions = mergeCurrentComponentReviewDecisions(allStatuses, decisions)
 	}
 
@@ -188,6 +201,61 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 		fmt.Fprintln(cmd.OutOrStdout())
 	}
 	return nil
+}
+
+func runInteractiveComponentReview(cmd *cobra.Command, ctx *config.Context, rootfs string, opts componentReconcileOptions, remoteContext bool, componentName string, allStatuses, statuses []componentView) error {
+	if opts.Report {
+		return corecomponent.WriteComponentStatusReportWithFormat(cmd.OutOrStdout(), statuses, opts.Verbose, opts.Format)
+	}
+	rawDecisions, err := corecomponent.RunReview(statuses, corecomponent.ReviewOptions{
+		Input:             componentReviewInput,
+		PromptState:       componentReviewPromptState,
+		PromptDisposition: componentReviewPromptDisposition,
+		PromptChoice:      componentReviewPromptChoice,
+		SummaryLine:       componentReviewSummaryLine,
+		Confirm: func(prompt string) (bool, error) {
+			if opts.Yolo {
+				return true, nil
+			}
+			return confirmComponentReview(prompt)
+		},
+	})
+	if err != nil {
+		return err
+	}
+	decisions := convertComponentReviewDecisions(rawDecisions)
+	if remoteContext {
+		if err := applyRemoteComponentReviewDecision(ctx, componentName, decisions[componentName]); err != nil {
+			return err
+		}
+		writeComponentReviewResults(cmd, statuses, decisions)
+		return nil
+	}
+	if strings.TrimSpace(componentName) != "" {
+		decisions = mergeCurrentComponentReviewDecisions(allStatuses, decisions)
+	}
+	if err := applyComponentReview(ctx, rootfs, opts.Path, decisions); err != nil {
+		return err
+	}
+	writeComponentReviewResults(cmd, statuses, decisions)
+	return nil
+}
+
+func writeComponentReviewResults(cmd *cobra.Command, statuses []componentView, decisions map[string]componentReviewDecision) {
+	for _, status := range statuses {
+		decision := decisions[status.Name]
+		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s", status.Name, reviewDecisionLabel(decision))
+		for _, value := range []string{decision.TLSMode, decision.UpstreamURL, decision.TrustedIPs} {
+			if strings.TrimSpace(value) != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), " (%s)", value)
+				break
+			}
+		}
+		if strings.TrimSpace(decision.MaxUploadSize) != "" || strings.TrimSpace(decision.UploadTimeout) != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), " (%s, %s)", uploadLimitValue(map[string]string{"max-upload-size": decision.MaxUploadSize}, "max-upload-size"), uploadLimitValue(map[string]string{"upload-timeout": decision.UploadTimeout}, "upload-timeout"))
+		}
+		fmt.Fprintln(cmd.OutOrStdout())
+	}
 }
 
 func driftedComponentViews(views []componentView) []componentView {
@@ -344,6 +412,31 @@ func applyComponentReview(ctx *config.Context, drupalRootfs, pathOverride string
 		return err
 	}
 	return ctx.EnsureTrackedComposeOverrideSymlink()
+}
+
+func desiredComponentReviewDecisions(desired corecomponent.DesiredState, statuses []componentView) map[string]componentReviewDecision {
+	decisions := make(map[string]componentReviewDecision, len(statuses))
+	for _, status := range statuses {
+		selection, ok := desired.Spec.Components[status.Name]
+		if !ok {
+			continue
+		}
+		options := maps.Clone(selection.Settings)
+		decisions[status.Name] = componentReviewDecision{
+			Disposition:   selection.Disposition,
+			State:         corecomponent.DispositionToState(selection.Disposition),
+			TLSMode:       strings.TrimSpace(helpers.FirstNonEmpty(options["mode"], options["tls-mode"])),
+			Domain:        strings.TrimSpace(options["domain"]),
+			ACMEEmail:     strings.TrimSpace(options["acme-email"]),
+			FileSystemURI: strings.TrimSpace(options["isle-file-system-uri"]),
+			UpstreamURL:   strings.TrimSpace(options["upstream-url"]),
+			TrustedIPs:    strings.TrimSpace(options["trusted-ip"]),
+			MaxUploadSize: strings.TrimSpace(options["max-upload-size"]),
+			UploadTimeout: strings.TrimSpace(options["upload-timeout"]),
+			Options:       options,
+		}
+	}
+	return decisions
 }
 
 func applyIngressReviewDecision(ctx *config.Context, decision componentReviewDecision) error {
