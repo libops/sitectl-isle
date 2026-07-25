@@ -622,7 +622,7 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	commandSDK = &plugin.SDK{}
 	projectDir := filepath.Join(t.TempDir(), "site")
 	createEnsureLocalContext = func(_ *plugin.SDK, req createRequest) (*config.Context, error) {
-		return &config.Context{Name: "isle-local-2", ProjectDir: projectDir}, nil
+		return &config.Context{Name: "isle-local-2", Plugin: "isle", DockerHostType: config.ContextLocal, ProjectDir: projectDir}, nil
 	}
 	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
 		return os.MkdirAll(opts.ProjectDir, 0o755)
@@ -735,7 +735,7 @@ func TestRunCreateCommandWritesProgressToStderrDuringRPC(t *testing.T) {
 	commandSDK = &plugin.SDK{}
 	projectDir := filepath.Join(t.TempDir(), "site")
 	createEnsureLocalContext = func(_ *plugin.SDK, req createRequest) (*config.Context, error) {
-		return &config.Context{Name: "isle-local", ProjectDir: projectDir}, nil
+		return &config.Context{Name: "isle-local", Plugin: "isle", DockerHostType: config.ContextLocal, ProjectDir: projectDir}, nil
 	}
 	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
 		return os.MkdirAll(opts.ProjectDir, 0o755)
@@ -864,7 +864,7 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	commandSDK = &plugin.SDK{}
 	projectDir := filepath.Join(t.TempDir(), "site")
 	createEnsureLocalContext = func(_ *plugin.SDK, req createRequest) (*config.Context, error) {
-		return &config.Context{Name: "isle-local", ProjectDir: projectDir}, nil
+		return &config.Context{Name: "isle-local", Plugin: "isle", DockerHostType: config.ContextLocal, ProjectDir: projectDir}, nil
 	}
 	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
 		return os.MkdirAll(opts.ProjectDir, 0o755)

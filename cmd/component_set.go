@@ -53,7 +53,7 @@ func runComponentSet(cmd *cobra.Command, name, stateValue string) error {
 	return runComponentSetWithOptions(cmd, name, stateValue, componentSetOptionsFromGlobals())
 }
 
-func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opts componentSetOptions) error {
+func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opts componentSetOptions) (retErr error) {
 	ctx, err := resolveStatusContextForPath(opts.Path)
 	if err != nil {
 		return err
@@ -152,6 +152,23 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if retErr != nil {
+			return
+		}
+		desired, err := corecomponent.LoadOrInitializeDesiredState(ctx, orderedComponentDefinitions())
+		if err != nil {
+			retErr = fmt.Errorf("load component desired state: %w", err)
+			return
+		}
+		if err := desired.Set(def, disposition, followUps); err != nil {
+			retErr = err
+			return
+		}
+		if err := corecomponent.SaveDesiredState(ctx, desired); err != nil {
+			retErr = fmt.Errorf("save component desired state: %w", err)
+		}
+	}()
 
 	if !opts.Yolo {
 		prompt, err := componentSetPrompt(def, disposition, state, followUps)
