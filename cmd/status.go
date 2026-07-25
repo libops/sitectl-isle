@@ -521,14 +521,14 @@ func localStatusContext(projectDir string) (*config.Context, error) {
 	}
 	projectName := filepath.Base(absProjectDir)
 	return &config.Context{
-		DockerHostType: config.ContextLocal,
-		Name:           projectName,
-		Site:           projectName,
-		Plugin:         "isle",
-		Environment:    "local",
-		DockerSocket:   config.GetDefaultLocalDockerSocket("/var/run/docker.sock"),
-		ProjectName:    projectName,
-		ProjectDir:     absProjectDir,
+		DockerHostType:     config.ContextLocal,
+		Name:               projectName,
+		Site:               projectName,
+		Plugin:             "isle",
+		Environment:        "local",
+		DockerSocket:       config.GetDefaultLocalDockerSocket("/var/run/docker.sock"),
+		ComposeProjectName: projectName,
+		ProjectDir:         absProjectDir,
 	}, nil
 }
 

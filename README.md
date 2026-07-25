@@ -1,6 +1,6 @@
 # sitectl-isle
 
-`sitectl-isle` simplifies the creation and operation of repositories created using the [LibOps ISLE template](https://github.com/libops/isle). It uses sitectl components to make features like Traefik bot mitigation, Triplet IIIF, and Islandora filesystem storage easy to enable and customize.
+`sitectl-isle` simplifies the creation and operation of repositories created using the [Islandora ISLE site template](https://github.com/islandora-devops/isle-site-template). It uses sitectl components to make features like Traefik bot mitigation, Triplet IIIF, and Islandora filesystem storage easy to enable and customize.
 
 Documentation: https://sitectl.libops.io/plugins/isle
 
@@ -16,14 +16,14 @@ Create a local ISLE site from the matching template:
 
 ```bash
 sitectl create isle/default \
-  --template-repo https://github.com/libops/isle \
+  --template-repo https://github.com/islandora-devops/isle-site-template \
   --path ./my-isle-site \
   --type local \
   --checkout-source template \
   --default-context
 ```
 
-The template README is at https://github.com/libops/isle.
+The template README is at https://github.com/islandora-devops/isle-site-template.
 
 ## Basic Operations
 

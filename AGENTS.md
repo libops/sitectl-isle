@@ -142,6 +142,14 @@ if err := doSomething(); err != nil {
 slog.Info("user authenticated", "user_id", userID, "ip_address", ipAddr)
 ```
 
+### Command UX and Documentation Contract
+
+- Treat Cobra `Use`, `Short`, `Long`, examples, and flag usage as the canonical command reference. Explain application outcome, affected Docker/runtime resources, prerequisites, side effects, and risk as needed.
+- Keep Islandora- or Drupal-specific workflows in their application plugins; use core sitectl for shared Compose lifecycle and service operations.
+- Interactive create choices must explain their implications and use defaults in this order: explicit flag, stored context, detected value, product default. Only `--yolo` bypasses decision review.
+- Generated references belong on the matching `sitectl-docs/plugins/isle` page. Never edit `sitectl-docs/snippets/commands` by hand.
+- When changing command architecture, help, or docs generation, use the `maintain-sitectl-cli-docs` skill when installed.
+
 ### Testing
 
 - Write unit tests for all new features and bug fixes

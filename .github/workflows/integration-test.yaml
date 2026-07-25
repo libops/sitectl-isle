@@ -51,6 +51,7 @@ jobs:
         --mergepdf enabled
         --hocr-search enabled
         --hocr-term-id 56
+        --yolo
       run-verify: true
       verify-args: >-
         --fcrepo ${{ matrix.fcrepo_state }}
@@ -64,10 +65,7 @@ jobs:
       checkout-source: template
       project-path: isle-site-template
       local-plugin-path: sitectl-isle
-      sitectl-repository: libops/sitectl
-      sitectl-ref: 65cfde137a58ba14aaa9a1512d88b943888872f3 # v1.0.0
       packages: sitectl sitectl-drupal
-      package-versions: sitectl=1.0.0 sitectl-drupal=1.0.0
-      allow-unversioned-packages: false
+      allow-unversioned-packages: true
       expected-template-lock-revision: v1.0.0
       timeout-minutes: 120

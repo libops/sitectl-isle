@@ -19,7 +19,7 @@ func main() {
 		Version:      fmt.Sprintf("%s (Built on %s from Git SHA %s)", version, date, commit),
 		Description:  "Islandora (ISLE) utilities and migration tools",
 		Author:       "libops",
-		TemplateRepo: "https://github.com/libops/isle",
+		TemplateRepo: "https://github.com/islandora-devops/isle-site-template",
 		Includes:     cmd.IncludedPlugins(),
 	})
 

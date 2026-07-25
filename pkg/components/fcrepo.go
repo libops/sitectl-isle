@@ -44,7 +44,7 @@ func Fcrepo(source TemplateSource) Definition {
 			},
 		},
 		Guidance: corecomponent.StateGuidance{
-			Question: `The LibOps template stores files through Drupal without Fedora by default.
+			Question: `The Islandora ISLE site template stores files through Drupal without Fedora by default.
 Enable Fedora only when this site requires a Fedora-backed Islandora repository.`,
 			EnabledHelp:    "Add the Fedora-backed Islandora repository stack.",
 			SupersededHelp: "Replace Fedora-backed storage with another storage approach and rewire Drupal to use a different filesystem URI.",
