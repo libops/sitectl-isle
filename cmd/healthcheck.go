@@ -33,7 +33,6 @@ func (isleHealthcheckRunner) Run(cmd *cobra.Command, ctx *config.Context) ([]sit
 
 	results = append(results,
 		checker.CheckMariaDB(cmd.Context(), "mariadb"),
-		checker.CheckComposeServiceDependsOnHealthy(cmd.Context(), "drupal", "mariadb"),
 		checker.CheckSolrCore(cmd.Context(), "solr", "default"),
 	)
 

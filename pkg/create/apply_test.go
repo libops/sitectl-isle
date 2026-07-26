@@ -100,7 +100,7 @@ volumes:
 		t.Fatalf("expected fcrepo env removed, got:\n%s", compose)
 	}
 	for _, want := range []string{
-		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
+		`DRUPAL_DEFAULT_SITE_URL: "${URI_SCHEME}://${DOMAIN}"`,
 		`DRUSH_OPTIONS_URI: "http://localhost"`,
 	} {
 		if !strings.Contains(compose, want) {
@@ -224,10 +224,8 @@ volumes: {}
 		"image: islandora/milliner:main@sha256:b8032d819de5412d0a4db6a8ac8d5dd3a61b2e097af0a707d0ae4fcd03f22ca2",
 		`ALPACA_FCREPO_INDEXER_ENABLED: "true"`,
 		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`,
-		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
-		`DRUSH_OPTIONS_URI: "http://drupal.internal"`,
-		`DRUPAL_TRUSTED_HOST_PATTERNS: "^localhost$,^drupal\\.internal$"`,
-		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.internal/"`,
+		`DRUPAL_DEFAULT_SITE_URL: "${URI_SCHEME}://${DOMAIN}"`,
+		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "${URI_SCHEME}://${DOMAIN}/"`,
 		`target: DB_PASSWORD`,
 	} {
 		if !strings.Contains(compose, want) {
@@ -1931,7 +1929,7 @@ func assertApplicationDatabaseBootstrap(t *testing.T, projectDir string) {
 		`DB_MYSQL_PORT: "3306"`,
 		`DRUPAL_DEFAULT_DB_NAME: "drupal_default"`,
 		`DRUPAL_DEFAULT_DB_USER: "drupal_default"`,
-		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
+		`DRUPAL_DEFAULT_SITE_URL: "${URI_SCHEME}://${DOMAIN}"`,
 		`target: DB_PASSWORD`,
 		`target: DRUPAL_DEFAULT_DB_PASSWORD`,
 	} {

@@ -980,7 +980,7 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 		"DB_MYSQL_PORT":           "3306",
 		"DRUPAL_DEFAULT_DB_NAME":  "drupal_default",
 		"DRUPAL_DEFAULT_DB_USER":  "drupal_default",
-		"DRUPAL_DEFAULT_SITE_URL": publicSiteURLExpr,
+		"DRUPAL_DEFAULT_SITE_URL": composePublicSiteURLExpr,
 	} {
 		if err := compose.SetServiceEnv("drupal", key, value); err != nil {
 			return err
