@@ -42,7 +42,6 @@ jobs:
       create-definition: default
       images: alpaca=islandora/alpaca:6.3.19
       create-args: >-
-        --build-arg drupal.TAG=6.3.19
         --fcrepo ${{ matrix.fcrepo_state }}
         --blazegraph ${{ matrix.blazegraph_state }}
         --isle-file-system-uri ${{ matrix.isle_file_system_uri }}
