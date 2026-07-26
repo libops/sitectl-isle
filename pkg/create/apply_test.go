@@ -325,6 +325,36 @@ func TestEnsureComposeServiceSecretAliasPreservesExistingTarget(t *testing.T) {
 	}
 }
 
+func TestEnsureMariaDBHealthcheckAuthenticatesWithSecret(t *testing.T) {
+	t.Parallel()
+	composePath := filepath.Join(t.TempDir(), "docker-compose.yml")
+	writeTestFile(t, composePath, `services:
+  mariadb:
+    image: islandora/mariadb:6.3.16
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping"]
+  drupal:
+    image: islandora/drupal:6.3.16
+`)
+
+	if err := ensureMariaDBHealthcheck(composePath); err != nil {
+		t.Fatal(err)
+	}
+	compose := readTestFile(t, composePath)
+	for _, want := range []string{
+		`MYSQL_PWD="$$(cat /run/secrets/DB_ROOT_PASSWORD)"`,
+		`mysqladmin ping --user=root`,
+		`start_period: 30s`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("MariaDB healthcheck missing %q:\n%s", want, compose)
+		}
+	}
+	if strings.Contains(compose, `mysqladmin ping"]`) {
+		t.Fatalf("inherited unauthenticated healthcheck was retained:\n%s", compose)
+	}
+}
+
 func TestSyncLocalDrupalInternalIngress(t *testing.T) {
 	t.Parallel()
 

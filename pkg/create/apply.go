@@ -995,6 +995,9 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 	if err := compose.Save(); err != nil {
 		return err
 	}
+	if err := ensureMariaDBHealthcheck(composePath); err != nil {
+		return fmt.Errorf("configure authenticated MariaDB healthcheck: %w", err)
+	}
 	if err := ensureComposeServiceSecret(composePath, "drupal", "DB_ROOT_PASSWORD"); err != nil {
 		return fmt.Errorf("mount database root password for Drupal bootstrap: %w", err)
 	}
@@ -1008,6 +1011,32 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 		return fmt.Errorf("expose Drupal database password to template settings: %w", err)
 	}
 	return nil
+}
+
+func ensureMariaDBHealthcheck(composePath string) error {
+	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
+	if err != nil {
+		return fmt.Errorf("read compose file: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	serviceStart, serviceEnd, ok := composeServiceLineBounds(lines, "mariadb")
+	if !ok {
+		return nil
+	}
+	if healthcheckIndex, found := findComposeMappingLine(lines, serviceStart+1, serviceEnd, 4, "healthcheck"); found {
+		healthcheckEnd := composeMappingLineEnd(lines, healthcheckIndex, serviceEnd, 4)
+		lines = append(lines[:healthcheckIndex], lines[healthcheckEnd:]...)
+		serviceEnd -= healthcheckEnd - healthcheckIndex
+	}
+	lines = insertComposeLines(lines, serviceEnd,
+		"    healthcheck:",
+		`      test: ["CMD-SHELL", 'MYSQL_PWD="$$(cat /run/secrets/DB_ROOT_PASSWORD)" mysqladmin ping --user=root --socket=/var/run/mysqld/mysqld.sock --silent']`,
+		"      interval: 10s",
+		"      timeout: 5s",
+		"      retries: 20",
+		"      start_period: 30s",
+	)
+	return writeFilePreserveMode(composePath, []byte(strings.Join(lines, "\n")))
 }
 
 func ensureComposeServiceSecretAlias(composePath, service, source, target string) error {
