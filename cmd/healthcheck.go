@@ -64,7 +64,19 @@ func isleDrupalPublicURL(ctx *config.Context) string {
 	}); err == nil && ok && preferISLETraefikHealthcheckURL(target, traefikURL) {
 		target = traefikURL
 	}
-	return target
+	return isleDrupalHealthcheckURL(target)
+}
+
+func isleDrupalHealthcheckURL(target string) string {
+	parsed, err := url.Parse(strings.TrimSpace(target))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return target
+	}
+	parsed.Path = "/user/login"
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func isleDrupalURLFromServiceEnvironment(ctx *config.Context) string {
