@@ -340,7 +340,10 @@ func verifyDemoObjects(ctx context.Context, projectDir, fcrepoExpected, fileSyst
 	if err != nil {
 		return failedVerifyResult("verify:demo-objects", err.Error(), "")
 	}
-	if _, err := runLocalProjectOutput(ctx, projectDir, "make", "demo-objects"); err != nil {
+	// The Make target depends on `up`, whose smart port allocator is intended
+	// for a stopped project. Verification already requires the stack to be
+	// running, so execute the target's canonical ingestion script directly.
+	if _, err := runLocalProjectOutput(ctx, projectDir, "./scripts/demo-objects.sh"); err != nil {
 		return failedVerifyResult("verify:demo-objects", err.Error(), "")
 	}
 	for i := 0; i < 24; i++ {
