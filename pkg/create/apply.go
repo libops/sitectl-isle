@@ -865,14 +865,7 @@ func dockerfileHeader(contents string) string {
 		}
 	}
 	if foundTargetArch {
-		header := strings.Join(out, "\n")
-		if strings.Contains(header, "FROM ${REPOSITORY}/drupal:${TAG}") {
-			return `ARG BASE_IMAGE=libops/islandora:nginx-1.30.3-php84
-FROM ${BASE_IMAGE}
-
-ARG TARGETARCH`
-		}
-		return header
+		return strings.Join(out, "\n")
 	}
 	return `ARG BASE_IMAGE=libops/islandora:nginx-1.30.3-php84
 FROM ${BASE_IMAGE}

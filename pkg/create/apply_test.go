@@ -1205,8 +1205,9 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 
 	dockerfile := readTestFile(t, filepath.Join(projectDir, "Dockerfile"))
 	for _, want := range []string{
-		"ARG BASE_IMAGE=libops/islandora:nginx-1.30.3-php84",
-		"FROM ${BASE_IMAGE}",
+		"ARG REPOSITORY",
+		"ARG TAG",
+		"FROM ${REPOSITORY}/drupal:${TAG}",
 		"COPY --link composer.json composer.lock /var/www/drupal/",
 		"COPY --link drupal/rootfs/opt/ /opt/",
 	} {
