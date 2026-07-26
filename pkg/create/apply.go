@@ -56,7 +56,7 @@ const (
 	localDrupalHostMiddlewareName = "drupal-internal-host"
 	localDrupalRouterName         = "drupal-internal"
 	localDrupalRouterConfigPath   = "conf/traefik/drupal-internal.yml"
-	localDrupalRouterPriority     = 9000
+	localDrupalRouterPriority     = 200000
 	workbenchClientRouterName     = "islandora-workbench-client"
 	workbenchClientUserAgentRule  = "HeaderRegexp(`User-Agent`, `(?i)^Islandora Workbench$`)"
 	workbenchClientRouterPriority = 100000

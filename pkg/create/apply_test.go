@@ -416,7 +416,7 @@ http:
 	for _, want := range []string{
 		"drupal-internal:",
 		"Host(`traefik`)",
-		"priority: 9000",
+		"priority: 200000",
 		"middlewares:",
 		"- drupal-internal-host",
 		"drupal-internal-host:",
