@@ -370,7 +370,7 @@ func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error
 		if detail == "" {
 			detail = err.Error()
 		}
-		return "", fmt.Errorf("Workbench endpoint preflight failed for %s: %s", versionURL, detail)
+		return "", fmt.Errorf("workbench endpoint preflight failed for %s: %s", versionURL, detail)
 	}
 
 	path := filepath.Join(projectDir, "scripts", "demo-objects.sh")
