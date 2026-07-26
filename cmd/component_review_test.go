@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/libops/sitectl-isle/pkg/components"
 	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
@@ -188,6 +189,26 @@ func TestDriftedComponentViewsPreservesOnlyDrift(t *testing.T) {
 	got := driftedComponentViews(views)
 	if len(got) != 1 || got[0].Name != "drifted" {
 		t.Fatalf("driftedComponentViews() = %+v, want only drifted", got)
+	}
+}
+
+func TestReconciliationDefinitionsUseLocalDerivativeRulesForEnabledDisposition(t *testing.T) {
+	t.Parallel()
+	definition := components.DerivativeService("crayfits")
+	desired := corecomponent.NewDesiredState("isle")
+	if err := desired.Set(definition, corecomponent.DispositionEnabled, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	adapted := reconciliationDefinitionsForDesiredState([]corecomponent.Definition{definition}, desired)
+	if len(adapted) != 1 {
+		t.Fatalf("adapted definitions = %d, want 1", len(adapted))
+	}
+	if got := adapted[0].On.Compose.Rules[0].Op; got != corecomponent.OpRestore {
+		t.Fatalf("enabled derivative rule = %q, want restore local service", got)
+	}
+	if got := definition.On.Compose.Rules[0].Op; got != corecomponent.OpDelete {
+		t.Fatalf("source definition was mutated: rule = %q, want delete", got)
 	}
 }
 
