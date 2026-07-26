@@ -994,7 +994,46 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 	if err := ensureComposeServiceSecret(composePath, "drupal", "DB_ROOT_PASSWORD"); err != nil {
 		return fmt.Errorf("mount database root password for Drupal bootstrap: %w", err)
 	}
+	if err := ensureComposeServiceSecret(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD"); err != nil {
+		return fmt.Errorf("mount Drupal database password: %w", err)
+	}
+	if err := ensureComposeServiceSecretTarget(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD", "DB_PASSWORD"); err != nil {
+		return fmt.Errorf("mount Drupal database password at the image contract path: %w", err)
+	}
 	return nil
+}
+
+func ensureComposeServiceSecretTarget(composePath, service, source, target string) error {
+	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
+	if err != nil {
+		return fmt.Errorf("read compose file: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	serviceStart, serviceEnd, ok := composeServiceLineBounds(lines, service)
+	if !ok {
+		return fmt.Errorf("service %q not found in compose file", service)
+	}
+	secretsIndex, ok := findComposeMappingLine(lines, serviceStart+1, serviceEnd, 4, "secrets")
+	if !ok {
+		return fmt.Errorf("service %q does not define secrets", service)
+	}
+	secretsEnd := composeMappingLineEnd(lines, secretsIndex, serviceEnd, 4)
+	for index := secretsIndex + 1; index < secretsEnd; index++ {
+		if leadingSpaceCount(lines[index]) != 6 || strings.TrimSpace(lines[index]) != "- source: "+source {
+			continue
+		}
+		itemEnd := index + 1
+		for itemEnd < secretsEnd && leadingSpaceCount(lines[itemEnd]) > 6 {
+			if leadingSpaceCount(lines[itemEnd]) == 8 && strings.HasPrefix(strings.TrimSpace(lines[itemEnd]), "target:") {
+				lines[itemEnd] = "        target: " + target
+				return writeFilePreserveMode(composePath, []byte(strings.Join(lines, "\n")))
+			}
+			itemEnd++
+		}
+		lines = insertComposeLines(lines, index+1, "        target: "+target)
+		return writeFilePreserveMode(composePath, []byte(strings.Join(lines, "\n")))
+	}
+	return fmt.Errorf("service %q does not mount secret %q", service, source)
 }
 
 func ensureComposeServiceSecret(composePath, service, source string) error {

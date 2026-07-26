@@ -282,6 +282,27 @@ volumes: {}
 	}
 }
 
+func TestEnsureComposeServiceSecretTargetNormalizesExistingMount(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	writeTestFile(t, composePath, `services:
+  drupal:
+    secrets:
+      - source: CERT_PUBLIC_KEY
+      - source: DRUPAL_DEFAULT_DB_PASSWORD
+      - source: JWT_PUBLIC_KEY
+`)
+
+	if err := ensureComposeServiceSecretTarget(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD", "DB_PASSWORD"); err != nil {
+		t.Fatal(err)
+	}
+	compose := readTestFile(t, composePath)
+	if !strings.Contains(compose, "- source: DRUPAL_DEFAULT_DB_PASSWORD\n        target: DB_PASSWORD") {
+		t.Fatalf("database secret target was not normalized:\n%s", compose)
+	}
+}
+
 func TestSyncLocalDrupalInternalIngress(t *testing.T) {
 	t.Parallel()
 
