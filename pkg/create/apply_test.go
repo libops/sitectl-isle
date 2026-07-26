@@ -100,7 +100,7 @@ volumes:
 		t.Fatalf("expected fcrepo env removed, got:\n%s", compose)
 	}
 	for _, want := range []string{
-		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
+		`DRUPAL_DEFAULT_SITE_URL: "${DOMAIN}"`,
 		`DRUSH_OPTIONS_URI: "http://localhost"`,
 	} {
 		if !strings.Contains(compose, want) {
@@ -224,10 +224,8 @@ volumes: {}
 		"image: islandora/milliner:main@sha256:b8032d819de5412d0a4db6a8ac8d5dd3a61b2e097af0a707d0ae4fcd03f22ca2",
 		`ALPACA_FCREPO_INDEXER_ENABLED: "true"`,
 		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`,
-		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
-		`DRUSH_OPTIONS_URI: "http://drupal.internal"`,
-		`DRUPAL_TRUSTED_HOST_PATTERNS: "^localhost$,^drupal\\.internal$"`,
-		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.internal/"`,
+		`DRUPAL_DEFAULT_SITE_URL: "${DOMAIN}"`,
+		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "${URI_SCHEME}://${DOMAIN}/"`,
 		`target: DB_PASSWORD`,
 	} {
 		if !strings.Contains(compose, want) {
@@ -282,6 +280,78 @@ volumes: {}
 	}
 }
 
+func TestEnsureComposeServiceSecretTargetNormalizesExistingMount(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	writeTestFile(t, composePath, `services:
+  drupal:
+    secrets:
+      - source: CERT_PUBLIC_KEY
+      - source: DRUPAL_DEFAULT_DB_PASSWORD
+      - source: JWT_PUBLIC_KEY
+`)
+
+	if err := ensureComposeServiceSecretTarget(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD", "DB_PASSWORD"); err != nil {
+		t.Fatal(err)
+	}
+	compose := readTestFile(t, composePath)
+	if !strings.Contains(compose, "- source: DRUPAL_DEFAULT_DB_PASSWORD\n        target: DB_PASSWORD") {
+		t.Fatalf("database secret target was not normalized:\n%s", compose)
+	}
+}
+
+func TestEnsureComposeServiceSecretAliasPreservesExistingTarget(t *testing.T) {
+	t.Parallel()
+	composePath := filepath.Join(t.TempDir(), "docker-compose.yml")
+	writeTestFile(t, composePath, `services:
+  drupal:
+    secrets:
+      - source: DRUPAL_DEFAULT_DB_PASSWORD
+        target: DB_PASSWORD
+      - source: JWT_PUBLIC_KEY
+`)
+
+	if err := ensureComposeServiceSecretAlias(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD", "DRUPAL_DEFAULT_DB_PASSWORD"); err != nil {
+		t.Fatal(err)
+	}
+	compose := readTestFile(t, composePath)
+	for _, want := range []string{"target: DB_PASSWORD", "target: DRUPAL_DEFAULT_DB_PASSWORD"} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("database secret alias missing %q:\n%s", want, compose)
+		}
+	}
+}
+
+func TestEnsureMariaDBHealthcheckUsesPingExitStatus(t *testing.T) {
+	t.Parallel()
+	composePath := filepath.Join(t.TempDir(), "docker-compose.yml")
+	writeTestFile(t, composePath, `services:
+  mariadb:
+    image: islandora/mariadb:6.3.16
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping"]
+  drupal:
+    image: islandora/drupal:6.3.16
+`)
+
+	if err := ensureMariaDBHealthcheck(composePath); err != nil {
+		t.Fatal(err)
+	}
+	compose := readTestFile(t, composePath)
+	for _, want := range []string{
+		`test: ["CMD", "mysqladmin", "ping", "--socket=/var/run/mysqld/mysqld.sock", "--silent"]`,
+		`start_period: 30s`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("MariaDB healthcheck missing %q:\n%s", want, compose)
+		}
+	}
+	if strings.Contains(compose, `mysqladmin ping"]`) {
+		t.Fatalf("inherited unauthenticated healthcheck was retained:\n%s", compose)
+	}
+}
+
 func TestSyncLocalDrupalInternalIngress(t *testing.T) {
 	t.Parallel()
 
@@ -314,6 +384,12 @@ http:
       entryPoints:
         - http
       service: drupal
+{{- if (eq (env "TLS_PROVIDER") "letsencrypt") }}
+      tls:
+        certResolver: letsencrypt
+{{- else if (eq (env "URI_SCHEME") "https") }}
+      tls: {}
+{{- end }}
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(drupal router) error = %v", err)
 	}
@@ -321,44 +397,47 @@ http:
 	if err := SyncLocalDrupalInternalIngress(projectDir, true); err != nil {
 		t.Fatalf("SyncLocalDrupalInternalIngress(true) error = %v", err)
 	}
+	if err := SyncBotMitigationBypass(projectDir); err != nil {
+		t.Fatalf("SyncBotMitigationBypass() error = %v", err)
+	}
+	if err := SyncLocalDrupalInternalIngress(projectDir, true); err != nil {
+		t.Fatalf("SyncLocalDrupalInternalIngress(true) second call error = %v", err)
+	}
 
 	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
-	for _, want := range []string{"fcrepo.localhost", "drupal.internal"} {
-		if !strings.Contains(compose, want) {
-			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
-		}
+	if !strings.Contains(compose, "fcrepo.localhost") || strings.Contains(compose, "drupal.internal") {
+		t.Fatalf("expected canonical Compose aliases to remain unchanged, got:\n%s", compose)
 	}
-	router := readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
+	canonicalRouter := readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
+	if strings.Contains(canonicalRouter, "drupal-internal") {
+		t.Fatalf("expected canonical router to remain template-owned, got:\n%s", canonicalRouter)
+	}
+	router := readTestFile(t, filepath.Join(projectDir, filepath.FromSlash(localDrupalRouterConfigPath)))
 	for _, want := range []string{
 		"drupal-internal:",
-		"Host(`drupal.internal`)",
-		"priority: 9000",
-		"entryPoints:\n        - http",
+		"Host(`traefik`)",
+		"priority: 200000",
+		"middlewares:",
+		"- drupal-internal-host",
+		"drupal-internal-host:",
+		"Host: localhost",
+		"entryPoints:",
+		"- http",
 	} {
 		if !strings.Contains(router, want) {
 			t.Fatalf("expected router to contain %q, got:\n%s", want, router)
 		}
 	}
-	for _, absent := range []string{"drupal-internal-host", "Host: localhost", "middlewares:"} {
-		if strings.Contains(router, absent) {
-			t.Fatalf("expected router not to contain %q, got:\n%s", absent, router)
-		}
-	}
-
 	if err := SyncLocalDrupalInternalIngress(projectDir, false); err != nil {
 		t.Fatalf("SyncLocalDrupalInternalIngress(false) error = %v", err)
 	}
 
 	compose = readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
 	if strings.Contains(compose, "drupal.internal") || !strings.Contains(compose, "fcrepo.localhost") {
-		t.Fatalf("expected only local Drupal alias removed, got:\n%s", compose)
+		t.Fatalf("expected canonical Compose aliases unchanged, got:\n%s", compose)
 	}
-	router = readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
-	if strings.Contains(router, "drupal-internal") || strings.Contains(router, "drupal-internal-host") {
-		t.Fatalf("expected local Drupal router removed, got:\n%s", router)
-	}
-	if strings.Contains(router, "middlewares: {}") {
-		t.Fatalf("expected empty middleware map pruned, got:\n%s", router)
+	if _, err := os.Stat(filepath.Join(projectDir, filepath.FromSlash(localDrupalRouterConfigPath))); !os.IsNotExist(err) {
+		t.Fatalf("expected local Drupal router file removed, stat error = %v", err)
 	}
 }
 
@@ -368,7 +447,7 @@ func TestTrustedHostPatterns(t *testing.T) {
 	if got := TrustedHostPatterns("repo.example.org", false); got != `^repo\.example\.org$` {
 		t.Fatalf("TrustedHostPatterns(public) = %q", got)
 	}
-	if got := TrustedHostPatterns("localhost", true); got != `^localhost$,^drupal\.internal$` {
+	if got := TrustedHostPatterns("localhost", true); got != `^localhost$,^traefik$` {
 		t.Fatalf("TrustedHostPatterns(local) = %q", got)
 	}
 }
@@ -1106,7 +1185,7 @@ ARG TARGETARCH
 COPY --link rootfs /
 
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --optimize-autoloader && \
     chown -R nginx:nginx /var/www/drupal && \
     cleanup.sh
 `)
@@ -1154,10 +1233,11 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 
 	dockerfile := readTestFile(t, filepath.Join(projectDir, "Dockerfile"))
 	for _, want := range []string{
-		"ARG BASE_IMAGE=libops/islandora:nginx-1.30.3-php84",
-		"FROM ${BASE_IMAGE}",
+		"ARG REPOSITORY",
+		"ARG TAG",
+		"FROM ${REPOSITORY}/drupal:${TAG}",
 		"COPY --link composer.json composer.lock /var/www/drupal/",
-		"COPY --link drupal/rootfs/opt/ /opt/",
+		"COPY --link drupal/rootfs/ /",
 	} {
 		if !strings.Contains(dockerfile, want) {
 			t.Fatalf("expected Dockerfile to contain %q, got:\n%s", want, dockerfile)
@@ -1165,9 +1245,6 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 	}
 	if strings.Contains(dockerfile, "COPY --link rootfs /") {
 		t.Fatalf("expected nested rootfs copy removed, got:\n%s", dockerfile)
-	}
-	if strings.Contains(dockerfile, "COPY --link drupal/rootfs/etc/ /etc/") {
-		t.Fatalf("expected Drupal /etc overlay copy removed, got:\n%s", dockerfile)
 	}
 
 	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
@@ -1265,14 +1342,11 @@ COPY --link rootfs/opt/ /opt/
 	dockerfile := readTestFile(t, filepath.Join(projectDir, "Dockerfile"))
 	for _, want := range []string{
 		"COPY --link composer.json composer.lock /var/www/drupal/",
-		"COPY --link drupal/rootfs/opt/ /opt/",
+		"COPY --link drupal/rootfs/ /",
 	} {
 		if !strings.Contains(dockerfile, want) {
 			t.Fatalf("expected Dockerfile to contain %q, got:\n%s", want, dockerfile)
 		}
-	}
-	if strings.Contains(dockerfile, "COPY --link drupal/rootfs/etc/ /etc/") {
-		t.Fatalf("expected Drupal /etc overlay copy removed, got:\n%s", dockerfile)
 	}
 
 	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
@@ -1845,6 +1919,19 @@ func assertApplicationDatabaseBootstrap(t *testing.T, projectDir string) {
 	if !strings.Contains(drupalBlock, `DB_BOOTSTRAP_ENABLED: "true"`) {
 		t.Fatalf("drupal block missing database bootstrap flag:\n%s", drupalBlock)
 	}
+	for _, want := range []string{
+		`DB_MYSQL_HOST: "mariadb"`,
+		`DB_MYSQL_PORT: "3306"`,
+		`DRUPAL_DEFAULT_DB_NAME: "drupal_default"`,
+		`DRUPAL_DEFAULT_DB_USER: "drupal_default"`,
+		`DRUPAL_DEFAULT_SITE_URL: "${DOMAIN}"`,
+		`target: DB_PASSWORD`,
+		`target: DRUPAL_DEFAULT_DB_PASSWORD`,
+	} {
+		if !strings.Contains(drupalBlock, want) {
+			t.Fatalf("drupal block missing database compatibility value %q:\n%s", want, drupalBlock)
+		}
+	}
 	hasRootSecret, err := composeServiceHasSecret(data, "drupal", "DB_ROOT_PASSWORD")
 	if err != nil {
 		t.Fatalf("composeServiceHasSecret() error = %v", err)
@@ -2133,7 +2220,7 @@ ARG TARGETARCH
 COPY --link rootfs /
 
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --optimize-autoloader && \
     chown -R nginx:nginx /var/www/drupal && \
     cleanup.sh
 `)

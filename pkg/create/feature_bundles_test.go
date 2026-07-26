@@ -196,6 +196,32 @@ services:
 	}
 }
 
+func TestMergePDFFeatureBundleAcceptsCompatibleDesiredImageOverride(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writeFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `x-common: &common
+  restart: unless-stopped
+secrets:
+  CERT_PUBLIC_KEY: {}
+  CERT_AUTHORITY: {}
+  JWT_ADMIN_TOKEN: {}
+  JWT_PUBLIC_KEY: {}
+services:
+  alpaca:
+    image: islandora/alpaca:6.3.16
+`)
+
+	opts := Options{
+		Path:           projectDir,
+		DrupalRootfs:   ".",
+		FeatureBundles: map[string]string{FeatureBundleMergePDF: "on"},
+		ImageOverrides: map[string]string{"alpaca": "islandora/alpaca:6.3.19"},
+	}
+	if err := ApplyFeatureBundles(opts); err != nil {
+		t.Fatalf("ApplyFeatureBundles() error = %v", err)
+	}
+}
+
 func TestMergePDFFeatureBundleRequiresCommonAnchorBeforeMutation(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
@@ -401,6 +427,20 @@ func TestHOCRSearchFeatureBundleConvergesOwnedFilesAndComposerRequirements(t *te
 	assertFeatureYAMLValue(t, filepath.Join(configDir, "views.view.iiif_manifest.yml"), ".display.rest_export_1.display_options.style.options.iiif_tile_field.field_media_file", "field_media_file")
 	assertFeatureYAMLValue(t, filepath.Join(configDir, "views.view.iiif_manifest.yml"), ".display.rest_export_2.display_options.style.options.iiif_tile_field.field_media_file", "field_media_file")
 	assertFeatureYAMLValue(t, filepath.Join(configDir, "views.view.iiif_manifest.yml"), ".display.rest_export_3.display_options.style.options.iiif_tile_field.field_media_image", "field_media_image")
+}
+
+func TestLoadFeatureComposeEnvironmentUsesTrackedTemplateDefaults(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writeFeatureTestFile(t, filepath.Join(projectDir, "sample.env"), "ISLANDORA_TAG=6.3.16\n")
+
+	env, err := loadFeatureComposeEnvironment(projectDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := env["ISLANDORA_TAG"]; got != "6.3.16" {
+		t.Fatalf("ISLANDORA_TAG = %q, want tracked template default", got)
+	}
 }
 
 func TestHOCRSearchFeatureBundleImageRequirements(t *testing.T) {

@@ -3,7 +3,9 @@ package create
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/joho/godotenv"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
@@ -45,14 +48,15 @@ const (
 	legacyFcrepoDatabaseInit = "fcrepo-database-init"
 
 	drupalRouterName = "drupal"
-	localDrupalHost  = "drupal.internal"
+	localDrupalHost  = "traefik"
 	// LocalDrupalBaseURL is the internal Traefik route used by local Fcrepo
 	// clients that cannot reach the host machine's localhost.
 	LocalDrupalBaseURL            = "http://" + localDrupalHost
-	localDrupalHostRule           = "Host(`drupal.internal`)"
+	localDrupalHostRule           = "Host(`traefik`)"
 	localDrupalHostMiddlewareName = "drupal-internal-host"
 	localDrupalRouterName         = "drupal-internal"
-	localDrupalRouterPriority     = 9000
+	localDrupalRouterConfigPath   = "conf/traefik/drupal-internal.yml"
+	localDrupalRouterPriority     = 200000
 	workbenchClientRouterName     = "islandora-workbench-client"
 	workbenchClientUserAgentRule  = "HeaderRegexp(`User-Agent`, `(?i)^Islandora Workbench$`)"
 	workbenchClientRouterPriority = 100000
@@ -155,6 +159,7 @@ type Options struct {
 	DerivativeServices   map[string]string
 	FeatureBundles       map[string]string
 	FeatureBundleOptions map[string]map[string]string
+	ImageOverrides       map[string]string
 	EnvFiles             []string
 	Codebase             string
 }
@@ -220,7 +225,6 @@ func Apply(opts Options) error {
 		}
 		opts.DrupalRootfs = corecomponent.DefaultDrupalRootfs
 	}
-
 	if err := applyRepositoryComponents(opts); err != nil {
 		return err
 	}
@@ -243,10 +247,9 @@ func Apply(opts Options) error {
 			return fmt.Errorf("apply bot-mitigation=%s: %w", opts.BotMitigation, err)
 		}
 	}
-	if err := SyncLocalDrupalInternalIngress(opts.Path, opts.Fcrepo == FcrepoStateOn); err != nil {
-		return fmt.Errorf("sync local Drupal ingress: %w", err)
+	if err := syncLocalDrupalRouterContext(localProjectContext(opts.Path), true); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("sync local Drupal router: %w", err)
 	}
-
 	return nil
 }
 
@@ -386,6 +389,9 @@ func SyncLocalDrupalInternalIngressContext(ctx *config.Context, enabled bool) er
 }
 
 func syncLocalDrupalTraefikAliasContext(ctx *config.Context, enabled bool) error {
+	if localDrupalHost == "traefik" {
+		return nil
+	}
 	path := ctx.ResolveProjectPath("docker-compose.yml")
 	exists, err := ctx.FileExists(path)
 	if err != nil {
@@ -432,53 +438,29 @@ func syncLocalDrupalTraefikAliasContext(ctx *config.Context, enabled bool) error
 }
 
 func syncLocalDrupalRouterContext(ctx *config.Context, enabled bool) error {
-	path := ctx.ResolveProjectPath(filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
-	exists, err := ctx.FileExists(path)
-	if err != nil {
-		return fmt.Errorf("stat local Drupal router config: %w", err)
-	}
-	if !exists {
-		return nil
-	}
-	data, err := ctx.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read local Drupal router config: %w", err)
-	}
-	doc, err := corecomponent.LoadYAMLDocument(data)
-	if err != nil {
-		return fmt.Errorf("parse local Drupal router config: %w", err)
-	}
-	routerPath := ".http.routers." + localDrupalRouterName
+	path := ctx.ResolveProjectPath(filepath.FromSlash(localDrupalRouterConfigPath))
 	if !enabled {
-		if err := doc.DeletePath(routerPath); err != nil {
-			return err
-		}
-		if err := doc.DeletePath(".http.middlewares." + localDrupalHostMiddlewareName); err != nil {
-			return err
-		}
-		if err := deletePathIfEmptyYAMLMap(doc, ".http.middlewares"); err != nil {
-			return err
-		}
-		updated, err := doc.Bytes()
-		if err != nil {
-			return fmt.Errorf("marshal local Drupal router config: %w", err)
-		}
-		return ctx.WriteFile(path, updated)
+		return ctx.RemoveFile(path)
 	}
-	router, err := localDrupalRouter(data)
+	canonicalHost, err := localDrupalCanonicalHost(ctx)
 	if err != nil {
 		return err
 	}
-	if err := doc.SetValue(routerPath, router); err != nil {
-		return err
+	config := map[string]any{
+		"http": map[string]any{
+			"middlewares": map[string]any{localDrupalHostMiddlewareName: localDrupalHostMiddleware(canonicalHost)},
+			"routers": map[string]any{
+				localDrupalRouterName: map[string]any{
+					"entryPoints": []string{"http"},
+					"middlewares": []string{localDrupalHostMiddlewareName},
+					"priority":    localDrupalRouterPriority,
+					"rule":        localDrupalHostRule,
+					"service":     drupalRouterName,
+				},
+			},
+		},
 	}
-	if err := doc.DeletePath(".http.middlewares." + localDrupalHostMiddlewareName); err != nil {
-		return err
-	}
-	if err := deletePathIfEmptyYAMLMap(doc, ".http.middlewares"); err != nil {
-		return err
-	}
-	updated, err := doc.Bytes()
+	updated, err := yaml.Marshal(config)
 	if err != nil {
 		return fmt.Errorf("marshal local Drupal router config: %w", err)
 	}
@@ -502,7 +484,7 @@ func updateWorkbenchClientBypassContext(ctx *config.Context, enabled bool) error
 	if err != nil {
 		return fmt.Errorf("read bot mitigation router config: %w", err)
 	}
-	doc, err := corecomponent.LoadYAMLDocument(data)
+	doc, err := corecomponent.LoadYAMLDocument(maskTemplateDirectives(data))
 	if err != nil {
 		return fmt.Errorf("parse bot mitigation router config: %w", err)
 	}
@@ -515,7 +497,7 @@ func updateWorkbenchClientBypassContext(ctx *config.Context, enabled bool) error
 		if err != nil {
 			return fmt.Errorf("marshal bot mitigation router config: %w", err)
 		}
-		return ctx.WriteFile(path, updated)
+		return ctx.WriteFile(path, restoreTemplateDirectives(updated))
 	}
 	router, err := workbenchClientRouter(data)
 	if err != nil {
@@ -528,7 +510,7 @@ func updateWorkbenchClientBypassContext(ctx *config.Context, enabled bool) error
 	if err != nil {
 		return fmt.Errorf("marshal bot mitigation router config: %w", err)
 	}
-	return ctx.WriteFile(path, updated)
+	return ctx.WriteFile(path, restoreTemplateDirectives(updated))
 }
 
 func localProjectContext(projectDir string) *config.Context {
@@ -560,27 +542,76 @@ func workbenchClientRouter(data []byte) (map[string]any, error) {
 	return router, nil
 }
 
-func localDrupalRouter(data []byte) (map[string]any, error) {
-	source, err := drupalRouter(data)
+func localDrupalCanonicalHost(ctx *config.Context) (string, error) {
+	routerPath := ctx.ResolveProjectPath(filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	routerData, err := ctx.ReadFile(routerPath)
 	if err != nil {
-		return nil, err
+		return "", fmt.Errorf("read canonical Drupal router: %w", err)
 	}
-	router := map[string]any{
-		"rule":     localDrupalHostRule,
-		"service":  drupalRouterName,
-		"priority": localDrupalRouterPriority,
+	router, err := drupalRouter(routerData)
+	if err != nil {
+		return "", err
 	}
-	for _, key := range []string{"entryPoints", "tls"} {
-		if value, ok := source[key]; ok {
-			router[key] = value
+	hostMatch := regexp.MustCompile("Host\\(`([^`]+)`\\)").FindStringSubmatch(stringMapValue(router, "rule"))
+	if len(hostMatch) == 2 && !strings.Contains(hostMatch[1], "{{") {
+		return hostMatch[1], nil
+	}
+	composeData, err := ctx.ReadFile(ctx.ResolveProjectPath("docker-compose.yml"))
+	if err != nil {
+		return "", fmt.Errorf("read canonical Compose file: %w", err)
+	}
+	var composeRoot map[string]any
+	if err := yaml.Unmarshal(composeData, &composeRoot); err != nil {
+		return "", fmt.Errorf("parse canonical Compose file: %w", err)
+	}
+	drupal := yamlMap(yamlMap(composeRoot["services"])["drupal"])
+	environment := yamlMap(drupal["environment"])
+	if ingressHostnames := strings.TrimSpace(stringMapValue(environment, "INGRESS_HOSTNAMES")); ingressHostnames != "" {
+		if host := strings.TrimSpace(strings.Split(ingressHostnames, ",")[0]); host != "" && !strings.Contains(host, "${") {
+			return host, nil
 		}
 	}
-	return router, nil
+	if siteURL := strings.TrimSpace(stringMapValue(environment, "DRUPAL_DEFAULT_SITE_URL")); siteURL != "" && !strings.Contains(siteURL, "${") {
+		if host := serviceURLHost(siteURL); host != "" {
+			return host, nil
+		}
+	}
+
+	envFile := ".env"
+	if len(ctx.EnvFile) > 0 && strings.TrimSpace(ctx.EnvFile[0]) != "" {
+		envFile = strings.TrimSpace(ctx.EnvFile[0])
+	}
+	data, err := ctx.ReadFile(ctx.ResolveProjectPath(envFile))
+	if err != nil {
+		return "", fmt.Errorf("read Compose environment %s: %w", envFile, err)
+	}
+	values, err := godotenv.Parse(strings.NewReader(string(data)))
+	if err != nil {
+		return "", fmt.Errorf("parse Compose environment %s: %w", envFile, err)
+	}
+	host := strings.TrimSpace(values["DOMAIN"])
+	if host == "" {
+		return "", fmt.Errorf("compose environment %s does not define DOMAIN", envFile)
+	}
+	if strings.ContainsAny(host, "\r\n") {
+		return "", fmt.Errorf("compose environment %s contains an invalid DOMAIN", envFile)
+	}
+	return host, nil
+}
+
+func localDrupalHostMiddleware(canonicalHost string) map[string]any {
+	return map[string]any{
+		"headers": map[string]any{
+			"customRequestHeaders": map[string]any{
+				"Host": canonicalHost,
+			},
+		},
+	}
 }
 
 func drupalRouter(data []byte) (map[string]any, error) {
 	var root map[string]any
-	if err := yaml.Unmarshal(data, &root); err != nil {
+	if err := yaml.Unmarshal(maskTemplateDirectives(data), &root); err != nil {
 		return nil, fmt.Errorf("parse Traefik router config: %w", err)
 	}
 	httpMap := yamlMap(root["http"])
@@ -590,6 +621,49 @@ func drupalRouter(data []byte) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	return router, nil
+}
+
+const templateDirectiveMarker = "# sitectl-template-directive:"
+
+func maskTemplateDirectives(data []byte) []byte {
+	lines := strings.Split(string(data), "\n")
+	conditionalDepth := 0
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		isDirective := strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}")
+		if isDirective || conditionalDepth > 0 {
+			lines[index] = templateDirectiveMarker + base64.RawStdEncoding.EncodeToString([]byte(line))
+		}
+		if !isDirective {
+			continue
+		}
+		expression := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(trimmed, "{{-"), "{{"), "}}"))
+		switch {
+		case strings.HasPrefix(expression, "if "), strings.HasPrefix(expression, "with "), strings.HasPrefix(expression, "range "):
+			conditionalDepth++
+		case expression == "end", expression == "end -":
+			if conditionalDepth > 0 {
+				conditionalDepth--
+			}
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+func restoreTemplateDirectives(data []byte) []byte {
+	lines := strings.Split(string(data), "\n")
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, templateDirectiveMarker) {
+			continue
+		}
+		encoded := strings.TrimPrefix(trimmed, templateDirectiveMarker)
+		directive, err := base64.RawStdEncoding.DecodeString(encoded)
+		if err == nil {
+			lines[index] = string(directive)
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
 }
 
 func stringSlice(value any) []string {
@@ -641,35 +715,6 @@ func yamlMap(value any) map[string]any {
 	default:
 		return nil
 	}
-}
-
-func deletePathIfEmptyYAMLMap(doc *corecomponent.YAMLDocument, path string) error {
-	if doc == nil {
-		return nil
-	}
-	data, err := doc.Bytes()
-	if err != nil {
-		return err
-	}
-	var root any
-	if err := yaml.Unmarshal(data, &root); err != nil {
-		return err
-	}
-	current := yamlMap(root)
-	for _, segment := range strings.Split(strings.TrimPrefix(path, "."), ".") {
-		if current == nil {
-			return nil
-		}
-		next, ok := current[segment]
-		if !ok {
-			return nil
-		}
-		current = yamlMap(next)
-	}
-	if len(current) != 0 {
-		return nil
-	}
-	return doc.DeletePath(path)
 }
 
 func stringMapValue(values map[string]any, key string) string {
@@ -778,8 +823,9 @@ func rewriteGitRootDockerfile(path string) error {
 	if err != nil {
 		return fmt.Errorf("read Dockerfile: %w", err)
 	}
-	if strings.Contains(string(data), "COPY --link composer.json composer.lock /var/www/drupal/") &&
-		strings.Contains(string(data), "COPY --link drupal/rootfs/opt/ /opt/") {
+	if strings.Contains(string(data), "composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --optimize-autoloader") &&
+		strings.Contains(string(data), "COPY --link composer.json composer.lock /var/www/drupal/") &&
+		strings.Contains(string(data), "COPY --link drupal/rootfs/ /") {
 		return nil
 	}
 
@@ -790,14 +836,14 @@ COPY --link composer.json composer.lock /var/www/drupal/
 COPY --link assets/ /var/www/drupal/assets/
 
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --optimize-autoloader && \
     cleanup.sh
 
 COPY --link config/ /var/www/drupal/config/
 COPY --link recipes/ /var/www/drupal/recipes/
 COPY --link web/modules/custom/ /var/www/drupal/web/modules/custom/
 COPY --link web/themes/custom/ /var/www/drupal/web/themes/custom/
-COPY --link drupal/rootfs/opt/ /opt/
+COPY --link drupal/rootfs/ /
 
 RUN chown -R nginx:nginx /var/www/drupal && \
     cleanup.sh
@@ -820,14 +866,7 @@ func dockerfileHeader(contents string) string {
 		}
 	}
 	if foundTargetArch {
-		header := strings.Join(out, "\n")
-		if strings.Contains(header, "FROM ${REPOSITORY}/drupal:${TAG}") {
-			return `ARG BASE_IMAGE=libops/islandora:nginx-1.30.3-php84
-FROM ${BASE_IMAGE}
-
-ARG TARGETARCH`
-		}
-		return header
+		return strings.Join(out, "\n")
 	}
 	return `ARG BASE_IMAGE=libops/islandora:nginx-1.30.3-php84
 FROM ${BASE_IMAGE}
@@ -937,6 +976,17 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 	if err := compose.SetServiceEnv("drupal", "DB_BOOTSTRAP_ENABLED", "true"); err != nil {
 		return err
 	}
+	for key, value := range map[string]string{
+		"DB_MYSQL_HOST":           "mariadb",
+		"DB_MYSQL_PORT":           "3306",
+		"DRUPAL_DEFAULT_DB_NAME":  "drupal_default",
+		"DRUPAL_DEFAULT_DB_USER":  "drupal_default",
+		"DRUPAL_DEFAULT_SITE_URL": composePublicSiteURLExpr,
+	} {
+		if err := compose.SetServiceEnv("drupal", key, value); err != nil {
+			return err
+		}
+	}
 	if _, ok := compose.SectionEntryBlock("secrets", "DB_ROOT_PASSWORD"); !ok {
 		if err := compose.AddSectionEntryBlock("secrets", "DB_ROOT_PASSWORD", `  DB_ROOT_PASSWORD:
     file: "./secrets/DB_ROOT_PASSWORD"`); err != nil {
@@ -946,10 +996,115 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 	if err := compose.Save(); err != nil {
 		return err
 	}
+	if err := ensureMariaDBHealthcheck(composePath); err != nil {
+		return fmt.Errorf("configure authenticated MariaDB healthcheck: %w", err)
+	}
 	if err := ensureComposeServiceSecret(composePath, "drupal", "DB_ROOT_PASSWORD"); err != nil {
 		return fmt.Errorf("mount database root password for Drupal bootstrap: %w", err)
 	}
+	if err := ensureComposeServiceSecret(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD"); err != nil {
+		return fmt.Errorf("mount Drupal database password: %w", err)
+	}
+	if err := ensureComposeServiceSecretTarget(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD", "DB_PASSWORD"); err != nil {
+		return fmt.Errorf("mount Drupal database password at the image contract path: %w", err)
+	}
+	if err := ensureComposeServiceSecretAlias(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD", "DRUPAL_DEFAULT_DB_PASSWORD"); err != nil {
+		return fmt.Errorf("expose Drupal database password to template settings: %w", err)
+	}
 	return nil
+}
+
+func ensureMariaDBHealthcheck(composePath string) error {
+	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
+	if err != nil {
+		return fmt.Errorf("read compose file: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	serviceStart, serviceEnd, ok := composeServiceLineBounds(lines, "mariadb")
+	if !ok {
+		return nil
+	}
+	if healthcheckIndex, found := findComposeMappingLine(lines, serviceStart+1, serviceEnd, 4, "healthcheck"); found {
+		healthcheckEnd := composeMappingLineEnd(lines, healthcheckIndex, serviceEnd, 4)
+		lines = append(lines[:healthcheckIndex], lines[healthcheckEnd:]...)
+		serviceEnd -= healthcheckEnd - healthcheckIndex
+	}
+	lines = insertComposeLines(lines, serviceEnd,
+		"    healthcheck:",
+		`      test: ["CMD", "mysqladmin", "ping", "--socket=/var/run/mysqld/mysqld.sock", "--silent"]`,
+		"      interval: 10s",
+		"      timeout: 5s",
+		"      retries: 20",
+		"      start_period: 30s",
+	)
+	return writeFilePreserveMode(composePath, []byte(strings.Join(lines, "\n")))
+}
+
+func ensureComposeServiceSecretAlias(composePath, service, source, target string) error {
+	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
+	if err != nil {
+		return fmt.Errorf("read compose file: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	serviceStart, serviceEnd, ok := composeServiceLineBounds(lines, service)
+	if !ok {
+		return fmt.Errorf("service %q not found in compose file", service)
+	}
+	secretsIndex, ok := findComposeMappingLine(lines, serviceStart+1, serviceEnd, 4, "secrets")
+	if !ok {
+		return fmt.Errorf("service %q does not define secrets", service)
+	}
+	secretsEnd := composeMappingLineEnd(lines, secretsIndex, serviceEnd, 4)
+	for index := secretsIndex + 1; index < secretsEnd; index++ {
+		if leadingSpaceCount(lines[index]) != 6 || strings.TrimSpace(lines[index]) != "- source: "+source {
+			continue
+		}
+		itemEnd := index + 1
+		for itemEnd < secretsEnd && leadingSpaceCount(lines[itemEnd]) > 6 {
+			if leadingSpaceCount(lines[itemEnd]) == 8 && strings.TrimSpace(lines[itemEnd]) == "target: "+target {
+				return nil
+			}
+			itemEnd++
+		}
+	}
+	lines = insertComposeLines(lines, secretsEnd,
+		"      - source: "+source,
+		"        target: "+target,
+	)
+	return writeFilePreserveMode(composePath, []byte(strings.Join(lines, "\n")))
+}
+
+func ensureComposeServiceSecretTarget(composePath, service, source, target string) error {
+	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
+	if err != nil {
+		return fmt.Errorf("read compose file: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	serviceStart, serviceEnd, ok := composeServiceLineBounds(lines, service)
+	if !ok {
+		return fmt.Errorf("service %q not found in compose file", service)
+	}
+	secretsIndex, ok := findComposeMappingLine(lines, serviceStart+1, serviceEnd, 4, "secrets")
+	if !ok {
+		return fmt.Errorf("service %q does not define secrets", service)
+	}
+	secretsEnd := composeMappingLineEnd(lines, secretsIndex, serviceEnd, 4)
+	for index := secretsIndex + 1; index < secretsEnd; index++ {
+		if leadingSpaceCount(lines[index]) != 6 || strings.TrimSpace(lines[index]) != "- source: "+source {
+			continue
+		}
+		itemEnd := index + 1
+		for itemEnd < secretsEnd && leadingSpaceCount(lines[itemEnd]) > 6 {
+			if leadingSpaceCount(lines[itemEnd]) == 8 && strings.HasPrefix(strings.TrimSpace(lines[itemEnd]), "target:") {
+				lines[itemEnd] = "        target: " + target
+				return writeFilePreserveMode(composePath, []byte(strings.Join(lines, "\n")))
+			}
+			itemEnd++
+		}
+		lines = insertComposeLines(lines, index+1, "        target: "+target)
+		return writeFilePreserveMode(composePath, []byte(strings.Join(lines, "\n")))
+	}
+	return fmt.Errorf("service %q does not mount secret %q", service, source)
 }
 
 func ensureComposeServiceSecret(composePath, service, source string) error {
@@ -1723,7 +1878,7 @@ func updateComposeForFcrepoOff(composePath string) error {
 			return err
 		}
 	}
-	if serviceEnvValue(compose, "drupal", "DRUSH_OPTIONS_URI") == LocalDrupalBaseURL {
+	if shouldUseLocalDrupalInternalURL(serviceEnvValue(compose, "drupal", "DRUSH_OPTIONS_URI")) {
 		if err := compose.SetServiceEnv("drupal", "DRUSH_OPTIONS_URI", publicSiteURLExpr); err != nil {
 			return err
 		}
@@ -1751,8 +1906,11 @@ func shouldUseLocalDrupalInternalURL(siteURL string) bool {
 	if siteURL == "" {
 		return true
 	}
+	if siteURL == composePublicSiteURLExpr {
+		return false
+	}
 	host := serviceURLHost(siteURL)
-	return host == "" || host == "localhost" || host == "127.0.0.1"
+	return host == "" || host == "localhost" || host == "127.0.0.1" || host == "drupal.internal"
 }
 
 // TrustedHostPatterns returns comma-separated Drupal trusted host regexes.
@@ -1790,7 +1948,10 @@ func uniqueStrings(values []string) []string {
 
 func fcrepoAllowedDrupalURL(siteURL string) string {
 	siteURL = strings.TrimRight(strings.TrimSpace(siteURL), "/")
-	if siteURL == "" {
+	switch siteURL {
+	case composePublicSiteURLExpr:
+		siteURL = "${URI_SCHEME}://" + composePublicSiteURLExpr
+	case "":
 		siteURL = publicSiteURLExpr
 	}
 	return siteURL + "/"

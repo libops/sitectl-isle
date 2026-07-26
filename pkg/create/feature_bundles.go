@@ -290,6 +290,9 @@ func CheckFeatureBundleRequirements(opts Options, name string) error {
 			return fmt.Errorf("feature bundle %q requires Compose service %q", name, requirement.Service)
 		}
 		rawImage := strings.TrimSpace(fmt.Sprint(service["image"]))
+		if override := strings.TrimSpace(opts.ImageOverrides[requirement.Service]); override != "" {
+			rawImage = override
+		}
 		if rawImage == "" || rawImage == "<nil>" {
 			return fmt.Errorf("feature bundle %q requires an image on Compose service %q", name, requirement.Service)
 		}
@@ -1071,6 +1074,7 @@ func featureMap(value any) map[string]any {
 func loadFeatureComposeEnvironment(projectDir string, envFiles []string) (map[string]string, error) {
 	env := map[string]string{}
 	files := append([]string{}, envFiles...)
+	useTemplateDefaults := len(files) == 0
 	if len(files) == 0 {
 		files = []string{".env"}
 	}
@@ -1085,6 +1089,17 @@ func loadFeatureComposeEnvironment(projectDir string, envFiles []string) (map[st
 		data, err := os.ReadFile(name) // #nosec G304 -- selected project Compose env file.
 		if err != nil {
 			if os.IsNotExist(err) {
+				if useTemplateDefaults && filepath.Base(name) == ".env" {
+					data, err = os.ReadFile(filepath.Join(filepath.Dir(name), "sample.env")) // #nosec G304 -- tracked template defaults beside the Compose env file.
+					if err == nil {
+						for key, value := range parseFeatureDotEnv(string(data)) {
+							env[key] = value
+						}
+					}
+					if err != nil && !os.IsNotExist(err) {
+						return nil, err
+					}
+				}
 				continue
 			}
 			return nil, err

@@ -340,7 +340,7 @@ func verifyDemoObjects(ctx context.Context, projectDir, fcrepoExpected, fileSyst
 	if err != nil {
 		return failedVerifyResult("verify:demo-objects", err.Error(), "")
 	}
-	if _, err := runLocalProjectOutput(ctx, projectDir, "make", "demo-objects"); err != nil {
+	if _, err := runDemoObjectsScript(ctx, projectDir); err != nil {
 		return failedVerifyResult("verify:demo-objects", err.Error(), "")
 	}
 	for i := 0; i < 24; i++ {
@@ -357,6 +357,89 @@ func verifyDemoObjects(ctx context.Context, projectDir, fcrepoExpected, fileSyst
 		}
 	}
 	return failedVerifyResult("verify:demo-objects", fmt.Sprintf("expected ingested content to appear in %s:%s", service, target), "check Islandora ingest workers and queue consumers")
+}
+
+func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error) {
+	if err := createpkg.SyncLocalDrupalInternalIngress(projectDir, true); err != nil {
+		return "", fmt.Errorf("reconcile Workbench internal route: %w", err)
+	}
+	versionURL := createpkg.LocalDrupalBaseURL + "/islandora_workbench_integration/version"
+	var preflightOutput []byte
+	var preflightErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		preflight := exec.CommandContext(ctx, "docker", "compose", "exec", "-T", "drupal", "curl", // #nosec G204 -- fixed diagnostic command scoped to the selected project.
+			"--silent", "--show-error", "--user-agent", "Islandora Workbench", "--write-out", "\n%{http_code}", versionURL)
+		preflight.Dir = projectDir
+		preflightOutput, preflightErr = preflight.CombinedOutput()
+		status := strings.TrimSpace(string(preflightOutput))
+		statusFields := strings.Fields(status)
+		statusCode := ""
+		if len(statusFields) > 0 {
+			statusCode = statusFields[len(statusFields)-1]
+		}
+		if preflightErr == nil && (statusCode == "200" || statusCode == "401") {
+			break
+		}
+		if preflightErr == nil {
+			preflightErr = fmt.Errorf("unexpected HTTP response")
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if preflightErr != nil {
+		detail := strings.TrimSpace(string(preflightOutput))
+		if detail == "" {
+			detail = preflightErr.Error()
+		}
+		return "", fmt.Errorf("workbench endpoint preflight failed for %s: %s", versionURL, detail)
+	}
+
+	path := filepath.Join(projectDir, "scripts", "demo-objects.sh")
+	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project.
+	if err != nil {
+		return "", fmt.Errorf("read canonical demo-objects script: %w", err)
+	}
+	script, err := prepareDemoObjectsScript(data)
+	if err != nil {
+		return "", err
+	}
+
+	command := exec.CommandContext(ctx, "bash", "-s") // #nosec G204 -- the tracked template script is the canonical operation.
+	command.Dir = projectDir
+	command.Env = append(os.Environ(), "SITECTL_DEMO_OBJECTS_URL="+createpkg.LocalDrupalBaseURL)
+	command.Stdin = strings.NewReader(script)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		return stdout.String(), fmt.Errorf("canonical demo-objects script failed: %s", detail)
+	}
+	return stdout.String(), nil
+}
+
+func prepareDemoObjectsScript(data []byte) (string, error) {
+	script := string(data)
+	const profileSource = `source "$(dirname "${BASH_SOURCE[0]}")/profile.sh"`
+	const publicURL = `URL="${URI_SCHEME}://${DOMAIN}"`
+	const appendPublishedPort = `if [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then`
+	if !strings.Contains(script, profileSource) || !strings.Contains(script, publicURL) || !strings.Contains(script, appendPublishedPort) {
+		return "", fmt.Errorf("canonical demo-objects script has an unknown URL contract")
+	}
+	script = strings.Replace(script, profileSource, `source "./scripts/profile.sh"`, 1)
+	script = strings.Replace(script, publicURL, `URL="${SITECTL_DEMO_OBJECTS_URL:-${URI_SCHEME}://${DOMAIN}}"`, 1)
+	script = strings.Replace(script, appendPublishedPort, `if [ -z "${SITECTL_DEMO_OBJECTS_URL:-}" ] && [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then`, 1)
+
+	return script, nil
 }
 
 func demoObjectAssertTarget(fcrepoExpected, fileSystemURI string) (string, string) {

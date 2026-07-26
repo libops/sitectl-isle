@@ -127,6 +127,7 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 	if err != nil {
 		return err
 	}
+	defs = reconciliationDefinitionsForDesiredState(defs, desired)
 	plan, err := corecomponent.BuildReconciliationPlan(ctx, ctx.ProjectDir, desired, corecomponent.DetectOptions{
 		ComposeRoot:  ctx.ProjectDir,
 		DrupalRootfs: rootfs,
@@ -201,6 +202,26 @@ func runComponentReconcile(cmd *cobra.Command, opts componentReconcileOptions) e
 		fmt.Fprintln(cmd.OutOrStdout())
 	}
 	return nil
+}
+
+// reconciliationDefinitionsForDesiredState adapts legacy component state
+// polarity to the persisted disposition contract. Derivative components
+// historically use StateOff for the local/enabled topology and StateOn for
+// distributed topology; the shared planner otherwise maps enabled to StateOn.
+func reconciliationDefinitionsForDesiredState(defs []corecomponent.Definition, desired corecomponent.DesiredState) []corecomponent.Definition {
+	adapted := append([]corecomponent.Definition{}, defs...)
+	for index := range adapted {
+		definition := &adapted[index]
+		if !createpkg.IsDerivativeService(definition.Name) {
+			continue
+		}
+		selection, ok := desired.Spec.Components[definition.Name]
+		if !ok || selection.Disposition != corecomponent.DispositionEnabled {
+			continue
+		}
+		definition.On, definition.Off = definition.Off, definition.On
+	}
+	return adapted
 }
 
 func runInteractiveComponentReview(cmd *cobra.Command, ctx *config.Context, rootfs string, opts componentReconcileOptions, remoteContext bool, componentName string, allStatuses, statuses []componentView) error {
