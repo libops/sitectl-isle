@@ -823,7 +823,8 @@ func rewriteGitRootDockerfile(path string) error {
 	if err != nil {
 		return fmt.Errorf("read Dockerfile: %w", err)
 	}
-	if strings.Contains(string(data), "COPY --link composer.json composer.lock /var/www/drupal/") &&
+	if strings.Contains(string(data), "composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --optimize-autoloader") &&
+		strings.Contains(string(data), "COPY --link composer.json composer.lock /var/www/drupal/") &&
 		strings.Contains(string(data), "COPY --link drupal/rootfs/ /") {
 		return nil
 	}
@@ -835,7 +836,7 @@ COPY --link composer.json composer.lock /var/www/drupal/
 COPY --link assets/ /var/www/drupal/assets/
 
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --optimize-autoloader && \
     cleanup.sh
 
 COPY --link config/ /var/www/drupal/config/
@@ -1905,6 +1906,9 @@ func shouldUseLocalDrupalInternalURL(siteURL string) bool {
 	if siteURL == "" {
 		return true
 	}
+	if siteURL == composePublicSiteURLExpr {
+		return false
+	}
 	host := serviceURLHost(siteURL)
 	return host == "" || host == "localhost" || host == "127.0.0.1"
 }
@@ -1944,7 +1948,9 @@ func uniqueStrings(values []string) []string {
 
 func fcrepoAllowedDrupalURL(siteURL string) string {
 	siteURL = strings.TrimRight(strings.TrimSpace(siteURL), "/")
-	if siteURL == "" {
+	if siteURL == composePublicSiteURLExpr {
+		siteURL = "${URI_SCHEME}://" + composePublicSiteURLExpr
+	} else if siteURL == "" {
 		siteURL = publicSiteURLExpr
 	}
 	return siteURL + "/"

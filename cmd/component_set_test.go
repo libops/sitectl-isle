@@ -1525,7 +1525,7 @@ ARG TARGETARCH
 COPY --link rootfs /
 
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --optimize-autoloader && \
     chown -R nginx:nginx /var/www/drupal && \
     cleanup.sh
 `)
