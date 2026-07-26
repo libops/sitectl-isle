@@ -314,6 +314,12 @@ http:
       entryPoints:
         - http
       service: drupal
+{{- if (eq (env "TLS_PROVIDER") "letsencrypt") }}
+      tls:
+        certResolver: letsencrypt
+{{- else if (eq (env "URI_SCHEME") "https") }}
+      tls: {}
+{{- end }}
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(drupal router) error = %v", err)
 	}
@@ -334,6 +340,8 @@ http:
 		"Host(`drupal.internal`)",
 		"priority: 9000",
 		"entryPoints:\n        - http",
+		`{{- if (eq (env "TLS_PROVIDER") "letsencrypt") }}`,
+		`{{- end }}`,
 	} {
 		if !strings.Contains(router, want) {
 			t.Fatalf("expected router to contain %q, got:\n%s", want, router)

@@ -3,6 +3,7 @@ package create
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io/fs"
@@ -445,7 +446,7 @@ func syncLocalDrupalRouterContext(ctx *config.Context, enabled bool) error {
 	if err != nil {
 		return fmt.Errorf("read local Drupal router config: %w", err)
 	}
-	doc, err := corecomponent.LoadYAMLDocument(data)
+	doc, err := corecomponent.LoadYAMLDocument(maskTemplateDirectives(data))
 	if err != nil {
 		return fmt.Errorf("parse local Drupal router config: %w", err)
 	}
@@ -464,7 +465,7 @@ func syncLocalDrupalRouterContext(ctx *config.Context, enabled bool) error {
 		if err != nil {
 			return fmt.Errorf("marshal local Drupal router config: %w", err)
 		}
-		return ctx.WriteFile(path, updated)
+		return ctx.WriteFile(path, restoreTemplateDirectives(updated))
 	}
 	router, err := localDrupalRouter(data)
 	if err != nil {
@@ -483,7 +484,7 @@ func syncLocalDrupalRouterContext(ctx *config.Context, enabled bool) error {
 	if err != nil {
 		return fmt.Errorf("marshal local Drupal router config: %w", err)
 	}
-	return ctx.WriteFile(path, updated)
+	return ctx.WriteFile(path, restoreTemplateDirectives(updated))
 }
 
 func updateWorkbenchClientBypass(projectDir string, enabled bool) error {
@@ -503,7 +504,7 @@ func updateWorkbenchClientBypassContext(ctx *config.Context, enabled bool) error
 	if err != nil {
 		return fmt.Errorf("read bot mitigation router config: %w", err)
 	}
-	doc, err := corecomponent.LoadYAMLDocument(data)
+	doc, err := corecomponent.LoadYAMLDocument(maskTemplateDirectives(data))
 	if err != nil {
 		return fmt.Errorf("parse bot mitigation router config: %w", err)
 	}
@@ -516,7 +517,7 @@ func updateWorkbenchClientBypassContext(ctx *config.Context, enabled bool) error
 		if err != nil {
 			return fmt.Errorf("marshal bot mitigation router config: %w", err)
 		}
-		return ctx.WriteFile(path, updated)
+		return ctx.WriteFile(path, restoreTemplateDirectives(updated))
 	}
 	router, err := workbenchClientRouter(data)
 	if err != nil {
@@ -529,7 +530,7 @@ func updateWorkbenchClientBypassContext(ctx *config.Context, enabled bool) error
 	if err != nil {
 		return fmt.Errorf("marshal bot mitigation router config: %w", err)
 	}
-	return ctx.WriteFile(path, updated)
+	return ctx.WriteFile(path, restoreTemplateDirectives(updated))
 }
 
 func localProjectContext(projectDir string) *config.Context {
@@ -581,7 +582,7 @@ func localDrupalRouter(data []byte) (map[string]any, error) {
 
 func drupalRouter(data []byte) (map[string]any, error) {
 	var root map[string]any
-	if err := yaml.Unmarshal(data, &root); err != nil {
+	if err := yaml.Unmarshal(maskTemplateDirectives(data), &root); err != nil {
 		return nil, fmt.Errorf("parse Traefik router config: %w", err)
 	}
 	httpMap := yamlMap(root["http"])
@@ -591,6 +592,49 @@ func drupalRouter(data []byte) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	return router, nil
+}
+
+const templateDirectiveMarker = "# sitectl-template-directive:"
+
+func maskTemplateDirectives(data []byte) []byte {
+	lines := strings.Split(string(data), "\n")
+	conditionalDepth := 0
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		isDirective := strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}")
+		if isDirective || conditionalDepth > 0 {
+			lines[index] = templateDirectiveMarker + base64.RawStdEncoding.EncodeToString([]byte(line))
+		}
+		if !isDirective {
+			continue
+		}
+		expression := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(trimmed, "{{-"), "{{"), "}}"))
+		switch {
+		case strings.HasPrefix(expression, "if "), strings.HasPrefix(expression, "with "), strings.HasPrefix(expression, "range "):
+			conditionalDepth++
+		case expression == "end", expression == "end -":
+			if conditionalDepth > 0 {
+				conditionalDepth--
+			}
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+func restoreTemplateDirectives(data []byte) []byte {
+	lines := strings.Split(string(data), "\n")
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, templateDirectiveMarker) {
+			continue
+		}
+		encoded := strings.TrimPrefix(trimmed, templateDirectiveMarker)
+		directive, err := base64.RawStdEncoding.DecodeString(encoded)
+		if err == nil {
+			lines[index] = string(directive)
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
 }
 
 func stringSlice(value any) []string {
