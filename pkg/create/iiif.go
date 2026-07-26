@@ -19,7 +19,7 @@ const (
 	cantaloupeDataVolumeName = "cantaloupe-data"
 	tripletCacheVolumeName   = "triplet-cache"
 	publicSiteURLExpr        = "http://localhost"
-	composePublicSiteURLExpr = "${URI_SCHEME}://${DOMAIN}"
+	composePublicSiteURLExpr = "${DOMAIN}"
 )
 
 //go:embed assets/iiif/*

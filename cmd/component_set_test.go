@@ -791,6 +791,9 @@ func TestRunComponentSetConfiguresIngressLetsEncrypt(t *testing.T) {
 			t.Fatalf("expected router to contain %q, got:\n%s", want, router)
 		}
 	}
+	if strings.Contains(compose, "DRUPAL_TRUSTED_HOST_PATTERNS") {
+		t.Fatalf("expected unsupported trusted-host compatibility variable removed, got:\n%s", compose)
+	}
 }
 
 func TestRunComponentSetIngressYoloUsesDefaultDispositionWhenMissing(t *testing.T) {
@@ -903,9 +906,8 @@ services:
 	compose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
 	for _, want := range []string{
 		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`,
-		`DRUPAL_DEFAULT_SITE_URL: "https://repo.example.org"`,
+		`DRUPAL_DEFAULT_SITE_URL: "repo.example.org"`,
 		`DRUPAL_ENABLE_HTTPS: "true"`,
-		`DRUPAL_TRUSTED_HOST_PATTERNS: "^repo\\.example\\.org$"`,
 		`DRUSH_OPTIONS_URI: "https://repo.example.org"`,
 	} {
 		if !strings.Contains(compose, want) {
@@ -945,9 +947,8 @@ services:
 	for _, want := range []string{
 		`INGRESS_HOSTNAMES: "localhost,127.0.0.1,::1,drupal.internal"`,
 		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.internal/"`,
-		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
+		`DRUPAL_DEFAULT_SITE_URL: "localhost"`,
 		`DRUPAL_ENABLE_HTTPS: "false"`,
-		`DRUPAL_TRUSTED_HOST_PATTERNS: "^localhost$,^drupal\\.internal$"`,
 		`DRUSH_OPTIONS_URI: "http://drupal.internal"`,
 	} {
 		if !strings.Contains(compose, want) {

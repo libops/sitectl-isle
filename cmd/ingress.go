@@ -75,14 +75,16 @@ func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) er
 		drushURL = createpkg.LocalDrupalBaseURL
 	}
 	for key, value := range map[string]string{
-		"DRUPAL_DEFAULT_SITE_URL":      baseURL,
-		"DRUPAL_ENABLE_HTTPS":          fmt.Sprintf("%t", coretraefik.IngressModeUsesHTTPS(values["mode"])),
-		"DRUPAL_TRUSTED_HOST_PATTERNS": createpkg.TrustedHostPatterns(ingressDomain(values), localFcrepo),
-		"DRUSH_OPTIONS_URI":            drushURL,
+		"DRUPAL_DEFAULT_SITE_URL": ingressDomain(values),
+		"DRUPAL_ENABLE_HTTPS":     fmt.Sprintf("%t", coretraefik.IngressModeUsesHTTPS(values["mode"])),
+		"DRUSH_OPTIONS_URI":       drushURL,
 	} {
 		if err := compose.SetServiceEnv("drupal", key, value); err != nil {
 			return err
 		}
+	}
+	if err := compose.DeleteServiceEnv("drupal", "DRUPAL_TRUSTED_HOST_PATTERNS"); err != nil {
+		return err
 	}
 	if !compose.HasService("fcrepo") {
 		for _, key := range []string{
