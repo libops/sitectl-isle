@@ -61,10 +61,7 @@ func TestApplyTripletLocalReplacesCantaloupe(t *testing.T) {
 		t.Fatalf("expected domain templating instead of hard-coded hosts, got:\n%s", tripletConfig)
 	}
 
-	devCompose := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.dev.yml"))
-	if strings.Contains(devCompose, "cantaloupe:") {
-		t.Fatalf("expected dev cantaloupe override removed, got:\n%s", devCompose)
-	}
+	assertMissingIIIF(t, filepath.Join(projectDir, "docker-compose.dev.yml"))
 	robots := readFileForIIIFTest(t, filepath.Join(projectDir, DefaultDrupalRootfs, "web", "robots.txt"))
 	assertContainsIIIF(t, robots, "Disallow: /iiif/*")
 }

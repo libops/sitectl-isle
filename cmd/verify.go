@@ -340,10 +340,7 @@ func verifyDemoObjects(ctx context.Context, projectDir, fcrepoExpected, fileSyst
 	if err != nil {
 		return failedVerifyResult("verify:demo-objects", err.Error(), "")
 	}
-	// The Make target depends on `up`, whose smart port allocator is intended
-	// for a stopped project. Verification already requires the stack to be
-	// running, so execute the target's canonical ingestion script directly.
-	if _, err := runLocalProjectOutput(ctx, projectDir, "./scripts/demo-objects.sh"); err != nil {
+	if _, err := runDemoObjectsScript(ctx, projectDir); err != nil {
 		return failedVerifyResult("verify:demo-objects", err.Error(), "")
 	}
 	for i := 0; i < 24; i++ {
@@ -360,6 +357,39 @@ func verifyDemoObjects(ctx context.Context, projectDir, fcrepoExpected, fileSyst
 		}
 	}
 	return failedVerifyResult("verify:demo-objects", fmt.Sprintf("expected ingested content to appear in %s:%s", service, target), "check Islandora ingest workers and queue consumers")
+}
+
+func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error) {
+	path := filepath.Join(projectDir, "scripts", "demo-objects.sh")
+	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project.
+	if err != nil {
+		return "", fmt.Errorf("read canonical demo-objects script: %w", err)
+	}
+	script := string(data)
+	const publicURL = `URL="${URI_SCHEME}://${DOMAIN}"`
+	const appendPublishedPort = `if [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then`
+	if !strings.Contains(script, publicURL) || !strings.Contains(script, appendPublishedPort) {
+		return "", fmt.Errorf("canonical demo-objects script has an unknown URL contract")
+	}
+	script = strings.Replace(script, publicURL, `URL="${SITECTL_DEMO_OBJECTS_URL:-${URI_SCHEME}://${DOMAIN}}"`, 1)
+	script = strings.Replace(script, appendPublishedPort, `if [ -z "${SITECTL_DEMO_OBJECTS_URL:-}" ] && [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then`, 1)
+
+	command := exec.CommandContext(ctx, "bash", "-s") // #nosec G204 -- the tracked template script is the canonical operation.
+	command.Dir = projectDir
+	command.Env = append(os.Environ(), "SITECTL_DEMO_OBJECTS_URL="+createpkg.LocalDrupalBaseURL)
+	command.Stdin = strings.NewReader(script)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		return stdout.String(), fmt.Errorf("canonical demo-objects script failed: %s", detail)
+	}
+	return stdout.String(), nil
 }
 
 func demoObjectAssertTarget(fcrepoExpected, fileSystemURI string) (string, string) {

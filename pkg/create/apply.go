@@ -245,7 +245,7 @@ func Apply(opts Options) error {
 			return fmt.Errorf("apply bot-mitigation=%s: %w", opts.BotMitigation, err)
 		}
 	}
-	if err := SyncLocalDrupalInternalIngress(opts.Path, opts.Fcrepo == FcrepoStateOn); err != nil {
+	if err := SyncLocalDrupalInternalIngress(opts.Path, true); err != nil {
 		return fmt.Errorf("sync local Drupal ingress: %w", err)
 	}
 

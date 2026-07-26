@@ -1027,8 +1027,9 @@ func TestRunComponentSetTogglesDevMode(t *testing.T) {
 	if err := runComponentSet(newComponentSetTestCommand(), "dev-mode", "disabled"); err != nil {
 		t.Fatalf("runComponentSet(disabled) error = %v; override:\n%s", err, readFileForTest(t, overridePath))
 	}
-	if _, err := os.Stat(overridePath); !os.IsNotExist(err) {
-		t.Fatalf("expected dev override removed, stat error = %v", err)
+	override = readFileForTest(t, overridePath)
+	if strings.Contains(override, "\n  drupal:") || !strings.Contains(override, "\n  traefik:") {
+		t.Fatalf("expected dev-mode entries removed and the shared local override preserved, got:\n%s", override)
 	}
 }
 
