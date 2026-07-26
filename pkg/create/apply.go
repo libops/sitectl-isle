@@ -824,7 +824,7 @@ func rewriteGitRootDockerfile(path string) error {
 		return fmt.Errorf("read Dockerfile: %w", err)
 	}
 	if strings.Contains(string(data), "COPY --link composer.json composer.lock /var/www/drupal/") &&
-		strings.Contains(string(data), "COPY --link drupal/rootfs/opt/ /opt/") {
+		strings.Contains(string(data), "COPY --link drupal/rootfs/ /") {
 		return nil
 	}
 
@@ -842,7 +842,7 @@ COPY --link config/ /var/www/drupal/config/
 COPY --link recipes/ /var/www/drupal/recipes/
 COPY --link web/modules/custom/ /var/www/drupal/web/modules/custom/
 COPY --link web/themes/custom/ /var/www/drupal/web/themes/custom/
-COPY --link drupal/rootfs/opt/ /opt/
+COPY --link drupal/rootfs/ /
 
 RUN chown -R nginx:nginx /var/www/drupal && \
     cleanup.sh

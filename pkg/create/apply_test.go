@@ -1236,7 +1236,7 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 		"ARG TAG",
 		"FROM ${REPOSITORY}/drupal:${TAG}",
 		"COPY --link composer.json composer.lock /var/www/drupal/",
-		"COPY --link drupal/rootfs/opt/ /opt/",
+		"COPY --link drupal/rootfs/ /",
 	} {
 		if !strings.Contains(dockerfile, want) {
 			t.Fatalf("expected Dockerfile to contain %q, got:\n%s", want, dockerfile)
@@ -1244,9 +1244,6 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 	}
 	if strings.Contains(dockerfile, "COPY --link rootfs /") {
 		t.Fatalf("expected nested rootfs copy removed, got:\n%s", dockerfile)
-	}
-	if strings.Contains(dockerfile, "COPY --link drupal/rootfs/etc/ /etc/") {
-		t.Fatalf("expected Drupal /etc overlay copy removed, got:\n%s", dockerfile)
 	}
 
 	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
@@ -1344,14 +1341,11 @@ COPY --link rootfs/opt/ /opt/
 	dockerfile := readTestFile(t, filepath.Join(projectDir, "Dockerfile"))
 	for _, want := range []string{
 		"COPY --link composer.json composer.lock /var/www/drupal/",
-		"COPY --link drupal/rootfs/opt/ /opt/",
+		"COPY --link drupal/rootfs/ /",
 	} {
 		if !strings.Contains(dockerfile, want) {
 			t.Fatalf("expected Dockerfile to contain %q, got:\n%s", want, dockerfile)
 		}
-	}
-	if strings.Contains(dockerfile, "COPY --link drupal/rootfs/etc/ /etc/") {
-		t.Fatalf("expected Drupal /etc overlay copy removed, got:\n%s", dockerfile)
 	}
 
 	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
