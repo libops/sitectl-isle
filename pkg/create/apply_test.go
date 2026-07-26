@@ -303,6 +303,28 @@ func TestEnsureComposeServiceSecretTargetNormalizesExistingMount(t *testing.T) {
 	}
 }
 
+func TestEnsureComposeServiceSecretAliasPreservesExistingTarget(t *testing.T) {
+	t.Parallel()
+	composePath := filepath.Join(t.TempDir(), "docker-compose.yml")
+	writeTestFile(t, composePath, `services:
+  drupal:
+    secrets:
+      - source: DRUPAL_DEFAULT_DB_PASSWORD
+        target: DB_PASSWORD
+      - source: JWT_PUBLIC_KEY
+`)
+
+	if err := ensureComposeServiceSecretAlias(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD", "DRUPAL_DEFAULT_DB_PASSWORD"); err != nil {
+		t.Fatal(err)
+	}
+	compose := readTestFile(t, composePath)
+	for _, want := range []string{"target: DB_PASSWORD", "target: DRUPAL_DEFAULT_DB_PASSWORD"} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("database secret alias missing %q:\n%s", want, compose)
+		}
+	}
+}
+
 func TestSyncLocalDrupalInternalIngress(t *testing.T) {
 	t.Parallel()
 
@@ -1873,6 +1895,19 @@ func assertApplicationDatabaseBootstrap(t *testing.T, projectDir string) {
 	}
 	if !strings.Contains(drupalBlock, `DB_BOOTSTRAP_ENABLED: "true"`) {
 		t.Fatalf("drupal block missing database bootstrap flag:\n%s", drupalBlock)
+	}
+	for _, want := range []string{
+		`DB_MYSQL_HOST: "mariadb"`,
+		`DB_MYSQL_PORT: "3306"`,
+		`DRUPAL_DEFAULT_DB_NAME: "drupal_default"`,
+		`DRUPAL_DEFAULT_DB_USER: "drupal_default"`,
+		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
+		`target: DB_PASSWORD`,
+		`target: DRUPAL_DEFAULT_DB_PASSWORD`,
+	} {
+		if !strings.Contains(drupalBlock, want) {
+			t.Fatalf("drupal block missing database compatibility value %q:\n%s", want, drupalBlock)
+		}
 	}
 	hasRootSecret, err := composeServiceHasSecret(data, "drupal", "DB_ROOT_PASSWORD")
 	if err != nil {

@@ -982,6 +982,17 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 	if err := compose.SetServiceEnv("drupal", "DB_BOOTSTRAP_ENABLED", "true"); err != nil {
 		return err
 	}
+	for key, value := range map[string]string{
+		"DB_MYSQL_HOST":           "mariadb",
+		"DB_MYSQL_PORT":           "3306",
+		"DRUPAL_DEFAULT_DB_NAME":  "drupal_default",
+		"DRUPAL_DEFAULT_DB_USER":  "drupal_default",
+		"DRUPAL_DEFAULT_SITE_URL": publicSiteURLExpr,
+	} {
+		if err := compose.SetServiceEnv("drupal", key, value); err != nil {
+			return err
+		}
+	}
 	if _, ok := compose.SectionEntryBlock("secrets", "DB_ROOT_PASSWORD"); !ok {
 		if err := compose.AddSectionEntryBlock("secrets", "DB_ROOT_PASSWORD", `  DB_ROOT_PASSWORD:
     file: "./secrets/DB_ROOT_PASSWORD"`); err != nil {
@@ -1000,7 +1011,44 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 	if err := ensureComposeServiceSecretTarget(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD", "DB_PASSWORD"); err != nil {
 		return fmt.Errorf("mount Drupal database password at the image contract path: %w", err)
 	}
+	if err := ensureComposeServiceSecretAlias(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD", "DRUPAL_DEFAULT_DB_PASSWORD"); err != nil {
+		return fmt.Errorf("expose Drupal database password to template settings: %w", err)
+	}
 	return nil
+}
+
+func ensureComposeServiceSecretAlias(composePath, service, source, target string) error {
+	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
+	if err != nil {
+		return fmt.Errorf("read compose file: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	serviceStart, serviceEnd, ok := composeServiceLineBounds(lines, service)
+	if !ok {
+		return fmt.Errorf("service %q not found in compose file", service)
+	}
+	secretsIndex, ok := findComposeMappingLine(lines, serviceStart+1, serviceEnd, 4, "secrets")
+	if !ok {
+		return fmt.Errorf("service %q does not define secrets", service)
+	}
+	secretsEnd := composeMappingLineEnd(lines, secretsIndex, serviceEnd, 4)
+	for index := secretsIndex + 1; index < secretsEnd; index++ {
+		if leadingSpaceCount(lines[index]) != 6 || strings.TrimSpace(lines[index]) != "- source: "+source {
+			continue
+		}
+		itemEnd := index + 1
+		for itemEnd < secretsEnd && leadingSpaceCount(lines[itemEnd]) > 6 {
+			if leadingSpaceCount(lines[itemEnd]) == 8 && strings.TrimSpace(lines[itemEnd]) == "target: "+target {
+				return nil
+			}
+			itemEnd++
+		}
+	}
+	lines = insertComposeLines(lines, secretsEnd,
+		"      - source: "+source,
+		"        target: "+target,
+	)
+	return writeFilePreserveMode(composePath, []byte(strings.Join(lines, "\n")))
 }
 
 func ensureComposeServiceSecretTarget(composePath, service, source, target string) error {
