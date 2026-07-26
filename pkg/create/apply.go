@@ -52,6 +52,7 @@ const (
 	LocalDrupalBaseURL            = "http://" + localDrupalHost
 	localDrupalHostRule           = "Host(`drupal.internal`)"
 	localDrupalHostMiddlewareName = "drupal-internal-host"
+	localDrupalCanonicalHost      = `{{ env "DOMAIN" }}`
 	localDrupalRouterName         = "drupal-internal"
 	localDrupalRouterPriority     = 9000
 	workbenchClientRouterName     = "islandora-workbench-client"
@@ -474,10 +475,7 @@ func syncLocalDrupalRouterContext(ctx *config.Context, enabled bool) error {
 	if err := doc.SetValue(routerPath, router); err != nil {
 		return err
 	}
-	if err := doc.DeletePath(".http.middlewares." + localDrupalHostMiddlewareName); err != nil {
-		return err
-	}
-	if err := deletePathIfEmptyYAMLMap(doc, ".http.middlewares"); err != nil {
+	if err := doc.SetValue(".http.middlewares."+localDrupalHostMiddlewareName, localDrupalHostMiddleware()); err != nil {
 		return err
 	}
 	updated, err := doc.Bytes()
@@ -568,9 +566,10 @@ func localDrupalRouter(data []byte) (map[string]any, error) {
 		return nil, err
 	}
 	router := map[string]any{
-		"rule":     localDrupalHostRule,
-		"service":  drupalRouterName,
-		"priority": localDrupalRouterPriority,
+		"rule":        localDrupalHostRule,
+		"service":     drupalRouterName,
+		"priority":    localDrupalRouterPriority,
+		"middlewares": []string{localDrupalHostMiddlewareName},
 	}
 	for _, key := range []string{"entryPoints", "tls"} {
 		if value, ok := source[key]; ok {
@@ -578,6 +577,16 @@ func localDrupalRouter(data []byte) (map[string]any, error) {
 		}
 	}
 	return router, nil
+}
+
+func localDrupalHostMiddleware() map[string]any {
+	return map[string]any{
+		"headers": map[string]any{
+			"customRequestHeaders": map[string]any{
+				"Host": localDrupalCanonicalHost,
+			},
+		},
+	}
 }
 
 func drupalRouter(data []byte) (map[string]any, error) {

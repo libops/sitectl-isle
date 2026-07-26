@@ -409,6 +409,10 @@ http:
 		"drupal-internal:",
 		"Host(`drupal.internal`)",
 		"priority: 9000",
+		"middlewares:",
+		"- drupal-internal-host",
+		"drupal-internal-host:",
+		`Host: '{{ env "DOMAIN" }}'`,
 		"entryPoints:\n        - http",
 		`{{- if (eq (env "TLS_PROVIDER") "letsencrypt") }}`,
 		`{{- end }}`,
@@ -417,7 +421,7 @@ http:
 			t.Fatalf("expected router to contain %q, got:\n%s", want, router)
 		}
 	}
-	for _, absent := range []string{"drupal-internal-host", "Host: localhost", "middlewares:"} {
+	for _, absent := range []string{"Host: localhost"} {
 		if strings.Contains(router, absent) {
 			t.Fatalf("expected router not to contain %q, got:\n%s", absent, router)
 		}
