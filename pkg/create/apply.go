@@ -247,10 +247,6 @@ func Apply(opts Options) error {
 			return fmt.Errorf("apply bot-mitigation=%s: %w", opts.BotMitigation, err)
 		}
 	}
-	if err := SyncLocalDrupalInternalIngress(opts.Path, true); err != nil {
-		return fmt.Errorf("sync local Drupal ingress: %w", err)
-	}
-
 	return nil
 }
 
@@ -589,10 +585,10 @@ func localDrupalCanonicalHost(ctx *config.Context) (string, error) {
 	}
 	host := strings.TrimSpace(values["DOMAIN"])
 	if host == "" {
-		return "", fmt.Errorf("Compose environment %s does not define DOMAIN", envFile)
+		return "", fmt.Errorf("compose environment %s does not define DOMAIN", envFile)
 	}
 	if strings.ContainsAny(host, "\r\n") {
-		return "", fmt.Errorf("Compose environment %s contains an invalid DOMAIN", envFile)
+		return "", fmt.Errorf("compose environment %s contains an invalid DOMAIN", envFile)
 	}
 	return host, nil
 }

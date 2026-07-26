@@ -66,7 +66,7 @@ func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) er
 	if err := compose.SetServiceEnv("drupal", "INGRESS_HOSTNAMES", strings.Join(isleIngressHostnames(ctx, values, localFcrepo), ",")); err != nil {
 		return err
 	}
-	if err := createpkg.SyncLocalDrupalInternalIngressContext(ctx, localFcrepo); err != nil {
+	if err := createpkg.SyncLocalDrupalInternalIngressContext(ctx, true); err != nil {
 		return err
 	}
 	baseURL := ingressBaseURL(values)
