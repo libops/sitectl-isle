@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -245,6 +246,9 @@ func Apply(opts Options) error {
 		if err := ApplyBotMitigation(opts.Path, opts.BotMitigation); err != nil {
 			return fmt.Errorf("apply bot-mitigation=%s: %w", opts.BotMitigation, err)
 		}
+	}
+	if err := syncLocalDrupalRouterContext(localProjectContext(opts.Path), true); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("sync local Drupal router: %w", err)
 	}
 	return nil
 }
