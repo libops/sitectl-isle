@@ -946,10 +946,10 @@ services:
 	compose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
 	for _, want := range []string{
 		`INGRESS_HOSTNAMES: "localhost,127.0.0.1,::1,drupal.internal"`,
-		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.internal/"`,
+		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://traefik/"`,
 		`DRUPAL_DEFAULT_SITE_URL: "localhost"`,
 		`DRUPAL_ENABLE_HTTPS: "false"`,
-		`DRUSH_OPTIONS_URI: "http://drupal.internal"`,
+		`DRUSH_OPTIONS_URI: "http://traefik"`,
 	} {
 		if !strings.Contains(compose, want) {
 			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)

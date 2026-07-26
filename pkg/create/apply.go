@@ -47,11 +47,11 @@ const (
 	legacyFcrepoDatabaseInit = "fcrepo-database-init"
 
 	drupalRouterName = "drupal"
-	localDrupalHost  = "drupal.internal"
+	localDrupalHost  = "traefik"
 	// LocalDrupalBaseURL is the internal Traefik route used by local Fcrepo
 	// clients that cannot reach the host machine's localhost.
 	LocalDrupalBaseURL            = "http://" + localDrupalHost
-	localDrupalHostRule           = "Host(`drupal.internal`)"
+	localDrupalHostRule           = "Host(`traefik`)"
 	localDrupalHostMiddlewareName = "drupal-internal-host"
 	localDrupalRouterName         = "drupal-internal"
 	localDrupalRouterConfigPath   = "conf/traefik/drupal-internal.yml"
@@ -224,7 +224,6 @@ func Apply(opts Options) error {
 		}
 		opts.DrupalRootfs = corecomponent.DefaultDrupalRootfs
 	}
-
 	if err := applyRepositoryComponents(opts); err != nil {
 		return err
 	}
@@ -386,6 +385,9 @@ func SyncLocalDrupalInternalIngressContext(ctx *config.Context, enabled bool) er
 }
 
 func syncLocalDrupalTraefikAliasContext(ctx *config.Context, enabled bool) error {
+	if localDrupalHost == "traefik" {
+		return nil
+	}
 	path := ctx.ResolveProjectPath("docker-compose.yml")
 	exists, err := ctx.FileExists(path)
 	if err != nil {
@@ -1872,7 +1874,7 @@ func updateComposeForFcrepoOff(composePath string) error {
 			return err
 		}
 	}
-	if serviceEnvValue(compose, "drupal", "DRUSH_OPTIONS_URI") == LocalDrupalBaseURL {
+	if shouldUseLocalDrupalInternalURL(serviceEnvValue(compose, "drupal", "DRUSH_OPTIONS_URI")) {
 		if err := compose.SetServiceEnv("drupal", "DRUSH_OPTIONS_URI", publicSiteURLExpr); err != nil {
 			return err
 		}
@@ -1904,7 +1906,7 @@ func shouldUseLocalDrupalInternalURL(siteURL string) bool {
 		return false
 	}
 	host := serviceURLHost(siteURL)
-	return host == "" || host == "localhost" || host == "127.0.0.1"
+	return host == "" || host == "localhost" || host == "127.0.0.1" || host == "drupal.internal"
 }
 
 // TrustedHostPatterns returns comma-separated Drupal trusted host regexes.

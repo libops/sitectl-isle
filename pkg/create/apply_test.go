@@ -405,10 +405,8 @@ http:
 	}
 
 	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
-	for _, want := range []string{"fcrepo.localhost", "drupal.internal"} {
-		if !strings.Contains(compose, want) {
-			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
-		}
+	if !strings.Contains(compose, "fcrepo.localhost") || strings.Contains(compose, "drupal.internal") {
+		t.Fatalf("expected canonical Compose aliases to remain unchanged, got:\n%s", compose)
 	}
 	canonicalRouter := readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
 	if strings.Contains(canonicalRouter, "drupal-internal") {
@@ -417,7 +415,7 @@ http:
 	router := readTestFile(t, filepath.Join(projectDir, filepath.FromSlash(localDrupalRouterConfigPath)))
 	for _, want := range []string{
 		"drupal-internal:",
-		"Host(`drupal.internal`)",
+		"Host(`traefik`)",
 		"priority: 9000",
 		"middlewares:",
 		"- drupal-internal-host",
@@ -436,7 +434,7 @@ http:
 
 	compose = readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
 	if strings.Contains(compose, "drupal.internal") || !strings.Contains(compose, "fcrepo.localhost") {
-		t.Fatalf("expected only local Drupal alias removed, got:\n%s", compose)
+		t.Fatalf("expected canonical Compose aliases unchanged, got:\n%s", compose)
 	}
 	if _, err := os.Stat(filepath.Join(projectDir, filepath.FromSlash(localDrupalRouterConfigPath))); !os.IsNotExist(err) {
 		t.Fatalf("expected local Drupal router file removed, stat error = %v", err)
@@ -449,7 +447,7 @@ func TestTrustedHostPatterns(t *testing.T) {
 	if got := TrustedHostPatterns("repo.example.org", false); got != `^repo\.example\.org$` {
 		t.Fatalf("TrustedHostPatterns(public) = %q", got)
 	}
-	if got := TrustedHostPatterns("localhost", true); got != `^localhost$,^drupal\.internal$` {
+	if got := TrustedHostPatterns("localhost", true); got != `^localhost$,^traefik$` {
 		t.Fatalf("TrustedHostPatterns(local) = %q", got)
 	}
 }
