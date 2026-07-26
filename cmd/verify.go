@@ -360,15 +360,32 @@ func verifyDemoObjects(ctx context.Context, projectDir, fcrepoExpected, fileSyst
 }
 
 func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error) {
+	if err := createpkg.SyncLocalDrupalInternalIngress(projectDir, true); err != nil {
+		return "", fmt.Errorf("reconcile Workbench internal route: %w", err)
+	}
 	versionURL := createpkg.LocalDrupalBaseURL + "/islandora_workbench_integration/version"
-	preflight := exec.CommandContext(ctx, "docker", "compose", "exec", "-T", "drupal", "curl", // #nosec G204 -- fixed diagnostic command scoped to the selected project.
-		"--fail-with-body", "--silent", "--show-error", "--user-agent", "Islandora Workbench", versionURL)
-	preflight.Dir = projectDir
-	preflightOutput, err := preflight.CombinedOutput()
-	if err != nil {
+	var preflightOutput []byte
+	var preflightErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		preflight := exec.CommandContext(ctx, "docker", "compose", "exec", "-T", "drupal", "curl", // #nosec G204 -- fixed diagnostic command scoped to the selected project.
+			"--fail-with-body", "--silent", "--show-error", "--user-agent", "Islandora Workbench", versionURL)
+		preflight.Dir = projectDir
+		preflightOutput, preflightErr = preflight.CombinedOutput()
+		if preflightErr == nil {
+			break
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if preflightErr != nil {
 		detail := strings.TrimSpace(string(preflightOutput))
 		if detail == "" {
-			detail = err.Error()
+			detail = preflightErr.Error()
 		}
 		return "", fmt.Errorf("workbench endpoint preflight failed for %s: %s", versionURL, detail)
 	}
