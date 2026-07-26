@@ -403,6 +403,20 @@ func TestHOCRSearchFeatureBundleConvergesOwnedFilesAndComposerRequirements(t *te
 	assertFeatureYAMLValue(t, filepath.Join(configDir, "views.view.iiif_manifest.yml"), ".display.rest_export_3.display_options.style.options.iiif_tile_field.field_media_image", "field_media_image")
 }
 
+func TestLoadFeatureComposeEnvironmentUsesTrackedTemplateDefaults(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writeFeatureTestFile(t, filepath.Join(projectDir, "sample.env"), "ISLANDORA_TAG=6.3.16\n")
+
+	env, err := loadFeatureComposeEnvironment(projectDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := env["ISLANDORA_TAG"]; got != "6.3.16" {
+		t.Fatalf("ISLANDORA_TAG = %q, want tracked template default", got)
+	}
+}
+
 func TestHOCRSearchFeatureBundleImageRequirements(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

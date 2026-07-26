@@ -1071,6 +1071,7 @@ func featureMap(value any) map[string]any {
 func loadFeatureComposeEnvironment(projectDir string, envFiles []string) (map[string]string, error) {
 	env := map[string]string{}
 	files := append([]string{}, envFiles...)
+	useTemplateDefaults := len(files) == 0
 	if len(files) == 0 {
 		files = []string{".env"}
 	}
@@ -1085,6 +1086,17 @@ func loadFeatureComposeEnvironment(projectDir string, envFiles []string) (map[st
 		data, err := os.ReadFile(name) // #nosec G304 -- selected project Compose env file.
 		if err != nil {
 			if os.IsNotExist(err) {
+				if useTemplateDefaults && filepath.Base(name) == ".env" {
+					data, err = os.ReadFile(filepath.Join(filepath.Dir(name), "sample.env")) // #nosec G304 -- tracked template defaults beside the Compose env file.
+					if err == nil {
+						for key, value := range parseFeatureDotEnv(string(data)) {
+							env[key] = value
+						}
+					}
+					if err != nil && !os.IsNotExist(err) {
+						return nil, err
+					}
+				}
 				continue
 			}
 			return nil, err
