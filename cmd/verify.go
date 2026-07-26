@@ -368,11 +368,20 @@ func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error
 	var preflightErr error
 	for attempt := 0; attempt < 10; attempt++ {
 		preflight := exec.CommandContext(ctx, "docker", "compose", "exec", "-T", "drupal", "curl", // #nosec G204 -- fixed diagnostic command scoped to the selected project.
-			"--fail-with-body", "--silent", "--show-error", "--user-agent", "Islandora Workbench", versionURL)
+			"--silent", "--show-error", "--user-agent", "Islandora Workbench", "--write-out", "\n%{http_code}", versionURL)
 		preflight.Dir = projectDir
 		preflightOutput, preflightErr = preflight.CombinedOutput()
-		if preflightErr == nil {
+		status := strings.TrimSpace(string(preflightOutput))
+		statusFields := strings.Fields(status)
+		statusCode := ""
+		if len(statusFields) > 0 {
+			statusCode = statusFields[len(statusFields)-1]
+		}
+		if preflightErr == nil && (statusCode == "200" || statusCode == "401") {
 			break
+		}
+		if preflightErr == nil {
+			preflightErr = fmt.Errorf("unexpected HTTP response")
 		}
 		timer := time.NewTimer(time.Second)
 		select {
