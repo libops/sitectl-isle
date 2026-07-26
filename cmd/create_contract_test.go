@@ -10,7 +10,7 @@ import (
 func TestCreateDefinitionUsesTemplateInitContract(t *testing.T) {
 	t.Parallel()
 	spec := createDefinition()
-	if len(spec.DockerComposeInit) != 1 || !strings.Contains(spec.DockerComposeInit[0], "-type f -empty -delete") || !strings.HasSuffix(spec.DockerComposeInit[0], "./scripts/init.sh") {
+	if len(spec.DockerComposeInit) != 1 || spec.DockerComposeInit[0] != "./scripts/init.sh" {
 		t.Fatalf("create init must use the template ownership-aware script: %+v", spec.DockerComposeInit)
 	}
 	if len(spec.Images) != 1 || spec.Images[0].Service != "drupal" || spec.Images[0].Image != "libops/islandora:nginx-1.30.3-php84" || spec.Images[0].BuildPolicy != plugin.BuildPolicyAlways {
