@@ -901,9 +901,16 @@ services:
 	}
 
 	compose := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
-	want := `DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`
-	if !strings.Contains(compose, want) {
-		t.Fatalf("expected fcrepo URL %q, got:\n%s", want, compose)
+	for _, want := range []string{
+		`DRUPAL_DEFAULT_FCREPO_URL: "http://fcrepo:8080/fcrepo/rest/"`,
+		`DRUPAL_DEFAULT_SITE_URL: "https://repo.example.org"`,
+		`DRUPAL_ENABLE_HTTPS: "true"`,
+		`DRUPAL_TRUSTED_HOST_PATTERNS: "^repo\\.example\\.org$"`,
+		`DRUSH_OPTIONS_URI: "https://repo.example.org"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
+		}
 	}
 	if strings.Contains(compose, "drupal.internal") {
 		t.Fatalf("expected non-local ingress to omit drupal.internal, got:\n%s", compose)
@@ -938,18 +945,13 @@ services:
 	for _, want := range []string{
 		`INGRESS_HOSTNAMES: "localhost,127.0.0.1,::1,drupal.internal"`,
 		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "http://drupal.internal/"`,
+		`DRUPAL_DEFAULT_SITE_URL: "http://localhost"`,
+		`DRUPAL_ENABLE_HTTPS: "false"`,
+		`DRUPAL_TRUSTED_HOST_PATTERNS: "^localhost$,^drupal\\.internal$"`,
+		`DRUSH_OPTIONS_URI: "http://drupal.internal"`,
 	} {
 		if !strings.Contains(compose, want) {
 			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
-		}
-	}
-	for _, notWant := range []string{
-		`DRUPAL_DEFAULT_SITE_URL`,
-		`DRUSH_OPTIONS_URI`,
-		`DRUPAL_TRUSTED_HOST_PATTERNS`,
-	} {
-		if strings.Contains(compose, notWant) {
-			t.Fatalf("expected compose not to contain %q, got:\n%s", notWant, compose)
 		}
 	}
 }
