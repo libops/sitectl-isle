@@ -422,7 +422,7 @@ http:
 		"middlewares:",
 		"- drupal-internal-host",
 		"drupal-internal-host:",
-		`Host: '{{ env "DOMAIN" }}'`,
+		"Host: localhost",
 		"entryPoints:",
 		"- http",
 	} {
@@ -430,12 +430,6 @@ http:
 			t.Fatalf("expected router to contain %q, got:\n%s", want, router)
 		}
 	}
-	for _, absent := range []string{"Host: localhost"} {
-		if strings.Contains(router, absent) {
-			t.Fatalf("expected router not to contain %q, got:\n%s", absent, router)
-		}
-	}
-
 	if err := SyncLocalDrupalInternalIngress(projectDir, false); err != nil {
 		t.Fatalf("SyncLocalDrupalInternalIngress(false) error = %v", err)
 	}

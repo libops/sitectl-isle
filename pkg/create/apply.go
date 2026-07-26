@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/joho/godotenv"
 	corecomponent "github.com/libops/sitectl/pkg/component"
 	"github.com/libops/sitectl/pkg/config"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
@@ -52,7 +53,6 @@ const (
 	LocalDrupalBaseURL            = "http://" + localDrupalHost
 	localDrupalHostRule           = "Host(`drupal.internal`)"
 	localDrupalHostMiddlewareName = "drupal-internal-host"
-	localDrupalCanonicalHost      = `{{ env "DOMAIN" }}`
 	localDrupalRouterName         = "drupal-internal"
 	localDrupalRouterConfigPath   = "conf/traefik/drupal-internal.yml"
 	localDrupalRouterPriority     = 9000
@@ -440,9 +440,13 @@ func syncLocalDrupalRouterContext(ctx *config.Context, enabled bool) error {
 	if !enabled {
 		return ctx.RemoveFile(path)
 	}
+	canonicalHost, err := localDrupalCanonicalHost(ctx)
+	if err != nil {
+		return err
+	}
 	config := map[string]any{
 		"http": map[string]any{
-			"middlewares": map[string]any{localDrupalHostMiddlewareName: localDrupalHostMiddleware()},
+			"middlewares": map[string]any{localDrupalHostMiddlewareName: localDrupalHostMiddleware(canonicalHost)},
 			"routers": map[string]any{
 				localDrupalRouterName: map[string]any{
 					"entryPoints": []string{"http"},
@@ -536,11 +540,68 @@ func workbenchClientRouter(data []byte) (map[string]any, error) {
 	return router, nil
 }
 
-func localDrupalHostMiddleware() map[string]any {
+func localDrupalCanonicalHost(ctx *config.Context) (string, error) {
+	routerPath := ctx.ResolveProjectPath(filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
+	routerData, err := ctx.ReadFile(routerPath)
+	if err != nil {
+		return "", fmt.Errorf("read canonical Drupal router: %w", err)
+	}
+	router, err := drupalRouter(routerData)
+	if err != nil {
+		return "", err
+	}
+	hostMatch := regexp.MustCompile("Host\\(`([^`]+)`\\)").FindStringSubmatch(stringMapValue(router, "rule"))
+	if len(hostMatch) == 2 && !strings.Contains(hostMatch[1], "{{") {
+		return hostMatch[1], nil
+	}
+	composeData, err := ctx.ReadFile(ctx.ResolveProjectPath("docker-compose.yml"))
+	if err != nil {
+		return "", fmt.Errorf("read canonical Compose file: %w", err)
+	}
+	var composeRoot map[string]any
+	if err := yaml.Unmarshal(composeData, &composeRoot); err != nil {
+		return "", fmt.Errorf("parse canonical Compose file: %w", err)
+	}
+	drupal := yamlMap(yamlMap(composeRoot["services"])["drupal"])
+	environment := yamlMap(drupal["environment"])
+	if ingressHostnames := strings.TrimSpace(stringMapValue(environment, "INGRESS_HOSTNAMES")); ingressHostnames != "" {
+		if host := strings.TrimSpace(strings.Split(ingressHostnames, ",")[0]); host != "" && !strings.Contains(host, "${") {
+			return host, nil
+		}
+	}
+	if siteURL := strings.TrimSpace(stringMapValue(environment, "DRUPAL_DEFAULT_SITE_URL")); siteURL != "" && !strings.Contains(siteURL, "${") {
+		if host := serviceURLHost(siteURL); host != "" {
+			return host, nil
+		}
+	}
+
+	envFile := ".env"
+	if len(ctx.EnvFile) > 0 && strings.TrimSpace(ctx.EnvFile[0]) != "" {
+		envFile = strings.TrimSpace(ctx.EnvFile[0])
+	}
+	data, err := ctx.ReadFile(ctx.ResolveProjectPath(envFile))
+	if err != nil {
+		return "", fmt.Errorf("read Compose environment %s: %w", envFile, err)
+	}
+	values, err := godotenv.Parse(strings.NewReader(string(data)))
+	if err != nil {
+		return "", fmt.Errorf("parse Compose environment %s: %w", envFile, err)
+	}
+	host := strings.TrimSpace(values["DOMAIN"])
+	if host == "" {
+		return "", fmt.Errorf("Compose environment %s does not define DOMAIN", envFile)
+	}
+	if strings.ContainsAny(host, "\r\n") {
+		return "", fmt.Errorf("Compose environment %s contains an invalid DOMAIN", envFile)
+	}
+	return host, nil
+}
+
+func localDrupalHostMiddleware(canonicalHost string) map[string]any {
 	return map[string]any{
 		"headers": map[string]any{
 			"customRequestHeaders": map[string]any{
-				"Host": localDrupalCanonicalHost,
+				"Host": canonicalHost,
 			},
 		},
 	}
