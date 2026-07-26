@@ -1948,9 +1948,10 @@ func uniqueStrings(values []string) []string {
 
 func fcrepoAllowedDrupalURL(siteURL string) string {
 	siteURL = strings.TrimRight(strings.TrimSpace(siteURL), "/")
-	if siteURL == composePublicSiteURLExpr {
+	switch siteURL {
+	case composePublicSiteURLExpr:
 		siteURL = "${URI_SCHEME}://" + composePublicSiteURLExpr
-	} else if siteURL == "" {
+	case "":
 		siteURL = publicSiteURLExpr
 	}
 	return siteURL + "/"
