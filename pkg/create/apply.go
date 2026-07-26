@@ -155,6 +155,7 @@ type Options struct {
 	DerivativeServices   map[string]string
 	FeatureBundles       map[string]string
 	FeatureBundleOptions map[string]map[string]string
+	ImageOverrides       map[string]string
 	EnvFiles             []string
 	Codebase             string
 }

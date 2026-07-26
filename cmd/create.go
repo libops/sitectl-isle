@@ -181,8 +181,9 @@ func resolveCreateRequest(cmd *cobra.Command) (createRequest, error) {
 		return createRequest{}, err
 	}
 	opts := createpkg.Options{
-		Path:         resolved.Path,
-		DrupalRootfs: helpers.FirstNonEmpty(resolved.DrupalRootfs, createpkg.DefaultDrupalRootfs),
+		Path:           resolved.Path,
+		DrupalRootfs:   helpers.FirstNonEmpty(resolved.DrupalRootfs, createpkg.DefaultDrupalRootfs),
+		ImageOverrides: maps.Clone(resolved.ImageOverrides.Images),
 	}
 	if decision, ok := resolved.Decisions["fcrepo"]; ok {
 		opts.Fcrepo = string(decision.State)

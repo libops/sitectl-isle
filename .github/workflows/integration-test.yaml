@@ -40,6 +40,7 @@ jobs:
     with:
       plugin: isle
       create-definition: default
+      images: alpaca=islandora/alpaca:6.3.19
       create-args: >-
         --fcrepo ${{ matrix.fcrepo_state }}
         --blazegraph ${{ matrix.blazegraph_state }}

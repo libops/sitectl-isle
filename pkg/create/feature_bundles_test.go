@@ -196,6 +196,32 @@ services:
 	}
 }
 
+func TestMergePDFFeatureBundleAcceptsCompatibleDesiredImageOverride(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writeFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `x-common: &common
+  restart: unless-stopped
+secrets:
+  CERT_PUBLIC_KEY: {}
+  CERT_AUTHORITY: {}
+  JWT_ADMIN_TOKEN: {}
+  JWT_PUBLIC_KEY: {}
+services:
+  alpaca:
+    image: islandora/alpaca:6.3.16
+`)
+
+	opts := Options{
+		Path:           projectDir,
+		DrupalRootfs:   ".",
+		FeatureBundles: map[string]string{FeatureBundleMergePDF: "on"},
+		ImageOverrides: map[string]string{"alpaca": "islandora/alpaca:6.3.19"},
+	}
+	if err := ApplyFeatureBundles(opts); err != nil {
+		t.Fatalf("ApplyFeatureBundles() error = %v", err)
+	}
+}
+
 func TestMergePDFFeatureBundleRequiresCommonAnchorBeforeMutation(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()

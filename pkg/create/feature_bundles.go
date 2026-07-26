@@ -290,6 +290,9 @@ func CheckFeatureBundleRequirements(opts Options, name string) error {
 			return fmt.Errorf("feature bundle %q requires Compose service %q", name, requirement.Service)
 		}
 		rawImage := strings.TrimSpace(fmt.Sprint(service["image"]))
+		if override := strings.TrimSpace(opts.ImageOverrides[requirement.Service]); override != "" {
+			rawImage = override
+		}
 		if rawImage == "" || rawImage == "<nil>" {
 			return fmt.Errorf("feature bundle %q requires an image on Compose service %q", name, requirement.Service)
 		}
