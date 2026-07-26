@@ -107,7 +107,7 @@ func createDefinition() plugin.CreateSpec {
 			{Service: "drupal", Image: "libops/islandora:nginx-1.30.3-php84", BuildPolicy: plugin.BuildPolicyAlways},
 		},
 		DockerComposeInit: []string{
-			"./scripts/init.sh",
+			"find certs secrets -type f -empty -delete && ./scripts/init.sh",
 		},
 		InitArtifacts: []plugin.InitArtifact{
 			{Path: "certs/cert.pem"},
