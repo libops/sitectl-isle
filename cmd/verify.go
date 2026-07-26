@@ -360,6 +360,19 @@ func verifyDemoObjects(ctx context.Context, projectDir, fcrepoExpected, fileSyst
 }
 
 func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error) {
+	versionURL := createpkg.LocalDrupalBaseURL + "/islandora_workbench_integration/version"
+	preflight := exec.CommandContext(ctx, "docker", "compose", "exec", "-T", "drupal", "curl", // #nosec G204 -- fixed diagnostic command scoped to the selected project.
+		"--fail-with-body", "--silent", "--show-error", "--user-agent", "Islandora Workbench", versionURL)
+	preflight.Dir = projectDir
+	preflightOutput, err := preflight.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(preflightOutput))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return "", fmt.Errorf("Workbench endpoint preflight failed for %s: %s", versionURL, detail)
+	}
+
 	path := filepath.Join(projectDir, "scripts", "demo-objects.sh")
 	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project.
 	if err != nil {
