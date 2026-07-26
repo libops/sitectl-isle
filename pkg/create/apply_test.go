@@ -325,7 +325,7 @@ func TestEnsureComposeServiceSecretAliasPreservesExistingTarget(t *testing.T) {
 	}
 }
 
-func TestEnsureMariaDBHealthcheckAuthenticatesWithSecret(t *testing.T) {
+func TestEnsureMariaDBHealthcheckUsesPingExitStatus(t *testing.T) {
 	t.Parallel()
 	composePath := filepath.Join(t.TempDir(), "docker-compose.yml")
 	writeTestFile(t, composePath, `services:
@@ -342,8 +342,7 @@ func TestEnsureMariaDBHealthcheckAuthenticatesWithSecret(t *testing.T) {
 	}
 	compose := readTestFile(t, composePath)
 	for _, want := range []string{
-		`MYSQL_PWD="$$(cat /run/secrets/DB_ROOT_PASSWORD)"`,
-		`mysqladmin ping --user=root`,
+		`test: ["CMD", "mysqladmin", "ping", "--socket=/var/run/mysqld/mysqld.sock", "--silent"]`,
 		`start_period: 30s`,
 	} {
 		if !strings.Contains(compose, want) {

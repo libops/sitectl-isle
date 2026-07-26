@@ -1030,7 +1030,7 @@ func ensureMariaDBHealthcheck(composePath string) error {
 	}
 	lines = insertComposeLines(lines, serviceEnd,
 		"    healthcheck:",
-		`      test: ["CMD-SHELL", 'MYSQL_PWD="$$(cat /run/secrets/DB_ROOT_PASSWORD)" mysqladmin ping --user=root --socket=/var/run/mysqld/mysqld.sock --silent']`,
+		`      test: ["CMD", "mysqladmin", "ping", "--socket=/var/run/mysqld/mysqld.sock", "--silent"]`,
 		"      interval: 10s",
 		"      timeout: 5s",
 		"      retries: 20",
