@@ -54,6 +54,7 @@ const (
 	localDrupalHostMiddlewareName = "drupal-internal-host"
 	localDrupalCanonicalHost      = `{{ env "DOMAIN" }}`
 	localDrupalRouterName         = "drupal-internal"
+	localDrupalRouterConfigPath   = "conf/traefik/drupal-internal.yml"
 	localDrupalRouterPriority     = 9000
 	workbenchClientRouterName     = "islandora-workbench-client"
 	workbenchClientUserAgentRule  = "HeaderRegexp(`User-Agent`, `(?i)^Islandora Workbench$`)"
@@ -435,54 +436,29 @@ func syncLocalDrupalTraefikAliasContext(ctx *config.Context, enabled bool) error
 }
 
 func syncLocalDrupalRouterContext(ctx *config.Context, enabled bool) error {
-	path := ctx.ResolveProjectPath(filepath.FromSlash(BotMitigationOptions().RouterConfigPath))
-	exists, err := ctx.FileExists(path)
-	if err != nil {
-		return fmt.Errorf("stat local Drupal router config: %w", err)
-	}
-	if !exists {
-		return nil
-	}
-	data, err := ctx.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read local Drupal router config: %w", err)
-	}
-	doc, err := corecomponent.LoadYAMLDocument(maskTemplateDirectives(data))
-	if err != nil {
-		return fmt.Errorf("parse local Drupal router config: %w", err)
-	}
-	routerPath := ".http.routers." + localDrupalRouterName
+	path := ctx.ResolveProjectPath(filepath.FromSlash(localDrupalRouterConfigPath))
 	if !enabled {
-		if err := doc.DeletePath(routerPath); err != nil {
-			return err
-		}
-		if err := doc.DeletePath(".http.middlewares." + localDrupalHostMiddlewareName); err != nil {
-			return err
-		}
-		if err := deletePathIfEmptyYAMLMap(doc, ".http.middlewares"); err != nil {
-			return err
-		}
-		updated, err := doc.Bytes()
-		if err != nil {
-			return fmt.Errorf("marshal local Drupal router config: %w", err)
-		}
-		return ctx.WriteFile(path, restoreTemplateDirectives(updated))
+		return ctx.RemoveFile(path)
 	}
-	router, err := localDrupalRouter(data)
-	if err != nil {
-		return err
+	config := map[string]any{
+		"http": map[string]any{
+			"middlewares": map[string]any{localDrupalHostMiddlewareName: localDrupalHostMiddleware()},
+			"routers": map[string]any{
+				localDrupalRouterName: map[string]any{
+					"entryPoints": []string{"http"},
+					"middlewares": []string{localDrupalHostMiddlewareName},
+					"priority":    localDrupalRouterPriority,
+					"rule":        localDrupalHostRule,
+					"service":     drupalRouterName,
+				},
+			},
+		},
 	}
-	if err := doc.SetValue(routerPath, router); err != nil {
-		return err
-	}
-	if err := doc.SetValue(".http.middlewares."+localDrupalHostMiddlewareName, localDrupalHostMiddleware()); err != nil {
-		return err
-	}
-	updated, err := doc.Bytes()
+	updated, err := yaml.Marshal(config)
 	if err != nil {
 		return fmt.Errorf("marshal local Drupal router config: %w", err)
 	}
-	return ctx.WriteFile(path, restoreTemplateDirectives(updated))
+	return ctx.WriteFile(path, updated)
 }
 
 func updateWorkbenchClientBypass(projectDir string, enabled bool) error {
@@ -551,25 +527,6 @@ func workbenchClientRouter(data []byte) (map[string]any, error) {
 		"rule":     "(" + rule + ") && " + workbenchClientUserAgentRule,
 		"service":  "drupal",
 		"priority": workbenchClientRouterPriority,
-	}
-	for _, key := range []string{"entryPoints", "tls"} {
-		if value, ok := source[key]; ok {
-			router[key] = value
-		}
-	}
-	return router, nil
-}
-
-func localDrupalRouter(data []byte) (map[string]any, error) {
-	source, err := drupalRouter(data)
-	if err != nil {
-		return nil, err
-	}
-	router := map[string]any{
-		"rule":        localDrupalHostRule,
-		"service":     drupalRouterName,
-		"priority":    localDrupalRouterPriority,
-		"middlewares": []string{localDrupalHostMiddlewareName},
 	}
 	for _, key := range []string{"entryPoints", "tls"} {
 		if value, ok := source[key]; ok {

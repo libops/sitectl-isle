@@ -397,6 +397,12 @@ http:
 	if err := SyncLocalDrupalInternalIngress(projectDir, true); err != nil {
 		t.Fatalf("SyncLocalDrupalInternalIngress(true) error = %v", err)
 	}
+	if err := SyncBotMitigationBypass(projectDir); err != nil {
+		t.Fatalf("SyncBotMitigationBypass() error = %v", err)
+	}
+	if err := SyncLocalDrupalInternalIngress(projectDir, true); err != nil {
+		t.Fatalf("SyncLocalDrupalInternalIngress(true) second call error = %v", err)
+	}
 
 	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
 	for _, want := range []string{"fcrepo.localhost", "drupal.internal"} {
@@ -404,7 +410,11 @@ http:
 			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
 		}
 	}
-	router := readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
+	canonicalRouter := readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
+	if strings.Contains(canonicalRouter, "drupal-internal") {
+		t.Fatalf("expected canonical router to remain template-owned, got:\n%s", canonicalRouter)
+	}
+	router := readTestFile(t, filepath.Join(projectDir, filepath.FromSlash(localDrupalRouterConfigPath)))
 	for _, want := range []string{
 		"drupal-internal:",
 		"Host(`drupal.internal`)",
@@ -413,9 +423,8 @@ http:
 		"- drupal-internal-host",
 		"drupal-internal-host:",
 		`Host: '{{ env "DOMAIN" }}'`,
-		"entryPoints:\n        - http",
-		`{{- if (eq (env "TLS_PROVIDER") "letsencrypt") }}`,
-		`{{- end }}`,
+		"entryPoints:",
+		"- http",
 	} {
 		if !strings.Contains(router, want) {
 			t.Fatalf("expected router to contain %q, got:\n%s", want, router)
@@ -435,12 +444,8 @@ http:
 	if strings.Contains(compose, "drupal.internal") || !strings.Contains(compose, "fcrepo.localhost") {
 		t.Fatalf("expected only local Drupal alias removed, got:\n%s", compose)
 	}
-	router = readTestFile(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))
-	if strings.Contains(router, "drupal-internal") || strings.Contains(router, "drupal-internal-host") {
-		t.Fatalf("expected local Drupal router removed, got:\n%s", router)
-	}
-	if strings.Contains(router, "middlewares: {}") {
-		t.Fatalf("expected empty middleware map pruned, got:\n%s", router)
+	if _, err := os.Stat(filepath.Join(projectDir, filepath.FromSlash(localDrupalRouterConfigPath))); !os.IsNotExist(err) {
+		t.Fatalf("expected local Drupal router file removed, stat error = %v", err)
 	}
 }
 
