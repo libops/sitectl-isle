@@ -654,35 +654,6 @@ func yamlMap(value any) map[string]any {
 	}
 }
 
-func deletePathIfEmptyYAMLMap(doc *corecomponent.YAMLDocument, path string) error {
-	if doc == nil {
-		return nil
-	}
-	data, err := doc.Bytes()
-	if err != nil {
-		return err
-	}
-	var root any
-	if err := yaml.Unmarshal(data, &root); err != nil {
-		return err
-	}
-	current := yamlMap(root)
-	for _, segment := range strings.Split(strings.TrimPrefix(path, "."), ".") {
-		if current == nil {
-			return nil
-		}
-		next, ok := current[segment]
-		if !ok {
-			return nil
-		}
-		current = yamlMap(next)
-	}
-	if len(current) != 0 {
-		return nil
-	}
-	return doc.DeletePath(path)
-}
-
 func stringMapValue(values map[string]any, key string) string {
 	if values == nil {
 		return ""
