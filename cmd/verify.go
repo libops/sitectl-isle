@@ -365,14 +365,10 @@ func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("read canonical demo-objects script: %w", err)
 	}
-	script := string(data)
-	const publicURL = `URL="${URI_SCHEME}://${DOMAIN}"`
-	const appendPublishedPort = `if [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then`
-	if !strings.Contains(script, publicURL) || !strings.Contains(script, appendPublishedPort) {
-		return "", fmt.Errorf("canonical demo-objects script has an unknown URL contract")
+	script, err := prepareDemoObjectsScript(data)
+	if err != nil {
+		return "", err
 	}
-	script = strings.Replace(script, publicURL, `URL="${SITECTL_DEMO_OBJECTS_URL:-${URI_SCHEME}://${DOMAIN}}"`, 1)
-	script = strings.Replace(script, appendPublishedPort, `if [ -z "${SITECTL_DEMO_OBJECTS_URL:-}" ] && [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then`, 1)
 
 	command := exec.CommandContext(ctx, "bash", "-s") // #nosec G204 -- the tracked template script is the canonical operation.
 	command.Dir = projectDir
@@ -390,6 +386,21 @@ func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error
 		return stdout.String(), fmt.Errorf("canonical demo-objects script failed: %s", detail)
 	}
 	return stdout.String(), nil
+}
+
+func prepareDemoObjectsScript(data []byte) (string, error) {
+	script := string(data)
+	const profileSource = `source "$(dirname "${BASH_SOURCE[0]}")/profile.sh"`
+	const publicURL = `URL="${URI_SCHEME}://${DOMAIN}"`
+	const appendPublishedPort = `if [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then`
+	if !strings.Contains(script, profileSource) || !strings.Contains(script, publicURL) || !strings.Contains(script, appendPublishedPort) {
+		return "", fmt.Errorf("canonical demo-objects script has an unknown URL contract")
+	}
+	script = strings.Replace(script, profileSource, `source "./scripts/profile.sh"`, 1)
+	script = strings.Replace(script, publicURL, `URL="${SITECTL_DEMO_OBJECTS_URL:-${URI_SCHEME}://${DOMAIN}}"`, 1)
+	script = strings.Replace(script, appendPublishedPort, `if [ -z "${SITECTL_DEMO_OBJECTS_URL:-}" ] && [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then`, 1)
+
+	return script, nil
 }
 
 func demoObjectAssertTarget(fcrepoExpected, fileSystemURI string) (string, string) {

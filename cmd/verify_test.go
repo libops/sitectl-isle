@@ -52,6 +52,32 @@ func TestBotMitigationForwardedHeaderProbeEnabledDetectsIngressTrustedIPs(t *tes
 	}
 }
 
+func TestPrepareDemoObjectsScriptUsesInternalRoute(t *testing.T) {
+	t.Parallel()
+
+	input := `#!/usr/bin/env bash
+set -eou pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/profile.sh"
+URL="${URI_SCHEME}://${DOMAIN}"
+if [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then
+  URL="${URL}:${URI_PORT}"
+fi
+`
+	prepared, err := prepareDemoObjectsScript([]byte(input))
+	if err != nil {
+		t.Fatalf("prepareDemoObjectsScript() error = %v", err)
+	}
+	for _, want := range []string{
+		`source "./scripts/profile.sh"`,
+		`URL="${SITECTL_DEMO_OBJECTS_URL:-${URI_SCHEME}://${DOMAIN}}"`,
+		`if [ -z "${SITECTL_DEMO_OBJECTS_URL:-}" ]`,
+	} {
+		if !strings.Contains(prepared, want) {
+			t.Fatalf("expected prepared script to contain %q, got:\n%s", want, prepared)
+		}
+	}
+}
+
 func verifyTestContext(projectDir string) *config.Context {
 	return &config.Context{
 		DockerHostType: config.ContextLocal,
