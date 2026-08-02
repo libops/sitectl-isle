@@ -33,7 +33,7 @@ func applyIIIF(opts Options) error {
 		}
 	}
 
-	composePath := filepath.Join(opts.Path, "docker-compose.yml")
+	composePath := filepath.Join(opts.Path, "compose.yaml")
 	overridePath := strings.TrimSpace(opts.ComposeOverride)
 	if overridePath == "" {
 		overridePath = filepath.Join(opts.Path, "docker-compose.local.yml")

@@ -179,7 +179,7 @@ func verifyIIIF(ctx context.Context, checker *healthcheck.DockerChecker, project
 		results = append(results, verifyBool("verify:iiif:triplet-service", tripletExists, "triplet service is present", "triplet service is absent", "re-run sitectl create with --iiif triplet"))
 		results = append(results, verifyBool("verify:iiif:cantaloupe-service", !cantaloupeExists, "cantaloupe service is absent", "cantaloupe service is present", "re-run sitectl create with --iiif triplet"))
 		if expectedTopology == verifyIIIFLocal {
-			results = append(results, verifyProjectFileContains(projectDir, "docker-compose.yml", `DRUPAL_DEFAULT_CANTALOUPE_URL: "http://localhost/iiif/3"`, "verify:iiif:drupal-url"))
+			results = append(results, verifyProjectFileContains(projectDir, "compose.yaml", `DRUPAL_DEFAULT_CANTALOUPE_URL: "http://localhost/iiif/3"`, "verify:iiif:drupal-url"))
 			results = append(results, verifyProjectFileExists(projectDir, filepath.Join("conf", "triplet", "config.yaml"), "verify:iiif:triplet-config"))
 		}
 	case createpkg.IIIFCantaloupe:
@@ -206,7 +206,7 @@ func verifyBotMitigation(ctx context.Context, verifyCtx *config.Context, project
 	if expected == "" || expected == verifyExpectedAuto {
 		enabled, known := localBotMitigationConfigured(projectDir)
 		if !known {
-			return []sitevalidate.Result{warningVerifyResult("verify:bot-mitigation:expected", "could not infer bot mitigation state without a local docker-compose.yml")}
+			return []sitevalidate.Result{warningVerifyResult("verify:bot-mitigation:expected", "could not infer bot mitigation state without a local compose.yaml")}
 		}
 		if enabled {
 			expected = coretraefik.BotMitigationStateOn
@@ -235,7 +235,7 @@ func localBotMitigationConfigured(projectDir string) (bool, bool) {
 	if strings.TrimSpace(projectDir) == "" {
 		return false, false
 	}
-	data, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml")) // #nosec G304 -- projectDir is the selected site checkout.
+	data, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml")) // #nosec G304 -- projectDir is the selected site checkout.
 	if err != nil {
 		return false, false
 	}

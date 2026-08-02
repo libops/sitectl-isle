@@ -214,7 +214,7 @@ func currentIngressFollowUps(siteCtx *config.Context) map[string]string {
 	if siteCtx == nil {
 		return followUps
 	}
-	compose, err := corecomponent.LoadComposeFileForContext(siteCtx, siteCtx.ResolveProjectPath("docker-compose.yml"))
+	compose, err := corecomponent.LoadComposeFileForContext(siteCtx, siteCtx.ResolveProjectPath("compose.yaml"))
 	if err != nil {
 		return followUps
 	}
@@ -381,7 +381,7 @@ func codebaseDisposition(state corecomponent.DetectedState) corecomponent.Dispos
 }
 
 func currentIIIFUpstreamURL(projectDir string) string {
-	compose, err := corecomponent.LoadComposeFile(filepath.Join(projectDir, "docker-compose.yml"))
+	compose, err := corecomponent.LoadComposeFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		return ""
 	}

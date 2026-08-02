@@ -14,12 +14,12 @@ import (
 
 func TestProjectDetectClaimsISLETemplateWithoutComposerPackage(t *testing.T) {
 	projectDir := t.TempDir()
-	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), "services:\n  alpaca:\n    image: libops/alpaca:2\n  drupal:\n    image: islandora/drupal:main\n")
+	writeFileForTest(t, filepath.Join(projectDir, "compose.yaml"), "services:\n  alpaca:\n    image: libops/alpaca:2\n  drupal:\n    image: islandora/drupal:main\n")
 	writeFileForTest(t, filepath.Join(projectDir, "composer.json"), `{"require": {}}`)
 
-	data, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	data, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
-		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
+		t.Fatalf("ReadFile(compose.yaml) error = %v", err)
 	}
 	services := config.DetectComposeServices(projectDir)
 	if !slices.Contains(services, "alpaca") || !slices.Contains(services, "drupal") {

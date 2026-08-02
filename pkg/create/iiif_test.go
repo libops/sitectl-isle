@@ -22,7 +22,7 @@ func TestApplyTripletLocalReplacesCantaloupe(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "compose.yaml"))
 	assertContainsIIIF(t, compose, "\n  triplet:\n")
 	assertContainsIIIF(t, compose, "ghcr.io/libops/triplet:v1.1.1@sha256:84dd6c00ed9fd3e60e4e544feda58044d1f47b624fe3a7ee2460e59cc6bf4de2")
 	assertContainsIIIF(t, compose, "./certs/rootCA.pem:/etc/ssl/certs/lehigh.pem:ro,z")
@@ -83,7 +83,7 @@ func TestApplyTripletDistributedUsesExternalUpstreamAndLocalOverride(t *testing.
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "compose.yaml"))
 	if strings.Contains(compose, "\n  triplet:\n") || strings.Contains(compose, "\n  cantaloupe:\n") {
 		t.Fatalf("expected distributed iiif without base iiif service, got:\n%s", compose)
 	}
@@ -121,7 +121,7 @@ func TestApplyTripletLocalWithoutFcrepoOmitsFedoraDependencyAndMount(t *testing.
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "compose.yaml"))
 	assertContainsIIIF(t, compose, "\n  triplet:\n")
 	if strings.Contains(compose, "source: fcrepo-data") || strings.Contains(compose, "subpath: home/data/ocfl-root") || strings.Contains(compose, "condition: service_healthy") {
 		t.Fatalf("expected triplet without Fedora dependency or mount after fcrepo off, got:\n%s", compose)
@@ -157,7 +157,7 @@ func TestApplyCantaloupeLocalRestoresFromTriplet(t *testing.T) {
 		t.Fatalf("Apply(cantaloupe) error = %v", err)
 	}
 
-	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "compose.yaml"))
 	assertContainsIIIF(t, compose, "\n  cantaloupe:\n")
 	assertContainsIIIF(t, compose, "\n  cantaloupe-data: {}")
 	assertContainsIIIF(t, compose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "http://localhost/cantaloupe/iiif/2"`)
@@ -191,7 +191,7 @@ func TestApplyCantaloupeDistributedUsesExternalUpstreamAndLocalOverride(t *testi
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "docker-compose.yml"))
+	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "compose.yaml"))
 	if strings.Contains(compose, "\n  cantaloupe:\n") || strings.Contains(compose, "\n  triplet:\n") {
 		t.Fatalf("expected distributed cantaloupe without base iiif service, got:\n%s", compose)
 	}
@@ -220,7 +220,7 @@ func writeIIIFProjectFixture(t *testing.T) string {
 	t.Helper()
 
 	projectDir := t.TempDir()
-	writeIIIFTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `---
+	writeIIIFTestFile(t, filepath.Join(projectDir, "compose.yaml"), `---
 x-common: &common
   restart: unless-stopped
   networks:

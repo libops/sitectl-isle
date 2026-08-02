@@ -87,7 +87,7 @@ func verifyTestContext(projectDir string) *config.Context {
 
 func writeVerifyCompose(t *testing.T, projectDir, contents string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(contents), 0o644); err != nil {
-		t.Fatalf("WriteFile(docker-compose.yml) error = %v", err)
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(contents), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose.yaml) error = %v", err)
 	}
 }

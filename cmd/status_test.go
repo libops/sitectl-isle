@@ -325,7 +325,7 @@ func TestStatusCommandReportsOff(t *testing.T) {
 func TestStatusCommandVerboseReportsDrift(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	if err := os.WriteFile(composePath, []byte(`
 services:
   alpaca:
@@ -549,7 +549,7 @@ func TestStatusCommandReportsIngressLetsEncryptMode(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
 
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   alpaca:
     environment:
@@ -635,7 +635,7 @@ func TestCurrentIngressFollowUpsUsesLegacyDomainEnv(t *testing.T) {
 			if tt.siteURL != "" {
 				siteURLEnvironment = "\n      DRUPAL_DEFAULT_SITE_URL: " + tt.siteURL
 			}
-			writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+			writeFileForTest(t, filepath.Join(projectDir, "compose.yaml"), `
 services:
   drupal:
     environment:`+siteURLEnvironment+`
@@ -655,7 +655,7 @@ services:
 
 func TestCurrentIngressFollowUpsPrefersTraefikRouteDomain(t *testing.T) {
 	projectDir := t.TempDir()
-	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+	writeFileForTest(t, filepath.Join(projectDir, "compose.yaml"), `
 services:
   drupal:
     environment:
@@ -732,7 +732,7 @@ func writeISLEOnFixture(t *testing.T, projectDir string) {
 		t.Fatalf("MkdirAll(configDir) error = %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   alpaca:
     environment:

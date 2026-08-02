@@ -31,16 +31,16 @@ func IIIF(source TemplateSource) Definition {
 		On: DomainSpec{
 			Compose: YAMLStateSpec{
 				Canonical: []RepoAsset{
-					source.ComposeAsset("docker-compose.yml"),
+					source.ComposeAsset("compose.yaml"),
 				},
 				Rules: []YAMLRule{
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpDelete,
 						Path:  ".services.cantaloupe",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpDelete,
 						Path:  ".volumes.cantaloupe-data",
 					},
@@ -70,16 +70,16 @@ func IIIF(source TemplateSource) Definition {
 		Off: DomainSpec{
 			Compose: YAMLStateSpec{
 				Canonical: []RepoAsset{
-					source.ComposeAsset("docker-compose.yml"),
+					source.ComposeAsset("compose.yaml"),
 				},
 				Rules: []YAMLRule{
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpDelete,
 						Path:  ".services.triplet",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpDelete,
 						Path:  ".volumes.triplet-cache",
 					},
@@ -147,7 +147,7 @@ func IIIFTopology() Definition {
 			Compose: YAMLStateSpec{
 				Rules: []YAMLRule{
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpRestore,
 						Path:  ".services.traefik.environment.IIIF_UPSTREAM_URL",
 					},
@@ -158,7 +158,7 @@ func IIIFTopology() Definition {
 			Compose: YAMLStateSpec{
 				Rules: []YAMLRule{
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpDelete,
 						Path:  ".services.traefik.environment.IIIF_UPSTREAM_URL",
 					},

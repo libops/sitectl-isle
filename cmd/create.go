@@ -107,7 +107,8 @@ func createDefinition() plugin.CreateSpec {
 			{Service: "drupal", Image: "libops/islandora:nginx-1.30.3-php84", BuildPolicy: plugin.BuildPolicyAlways},
 		},
 		DockerComposeInit: []string{
-			"./scripts/init.sh",
+			"mkdir -p ./certs ./secrets",
+			"docker compose run --rm -e HOST_UID=\"$(id -u)\" -e HOST_GID=\"$(id -g)\" init",
 		},
 		InitArtifacts: []plugin.InitArtifact{
 			{Path: "certs/cert.pem"},
@@ -554,11 +555,12 @@ This will completely stop and destroy the setup.`, shellPath(ctx.ProjectDir), cl
 		}
 		return nil
 	}); err != nil {
-		tail, tailErr := tailLines(logPath, 20)
+		const failureLogLines = 200
+		tail, tailErr := tailLines(logPath, failureLogLines)
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, corecomponent.RenderSection(
 			"Install failed",
-			fmt.Sprintf("Startup logs were saved to %s. Showing the last 20 lines below.", logPath),
+			fmt.Sprintf("Startup logs were saved to %s. Showing the last %d lines below.", logPath, failureLogLines),
 		))
 		if tailErr == nil && strings.TrimSpace(tail) != "" {
 			fmt.Fprintln(out, tail)

@@ -28,7 +28,7 @@ type Status struct {
 }
 
 func Detect(projectDir, overridePath string) (Status, error) {
-	baseComposePath := filepath.Join(projectDir, "docker-compose.yml")
+	baseComposePath := filepath.Join(projectDir, "compose.yaml")
 	baseCompose, err := corecomponent.LoadComposeFile(baseComposePath)
 	if err != nil {
 		return Status{}, err
@@ -99,7 +99,7 @@ func validateUpstreamURL(value string) error {
 }
 
 func applyOn(projectDir, overridePath, upstreamURL string) error {
-	basePath := filepath.Join(projectDir, "docker-compose.yml")
+	basePath := filepath.Join(projectDir, "compose.yaml")
 	overrideCompose, err := corecomponent.LoadComposeFileOptional(overridePath)
 	if err != nil {
 		return err
@@ -117,7 +117,7 @@ func applyOn(projectDir, overridePath, upstreamURL string) error {
 			return err
 		}
 		if serviceBlock == "" {
-			return fmt.Errorf("no cantaloupe service found in docker-compose.yml or %s", overridePath)
+			return fmt.Errorf("no cantaloupe service found in compose.yaml or %s", overridePath)
 		}
 		if err := overrideCompose.AddServiceBlock("cantaloupe", serviceBlock); err != nil {
 			return err
@@ -167,7 +167,7 @@ func applyOn(projectDir, overridePath, upstreamURL string) error {
 }
 
 func applyOff(projectDir, overridePath string) error {
-	basePath := filepath.Join(projectDir, "docker-compose.yml")
+	basePath := filepath.Join(projectDir, "compose.yaml")
 	overrideCompose, err := corecomponent.LoadComposeFileOptional(overridePath)
 	if err != nil {
 		return err

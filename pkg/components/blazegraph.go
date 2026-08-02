@@ -31,30 +31,30 @@ func Blazegraph(source TemplateSource) Definition {
 		On: DomainSpec{
 			Compose: YAMLStateSpec{
 				Canonical: []RepoAsset{
-					source.ComposeAsset("docker-compose.yml"),
+					source.ComposeAsset("compose.yaml"),
 				},
 				Rules: []YAMLRule{
 					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
+						Files:       []string{"compose.yaml"},
+						SourceFiles: []string{"compose.yaml"},
 						Op:          OpRestore,
 						Path:        ".services.blazegraph",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpSet,
 						Path:  ".services.alpaca.environment.ALPACA_TRIPLESTORE_INDEXER_ENABLED",
 						Value: "true",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpSet,
 						Path:  ".services.drupal.environment.DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE",
 						Value: "islandora",
 					},
 					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
+						Files:       []string{"compose.yaml"},
+						SourceFiles: []string{"compose.yaml"},
 						Op:          OpRestore,
 						Path:        ".volumes.blazegraph-data",
 					},
@@ -127,30 +127,30 @@ func Blazegraph(source TemplateSource) Definition {
 		Off: DomainSpec{
 			Compose: YAMLStateSpec{
 				Canonical: []RepoAsset{
-					source.ComposeAsset("docker-compose.yml"),
+					source.ComposeAsset("compose.yaml"),
 				},
 				Rules: []YAMLRule{
 					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
+						Files:       []string{"compose.yaml"},
+						SourceFiles: []string{"compose.yaml"},
 						Op:          OpDelete,
 						Path:        ".services.blazegraph",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpSet,
 						Path:  ".services.alpaca.environment.ALPACA_TRIPLESTORE_INDEXER_ENABLED",
 						Value: "false",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpSet,
 						Path:  ".services.drupal.environment.DRUPAL_DEFAULT_TRIPLESTORE_NAMESPACE",
 						Value: "",
 					},
 					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
+						Files:       []string{"compose.yaml"},
+						SourceFiles: []string{"compose.yaml"},
 						Op:          OpDelete,
 						Path:        ".volumes.blazegraph-data",
 					},

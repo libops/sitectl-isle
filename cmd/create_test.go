@@ -533,8 +533,8 @@ func TestEnsureClonedCheckoutSkipsNonEmptyDirectory(t *testing.T) {
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(projectDir) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile(docker-compose.yml) error = %v", err)
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose.yaml) error = %v", err)
 	}
 
 	oldClone := createCloneTemplateRepo
@@ -564,8 +564,8 @@ func TestRefreshCreateContextComposeMetadataKeepsContextDerivedNameWithoutTempla
 	t.Setenv("HOME", t.TempDir())
 
 	projectDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile(docker-compose.yml) error = %v", err)
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose.yaml) error = %v", err)
 	}
 	projectName := filepath.Base(projectDir)
 	ctx := &config.Context{
