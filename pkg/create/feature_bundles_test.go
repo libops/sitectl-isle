@@ -14,7 +14,7 @@ import (
 func TestMergePDFFeatureBundleConvergesComposeAndDrupal(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	writeFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `x-common: &common
+	writeFeatureTestFile(t, filepath.Join(projectDir, "compose.yaml"), `x-common: &common
   restart: unless-stopped
 secrets:
   CERT_PUBLIC_KEY: {file: ./certs/cert.pem}
@@ -37,7 +37,7 @@ services:
 		t.Fatalf("ApplyFeatureBundles(on) error = %v", err)
 	}
 
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	actionPath := filepath.Join(projectDir, "config", "sync", "system.action.paged_content_created_aggregated_pdf.yml")
 	compose := readFeatureTestFile(t, composePath)
 	for _, want := range []string{
@@ -81,7 +81,7 @@ services:
 func TestMergePDFFeatureBundleConvergesToHardcodedImage(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	writeFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `x-common: &common
+	writeFeatureTestFile(t, filepath.Join(projectDir, "compose.yaml"), `x-common: &common
   restart: unless-stopped
 secrets:
   CERT_PUBLIC_KEY: {}
@@ -103,7 +103,7 @@ services:
 	if _, err := os.Stat(filepath.Join(projectDir, ".env")); !os.IsNotExist(err) {
 		t.Fatalf("apply unexpectedly wrote a Compose environment file: %v", err)
 	}
-	if compose := readFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml")); !strings.Contains(compose, "image: islandora/mergepdf:6.3.19") || strings.Contains(compose, "libops/mergepdf") || strings.Contains(compose, "DOWNSTREAM_DRIFT") {
+	if compose := readFeatureTestFile(t, filepath.Join(projectDir, "compose.yaml")); !strings.Contains(compose, "image: islandora/mergepdf:6.3.19") || strings.Contains(compose, "libops/mergepdf") || strings.Contains(compose, "DOWNSTREAM_DRIFT") {
 		t.Fatalf("expected drifted service to converge to the exact upstream mergepdf contract:\n%s", compose)
 	}
 
@@ -119,7 +119,7 @@ services:
 func TestMergePDFFeatureBundlePreservesCompatibleBumpedImage(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	writeFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `x-common: &common
+	writeFeatureTestFile(t, filepath.Join(projectDir, "compose.yaml"), `x-common: &common
   restart: unless-stopped
 secrets:
   CERT_PUBLIC_KEY: {}
@@ -138,7 +138,7 @@ services:
 	if err := ApplyFeatureBundles(opts); err != nil {
 		t.Fatalf("ApplyFeatureBundles(on) error = %v", err)
 	}
-	compose := readFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	compose := readFeatureTestFile(t, filepath.Join(projectDir, "compose.yaml"))
 	if !strings.Contains(compose, "image: islandora/mergepdf:6.3.20@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
 		t.Fatalf("compatible bumped image was not preserved:\n%s", compose)
 	}
@@ -150,7 +150,7 @@ services:
 	if err := ApplyFeatureBundles(opts); err != nil {
 		t.Fatalf("ApplyFeatureBundles(second on) error = %v", err)
 	}
-	if got := readFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml")); got != first {
+	if got := readFeatureTestFile(t, filepath.Join(projectDir, "compose.yaml")); got != first {
 		t.Fatalf("second apply changed compatible bumped image service:\n%s", got)
 	}
 }
@@ -158,7 +158,7 @@ services:
 func TestValidateMergePDFObservedStateRequiresCompatibleDirectImage(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	writeFeatureTestFile(t, composePath, "services:\n  mergepdf:\n    image: islandora/mergepdf:6.3.20@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
 	if err := ValidateFeatureBundleObservedState(Options{Path: projectDir}, FeatureBundleMergePDF, true); err != nil {
 		t.Fatalf("ValidateFeatureBundleObservedState(compatible) error = %v", err)
@@ -174,7 +174,7 @@ func TestValidateMergePDFObservedStateRequiresCompatibleDirectImage(t *testing.T
 func TestMergePDFFeatureBundleRejectsOldIslandoraAlpacaBeforeMutation(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	writeFeatureTestFile(t, composePath, `x-common: &common
   restart: unless-stopped
 secrets:
@@ -199,7 +199,7 @@ services:
 func TestMergePDFFeatureBundleAcceptsCompatibleDesiredImageOverride(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	writeFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `x-common: &common
+	writeFeatureTestFile(t, filepath.Join(projectDir, "compose.yaml"), `x-common: &common
   restart: unless-stopped
 secrets:
   CERT_PUBLIC_KEY: {}
@@ -225,7 +225,7 @@ services:
 func TestMergePDFFeatureBundleRequiresCommonAnchorBeforeMutation(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	writeFeatureTestFile(t, composePath, `x-common:
   restart: unless-stopped
 secrets:
@@ -250,7 +250,7 @@ services:
 func TestHOCRSearchFeatureBundlePreflightsHostConfigBeforeMutation(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	composerPath := filepath.Join(projectDir, "composer.json")
 	writeFeatureTestFile(t, composePath, "services:\n  solr:\n    image: islandora/solr:4.2.1\n")
 	writeFeatureTestFile(t, composerPath, "{\"require\": {\"php\": \"^8.3\"}}\n")
@@ -276,7 +276,7 @@ func TestHOCRSearchFeatureBundleConvergesOwnedFilesAndComposerRequirements(t *te
 	t.Parallel()
 	projectDir := t.TempDir()
 	writeFeatureTestFile(t, filepath.Join(projectDir, ".env"), "SOLR_TAG=4.2.1\n")
-	writeFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `services:
+	writeFeatureTestFile(t, filepath.Join(projectDir, "compose.yaml"), `services:
   solr:
     image: islandora/solr:${SOLR_TAG}
 `)
@@ -461,7 +461,7 @@ func TestHOCRSearchFeatureBundleImageRequirements(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			projectDir := t.TempDir()
-			writeFeatureTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), "services:\n  solr:\n    image: "+test.image+"\n")
+			writeFeatureTestFile(t, filepath.Join(projectDir, "compose.yaml"), "services:\n  solr:\n    image: "+test.image+"\n")
 			err := CheckFeatureBundleRequirements(Options{Path: projectDir}, FeatureBundleHOCRSearch)
 			if test.wantError == "" && err != nil {
 				t.Fatalf("CheckFeatureBundleRequirements() error = %v", err)

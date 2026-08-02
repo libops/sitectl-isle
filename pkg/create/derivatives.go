@@ -94,7 +94,7 @@ func IsDerivativeService(name string) bool {
 }
 
 // ApplyDerivativeServices applies the requested local or distributed topology
-// for derivative services in docker-compose.yml and docker-compose.dev.yml.
+// for derivative services in compose.yaml and docker-compose.dev.yml.
 func ApplyDerivativeServices(opts Options) error {
 	if opts.Path == "" {
 		opts.Path = "."
@@ -103,7 +103,7 @@ func ApplyDerivativeServices(opts Options) error {
 		return nil
 	}
 
-	composePath := filepath.Join(opts.Path, "docker-compose.yml")
+	composePath := filepath.Join(opts.Path, "compose.yaml")
 	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
 		return err

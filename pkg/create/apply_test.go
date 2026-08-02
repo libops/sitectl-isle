@@ -26,7 +26,7 @@ func TestApplyFcrepoOffPublic(t *testing.T) {
 		t.Fatalf("WriteFile(fcrepo route) error = %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   alpaca:
     environment:
@@ -84,7 +84,7 @@ volumes:
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
@@ -171,7 +171,7 @@ func TestApplyFcrepoOnRestoresFcrepoAndMilliner(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(config) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 x-common: &common
   restart: unless-stopped
 services:
@@ -210,7 +210,7 @@ volumes: {}
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
@@ -241,7 +241,7 @@ volumes: {}
 			t.Fatalf("expected fcrepo config %s restored: %v", name, err)
 		}
 	}
-	parsed, err := corecomponent.LoadComposeFile(filepath.Join(projectDir, "docker-compose.yml"))
+	parsed, err := corecomponent.LoadComposeFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("LoadComposeFile() error = %v", err)
 	}
@@ -283,7 +283,7 @@ volumes: {}
 func TestEnsureComposeServiceSecretTargetNormalizesExistingMount(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	writeTestFile(t, composePath, `services:
   drupal:
     secrets:
@@ -303,7 +303,7 @@ func TestEnsureComposeServiceSecretTargetNormalizesExistingMount(t *testing.T) {
 
 func TestEnsureComposeServiceSecretAliasPreservesExistingTarget(t *testing.T) {
 	t.Parallel()
-	composePath := filepath.Join(t.TempDir(), "docker-compose.yml")
+	composePath := filepath.Join(t.TempDir(), "compose.yaml")
 	writeTestFile(t, composePath, `services:
   drupal:
     secrets:
@@ -325,7 +325,7 @@ func TestEnsureComposeServiceSecretAliasPreservesExistingTarget(t *testing.T) {
 
 func TestEnsureMariaDBHealthcheckUsesPingExitStatus(t *testing.T) {
 	t.Parallel()
-	composePath := filepath.Join(t.TempDir(), "docker-compose.yml")
+	composePath := filepath.Join(t.TempDir(), "compose.yaml")
 	writeTestFile(t, composePath, `services:
   mariadb:
     image: islandora/mariadb:6.3.16
@@ -359,7 +359,7 @@ func TestSyncLocalDrupalInternalIngress(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(projectDir, "conf", "traefik"), 0o755); err != nil {
 		t.Fatalf("MkdirAll(conf/traefik) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   traefik:
     networks:
@@ -404,7 +404,7 @@ http:
 		t.Fatalf("SyncLocalDrupalInternalIngress(true) second call error = %v", err)
 	}
 
-	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	compose := readTestFile(t, filepath.Join(projectDir, "compose.yaml"))
 	if !strings.Contains(compose, "fcrepo.localhost") || strings.Contains(compose, "drupal.internal") {
 		t.Fatalf("expected canonical Compose aliases to remain unchanged, got:\n%s", compose)
 	}
@@ -432,7 +432,7 @@ http:
 		t.Fatalf("SyncLocalDrupalInternalIngress(false) error = %v", err)
 	}
 
-	compose = readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	compose = readTestFile(t, filepath.Join(projectDir, "compose.yaml"))
 	if strings.Contains(compose, "drupal.internal") || !strings.Contains(compose, "fcrepo.localhost") {
 		t.Fatalf("expected canonical Compose aliases unchanged, got:\n%s", compose)
 	}
@@ -456,7 +456,7 @@ func TestApplyRepositoryComponentsRestoresBlazegraphRuntimeAndDrupalConfig(t *te
 	t.Parallel()
 
 	projectDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 x-common: &common
   restart: unless-stopped
 services:
@@ -482,7 +482,7 @@ volumes: {}
 		t.Fatalf("applyRepositoryComponents() error = %v", err)
 	}
 
-	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
@@ -507,7 +507,7 @@ func TestApplyBlazegraphOnRewritesExistingImage(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   alpaca:
     environment: {}
@@ -527,7 +527,7 @@ volumes:
 		t.Fatalf("applyBlazegraphOn() error = %v", err)
 	}
 
-	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
@@ -793,7 +793,7 @@ func TestApplyFcrepoOnPrefersLibopsServicesOverExistingMilliner(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(configDir) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   activemq:
     image: libops/activemq:nginx-1.30.3-php84
@@ -817,7 +817,7 @@ volumes: {}
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
@@ -838,7 +838,7 @@ func TestApplyFcrepoOnDoesNotInferLibopsFcrepoFive(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(configDir) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   activemq:
     image: libops/activemq:5
@@ -860,7 +860,7 @@ volumes: {}
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
@@ -884,7 +884,7 @@ func TestApplyFcrepoOffTripletDetectsCurrentDrupalLayout(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(projectDir, "drupal", "web"), 0o755); err != nil {
 		t.Fatalf("MkdirAll(web) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   alpaca:
     environment:
@@ -940,7 +940,7 @@ volumes:
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
@@ -980,7 +980,7 @@ func TestApplyBlazegraphOff(t *testing.T) {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   alpaca:
     environment:
@@ -1035,7 +1035,7 @@ volumes:
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
@@ -1093,7 +1093,7 @@ func TestApplyFcrepoOnNoOp(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	original := []byte(`services:
   activemq:
     image: libops/activemq:5
@@ -1190,7 +1190,7 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
     cleanup.sh
 `)
 	writeTestFile(t, filepath.Join(projectDir, "drupal", ".dockerignore"), "README.md\n")
-	writeTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `services:
+	writeTestFile(t, filepath.Join(projectDir, "compose.yaml"), `services:
   init:
     volumes:
       - ./drupal:/drupal:rw
@@ -1237,6 +1237,8 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 		"ARG TAG",
 		"FROM ${REPOSITORY}/drupal:${TAG}",
 		"COPY --link composer.json composer.lock /var/www/drupal/",
+		"cp /var/www/drupal/assets/libops_settings.txt /var/www/drupal/assets/default_settings.txt",
+		"composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --optimize-autoloader",
 		"COPY --link drupal/rootfs/ /",
 	} {
 		if !strings.Contains(dockerfile, want) {
@@ -1247,7 +1249,7 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 		t.Fatalf("expected nested rootfs copy removed, got:\n%s", dockerfile)
 	}
 
-	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	compose := readTestFile(t, filepath.Join(projectDir, "compose.yaml"))
 	if !strings.Contains(compose, "context: .") || strings.Contains(compose, "context: ./drupal") {
 		t.Fatalf("expected drupal build context to be git root, got:\n%s", compose)
 	}
@@ -1301,7 +1303,7 @@ COPY --link assets/ /var/www/drupal/assets/
 COPY --link rootfs/opt/ /opt/
 `)
 	writeTestFile(t, filepath.Join(drupalRoot, ".dockerignore"), "README.md\n")
-	writeTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `services:
+	writeTestFile(t, filepath.Join(projectDir, "compose.yaml"), `services:
   init:
     volumes:
       - ./drupal:/drupal:rw
@@ -1342,6 +1344,8 @@ COPY --link rootfs/opt/ /opt/
 	dockerfile := readTestFile(t, filepath.Join(projectDir, "Dockerfile"))
 	for _, want := range []string{
 		"COPY --link composer.json composer.lock /var/www/drupal/",
+		"cp /var/www/drupal/assets/libops_settings.txt /var/www/drupal/assets/default_settings.txt",
+		"composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --optimize-autoloader",
 		"COPY --link drupal/rootfs/ /",
 	} {
 		if !strings.Contains(dockerfile, want) {
@@ -1349,7 +1353,7 @@ COPY --link rootfs/opt/ /opt/
 		}
 	}
 
-	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	compose := readTestFile(t, filepath.Join(projectDir, "compose.yaml"))
 	if !strings.Contains(compose, "context: .") || strings.Contains(compose, "context: ./drupal") {
 		t.Fatalf("expected drupal build context to be git root, got:\n%s", compose)
 	}
@@ -1373,7 +1377,7 @@ func TestApplyCreateMatrix(t *testing.T) {
 				ISLEFileSystemURI: PrivateISLEFileSystemURI,
 			},
 			validate: func(t *testing.T, projectDir string) {
-				compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+				compose := readTestFile(t, filepath.Join(projectDir, "compose.yaml"))
 				for _, want := range []string{"\n  fcrepo:\n", "\n  blazegraph:\n", "\n  cantaloupe:\n"} {
 					if !strings.Contains(compose, want) {
 						t.Fatalf("expected vanilla compose to contain %q, got:\n%s", want, compose)
@@ -1393,7 +1397,7 @@ func TestApplyCreateMatrix(t *testing.T) {
 				ISLEFileSystemURI: PrivateISLEFileSystemURI,
 			},
 			validate: func(t *testing.T, projectDir string) {
-				compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+				compose := readTestFile(t, filepath.Join(projectDir, "compose.yaml"))
 				for _, absent := range []string{"\n  fcrepo:\n", "\n  blazegraph:\n", "fcrepo-data", "blazegraph-data"} {
 					if strings.Contains(compose, absent) {
 						t.Fatalf("expected %q removed, got:\n%s", absent, compose)
@@ -1410,7 +1414,7 @@ func TestApplyCreateMatrix(t *testing.T) {
 				ISLEFileSystemURI: PrivateISLEFileSystemURI,
 			},
 			validate: func(t *testing.T, projectDir string) {
-				compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+				compose := readTestFile(t, filepath.Join(projectDir, "compose.yaml"))
 				if !strings.Contains(compose, "\n  triplet:\n") || strings.Contains(compose, "\n  cantaloupe:\n") {
 					t.Fatalf("expected triplet to replace cantaloupe, got:\n%s", compose)
 				}
@@ -1429,7 +1433,7 @@ func TestApplyCreateMatrix(t *testing.T) {
 				Codebase:          CodebaseGitRoot,
 			},
 			validate: func(t *testing.T, projectDir string) {
-				compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+				compose := readTestFile(t, filepath.Join(projectDir, "compose.yaml"))
 				if !strings.Contains(compose, "context: .") || strings.Contains(compose, "context: ./drupal") {
 					t.Fatalf("expected git-root build context, got:\n%s", compose)
 				}
@@ -1514,7 +1518,7 @@ services:
       --log.level=INFO
       --entryPoints.http.address=:80
 `
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(compose), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(compose), 0o644); err != nil {
 		t.Fatalf("WriteFile(compose) error = %v", err)
 	}
 
@@ -1536,7 +1540,7 @@ services:
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	updated, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	updated, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
@@ -1585,7 +1589,7 @@ func TestApplyAcceptsCustomISLEFileSystemURI(t *testing.T) {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   alpaca:
     environment: {}
@@ -1635,7 +1639,7 @@ func TestApplyDerivativeServicesDistributed(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   alpaca:
     environment: {}
@@ -1657,7 +1661,7 @@ services:
 		t.Fatalf("ApplyDerivativeServices() error = %v", err)
 	}
 
-	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
@@ -1700,7 +1704,7 @@ func TestApplyDerivativeServicesDistributedFITSPreservesLocalCrayfits(t *testing
 	t.Parallel()
 
 	projectDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   alpaca:
     environment: {}
@@ -1721,7 +1725,7 @@ services:
 		t.Fatalf("ApplyDerivativeServices() error = %v", err)
 	}
 
-	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
@@ -1756,7 +1760,7 @@ func TestApplyDerivativeServicesDistributedCrayfitsUsesManagedCrayfits(t *testin
 	t.Parallel()
 
 	projectDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte(`
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte(`
 services:
   alpaca:
     environment: {}
@@ -1778,7 +1782,7 @@ services:
 		t.Fatalf("ApplyDerivativeServices() error = %v", err)
 	}
 
-	composeData, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	composeData, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
 	}
@@ -1808,7 +1812,7 @@ services:
 
 func writeRepositoryComponentsOffFixture(t *testing.T, projectDir string) {
 	t.Helper()
-	writeTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `x-common: &common
+	writeTestFile(t, filepath.Join(projectDir, "compose.yaml"), `x-common: &common
   restart: unless-stopped
 secrets: {}
 services:
@@ -1839,7 +1843,7 @@ volumes: {}
 func assertRepositoryComponentState(t *testing.T, projectDir string, fcrepoEnabled, blazegraphEnabled bool) {
 	t.Helper()
 	assertApplicationDatabaseBootstrap(t, projectDir)
-	compose := readTestFile(t, filepath.Join(projectDir, "docker-compose.yml"))
+	compose := readTestFile(t, filepath.Join(projectDir, "compose.yaml"))
 	for service, want := range map[string]bool{
 		"fcrepo":     fcrepoEnabled,
 		"milliner":   fcrepoEnabled,
@@ -1892,7 +1896,7 @@ func assertRepositoryComponentState(t *testing.T, projectDir string, fcrepoEnabl
 
 func assertApplicationDatabaseBootstrap(t *testing.T, projectDir string) {
 	t.Helper()
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	data, err := os.ReadFile(composePath)
 	if err != nil {
 		t.Fatalf("ReadFile(compose) error = %v", err)
@@ -2084,7 +2088,7 @@ func yamlTreeHasMappingKey(value any, target string) bool {
 func repositoryComponentSnapshot(t *testing.T, projectDir string) string {
 	t.Helper()
 	paths := []string{
-		"docker-compose.yml",
+		"compose.yaml",
 		"conf/traefik/fcrepo.yml",
 	}
 	seen := map[string]bool{}
@@ -2171,7 +2175,7 @@ func writeApplyMatrixProject(t *testing.T, projectDir string) {
 			t.Fatalf("MkdirAll(%s) error = %v", dir, err)
 		}
 	}
-	writeTestFile(t, filepath.Join(projectDir, "docker-compose.yml"), `services:
+	writeTestFile(t, filepath.Join(projectDir, "compose.yaml"), `services:
   alpaca:
     environment:
       ALPACA_FCREPO_INDEXER_ENABLED: "true"

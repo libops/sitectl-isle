@@ -133,9 +133,9 @@ func TestRunComponentReviewAppliesSelectedStates(t *testing.T) {
 		t.Fatalf("expected iiif upstream url, got %q", got.IIIFUpstreamURL)
 	}
 
-	composeText, err := os.ReadFile(filepath.Join(projectDir, "docker-compose.yml"))
+	composeText, err := os.ReadFile(filepath.Join(projectDir, "compose.yaml"))
 	if err != nil {
-		t.Fatalf("ReadFile(docker-compose.yml) error = %v", err)
+		t.Fatalf("ReadFile(compose.yaml) error = %v", err)
 	}
 	if !strings.Contains(string(composeText), `INGRESS_HOSTNAMES: "repo.example.org,localhost,127.0.0.1,::1"`) ||
 		!strings.Contains(string(composeText), `INGRESS_SCHEME: "https"`) ||
@@ -236,12 +236,12 @@ func TestRunComponentReconcileDesiredStatePreservesHealthyTopology(t *testing.T)
 	// Keep ingress healthy under the currently released core detector, which
 	// evaluates each supported Compose filename independently. The v0.37 core
 	// candidate-file behavior collapses these to the files that actually exist.
-	composeFixture := readFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"))
-	for _, name := range []string{"docker-compose.yaml", "compose.yml", "compose.yaml"} {
+	composeFixture := readFileForTest(t, filepath.Join(projectDir, "compose.yaml"))
+	for _, name := range []string{"compose.yaml", "compose.yml", "compose.yaml"} {
 		writeFileForTest(t, filepath.Join(projectDir, name), composeFixture)
 	}
 
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	compose := readFileForTest(t, composePath)
 	compose = strings.Replace(compose, "\n  traefik:\n", "\n  triplet:\n    image: libops/triplet:test\n\n  traefik:\n", 1)
 	writeFileForTest(t, composePath, compose)
@@ -464,7 +464,7 @@ func TestRunComponentReviewReportTableFormat(t *testing.T) {
 func TestRunComponentReviewReportJSONFormatIncludesIngressDetails(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
-	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+	writeFileForTest(t, filepath.Join(projectDir, "compose.yaml"), `
 services:
   alpaca:
     environment:
@@ -543,7 +543,7 @@ volumes:
 func TestRunComponentReviewReportVerboseIncludesDriftDetails(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
-	writeFileForTest(t, filepath.Join(projectDir, "docker-compose.yml"), `
+	writeFileForTest(t, filepath.Join(projectDir, "compose.yaml"), `
 services:
   alpaca:
     environment:

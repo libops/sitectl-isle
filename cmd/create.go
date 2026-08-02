@@ -107,7 +107,9 @@ func createDefinition() plugin.CreateSpec {
 			{Service: "drupal", Image: "libops/islandora:nginx-1.30.3-php84", BuildPolicy: plugin.BuildPolicyAlways},
 		},
 		DockerComposeInit: []string{
-			"./scripts/init.sh",
+			"if [ ! -f .env ]; then cp sample.env .env; fi; if ! grep -q '^DRUPAL_HEALTHCHECK_START_PERIOD=' .env; then printf '\\nDRUPAL_HEALTHCHECK_START_PERIOD=5m\\n' >> .env; fi",
+			"mkdir -p ./certs ./secrets",
+			"attempt=1; until docker compose run --rm -e HOST_UID=\"$(id -u)\" -e HOST_GID=\"$(id -g)\" init; do if [ \"$attempt\" -ge 3 ]; then exit 1; fi; attempt=$((attempt + 1)); sleep 5; done",
 		},
 		InitArtifacts: []plugin.InitArtifact{
 			{Path: "certs/cert.pem"},
@@ -318,6 +320,9 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		return err
 	}
 	if cloned {
+		if err := normalizeComposeProjectFilename(ctx); err != nil {
+			return err
+		}
 		if err := bootstrapCheckoutForContext(progress, ctx); err != nil {
 			return err
 		}
@@ -388,6 +393,44 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	}
 
 	printCreateSummary(summary, req)
+	return nil
+}
+
+func normalizeComposeProjectFilename(ctx *config.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("context is nil")
+	}
+	if ctx.DockerHostType == config.ContextRemote {
+		command := "if [ ! -e compose.yaml ] && [ -f docker-compose.yml ]; then mv docker-compose.yml compose.yaml && sed -i 's#\\./docker-compose\\.yml:/docker-compose\\.yml#./compose.yaml:/docker-compose.yml#g' compose.yaml; fi"
+		if err := commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, ctx.ProjectDir, io.Discard, io.Discard, command); err != nil {
+			return fmt.Errorf("normalize Compose project filename: %w", err)
+		}
+		return nil
+	}
+	canonical := filepath.Join(ctx.ProjectDir, "compose.yaml")
+	legacy := filepath.Join(ctx.ProjectDir, "docker-compose.yml")
+	if _, err := os.Stat(canonical); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect canonical Compose file: %w", err)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect legacy Compose file: %w", err)
+	}
+	if err := os.Rename(legacy, canonical); err != nil {
+		return fmt.Errorf("normalize Compose project filename: %w", err)
+	}
+	data, err := os.ReadFile(canonical)
+	if err != nil {
+		return fmt.Errorf("read canonical Compose file: %w", err)
+	}
+	data = bytes.ReplaceAll(data, []byte("./docker-compose.yml:/docker-compose.yml"), []byte("./compose.yaml:/docker-compose.yml"))
+	if err := os.WriteFile(canonical, data, 0o644); err != nil {
+		return fmt.Errorf("update canonical Compose self-mount: %w", err)
+	}
 	return nil
 }
 
@@ -554,11 +597,12 @@ This will completely stop and destroy the setup.`, shellPath(ctx.ProjectDir), cl
 		}
 		return nil
 	}); err != nil {
-		tail, tailErr := tailLines(logPath, 20)
+		const failureLogLines = 200
+		tail, tailErr := tailLines(logPath, failureLogLines)
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, corecomponent.RenderSection(
 			"Install failed",
-			fmt.Sprintf("Startup logs were saved to %s. Showing the last 20 lines below.", logPath),
+			fmt.Sprintf("Startup logs were saved to %s. Showing the last %d lines below.", logPath, failureLogLines),
 		))
 		if tailErr == nil && strings.TrimSpace(tail) != "" {
 			fmt.Fprintln(out, tail)

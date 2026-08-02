@@ -66,7 +66,7 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 		On: DomainSpec{
 			Compose: YAMLStateSpec{
 				Canonical: []RepoAsset{
-					source.ComposeAsset("docker-compose.yml"),
+					source.ComposeAsset("compose.yaml"),
 					source.ComposeAsset("conf/traefik/fcrepo.yml"),
 				},
 				Rules: []YAMLRule{
@@ -76,48 +76,48 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 						Path:  ".",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpDelete,
 						Path:  ".services.fcrepo-database-init",
 					},
 					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
+						Files:       []string{"compose.yaml"},
+						SourceFiles: []string{"compose.yaml"},
 						Op:          OpRestore,
 						Path:        ".services.fcrepo",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpSet,
 						Path:  ".services.fcrepo.environment.DB_BOOTSTRAP_ENABLED",
 						Value: "true",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpDelete,
 						Path:  ".services.fcrepo.depends_on.fcrepo-database-init",
 					},
 					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
+						Files:       []string{"compose.yaml"},
+						SourceFiles: []string{"compose.yaml"},
 						Op:          OpRestore,
 						Path:        ".services.milliner",
 					},
 					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
+						Files:       []string{"compose.yaml"},
+						SourceFiles: []string{"compose.yaml"},
 						Op:          OpRestore,
 						Path:        ".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_URL",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpSet,
 						Path:  ".services.alpaca.environment.ALPACA_FCREPO_INDEXER_ENABLED",
 						Value: "true",
 					},
 					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
+						Files:       []string{"compose.yaml"},
+						SourceFiles: []string{"compose.yaml"},
 						Op:          OpRestore,
 						Path:        ".volumes.fcrepo-data",
 					},
@@ -204,7 +204,7 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 		Off: DomainSpec{
 			Compose: YAMLStateSpec{
 				Canonical: []RepoAsset{
-					source.ComposeAsset("docker-compose.yml"),
+					source.ComposeAsset("compose.yaml"),
 					source.ComposeAsset("conf/traefik/fcrepo.yml"),
 				},
 				Rules: []YAMLRule{
@@ -214,37 +214,37 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 						Path:  ".",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpDelete,
 						Path:  ".services.fcrepo-database-init",
 					},
 					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
+						Files:       []string{"compose.yaml"},
+						SourceFiles: []string{"compose.yaml"},
 						Op:          OpDelete,
 						Path:        ".services.fcrepo",
 					},
 					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
+						Files:       []string{"compose.yaml"},
+						SourceFiles: []string{"compose.yaml"},
 						Op:          OpDelete,
 						Path:        ".services.milliner",
 					},
 					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
+						Files:       []string{"compose.yaml"},
+						SourceFiles: []string{"compose.yaml"},
 						Op:          OpDelete,
 						Path:        ".services.drupal.environment.DRUPAL_DEFAULT_FCREPO_URL",
 					},
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpSet,
 						Path:  ".services.alpaca.environment.ALPACA_FCREPO_INDEXER_ENABLED",
 						Value: "false",
 					},
 					{
-						Files:       []string{"docker-compose.yml"},
-						SourceFiles: []string{"docker-compose.yml"},
+						Files:       []string{"compose.yaml"},
+						SourceFiles: []string{"compose.yaml"},
 						Op:          OpDelete,
 						Path:        ".volumes.fcrepo-data",
 					},

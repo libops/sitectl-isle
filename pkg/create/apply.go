@@ -392,21 +392,21 @@ func syncLocalDrupalTraefikAliasContext(ctx *config.Context, enabled bool) error
 	if localDrupalHost == "traefik" {
 		return nil
 	}
-	path := ctx.ResolveProjectPath("docker-compose.yml")
+	path := ctx.ResolveProjectPath("compose.yaml")
 	exists, err := ctx.FileExists(path)
 	if err != nil {
-		return fmt.Errorf("stat docker-compose.yml: %w", err)
+		return fmt.Errorf("stat compose.yaml: %w", err)
 	}
 	if !exists {
 		return nil
 	}
 	data, err := ctx.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read docker-compose.yml: %w", err)
+		return fmt.Errorf("read compose.yaml: %w", err)
 	}
 	var root map[string]any
 	if err := yaml.Unmarshal(data, &root); err != nil {
-		return fmt.Errorf("parse docker-compose.yml: %w", err)
+		return fmt.Errorf("parse compose.yaml: %w", err)
 	}
 	services := yamlMap(root["services"])
 	traefik := yamlMap(services["traefik"])
@@ -425,14 +425,14 @@ func syncLocalDrupalTraefikAliasContext(ctx *config.Context, enabled bool) error
 	}
 	doc, err := corecomponent.LoadYAMLDocument(data)
 	if err != nil {
-		return fmt.Errorf("load docker-compose.yml: %w", err)
+		return fmt.Errorf("load compose.yaml: %w", err)
 	}
 	if err := doc.SetValue(".services.traefik.networks.default.aliases", aliases); err != nil {
 		return fmt.Errorf("set Traefik local Drupal alias: %w", err)
 	}
 	updated, err := doc.Bytes()
 	if err != nil {
-		return fmt.Errorf("marshal docker-compose.yml: %w", err)
+		return fmt.Errorf("marshal compose.yaml: %w", err)
 	}
 	return ctx.WriteFile(path, updated)
 }
@@ -556,7 +556,7 @@ func localDrupalCanonicalHost(ctx *config.Context) (string, error) {
 	if len(hostMatch) == 2 && !strings.Contains(hostMatch[1], "{{") {
 		return hostMatch[1], nil
 	}
-	composeData, err := ctx.ReadFile(ctx.ResolveProjectPath("docker-compose.yml"))
+	composeData, err := ctx.ReadFile(ctx.ResolveProjectPath("compose.yaml"))
 	if err != nil {
 		return "", fmt.Errorf("read canonical Compose file: %w", err)
 	}
@@ -753,7 +753,7 @@ func applyCodebaseGitRoot(projectDir string) error {
 	if err := writeGitRootDockerignore(filepath.Join(projectDir, ".dockerignore")); err != nil {
 		return err
 	}
-	if err := rewriteCodebaseComposePaths(filepath.Join(projectDir, "docker-compose.yml")); err != nil {
+	if err := rewriteCodebaseComposePaths(filepath.Join(projectDir, "compose.yaml")); err != nil {
 		return err
 	}
 	if err := rewriteCodebaseDevComposePaths(filepath.Join(projectDir, "docker-compose.dev.yml")); err != nil {
@@ -823,20 +823,31 @@ func rewriteGitRootDockerfile(path string) error {
 	if err != nil {
 		return fmt.Errorf("read Dockerfile: %w", err)
 	}
-	if strings.Contains(string(data), "composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --optimize-autoloader") &&
+	original := string(data)
+	if strings.Contains(original, "composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist") &&
+		strings.Contains(original, "--optimize-autoloader") &&
 		strings.Contains(string(data), "COPY --link composer.json composer.lock /var/www/drupal/") &&
+		strings.Contains(string(data), "cat /var/www/drupal/assets/libops_settings.txt >> /var/www/drupal/assets/default_settings.txt") &&
 		strings.Contains(string(data), "COPY --link drupal/rootfs/ /") {
 		return nil
 	}
 
-	header := dockerfileHeader(string(data))
+	header := dockerfileHeader(original)
 	contents := strings.TrimRight(header, "\n") + `
 
 COPY --link composer.json composer.lock /var/www/drupal/
 COPY --link assets/ /var/www/drupal/assets/
 
+RUN if test -s /var/www/drupal/assets/libops_settings.txt; then \
+      if test -s /var/www/drupal/assets/default_settings.txt; then \
+        cat /var/www/drupal/assets/libops_settings.txt >> /var/www/drupal/assets/default_settings.txt; \
+      else \
+        cp /var/www/drupal/assets/libops_settings.txt /var/www/drupal/assets/default_settings.txt; \
+      fi; \
+    fi
+
 RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,target=/root/.composer/cache \
-    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --optimize-autoloader && \
+    composer install -d /var/www/drupal --no-interaction --no-progress --prefer-dist --no-dev --optimize-autoloader && \
     cleanup.sh
 
 COPY --link config/ /var/www/drupal/config/
@@ -848,6 +859,9 @@ COPY --link drupal/rootfs/ /
 RUN chown -R nginx:nginx /var/www/drupal && \
     cleanup.sh
 `
+	if !strings.Contains(original, " --no-dev") {
+		contents = strings.Replace(contents, " --no-dev --optimize-autoloader", " --optimize-autoloader", 1)
+	}
 	return writeFilePreserveMode(path, []byte(contents))
 }
 
@@ -951,7 +965,7 @@ func writeFilePreserveMode(path string, data []byte) error {
 }
 
 func applyApplicationDatabaseBootstrap(projectDir string) error {
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
 	if err != nil {
 		return fmt.Errorf("read compose file: %w", err)
@@ -1317,7 +1331,7 @@ func removeLegacyFcrepoDatabaseInitializer(composePath string) error {
 }
 
 func applyFcrepoOn(projectDir, drupalRootfs string) error {
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	if err := removeLegacyFcrepoDatabaseInitializer(composePath); err != nil {
 		return err
 	}
@@ -1790,7 +1804,7 @@ func millinerRestoreServiceBlock(image, commonMerge string) string {
 }
 
 func applyBlazegraphOn(projectDir, drupalRootfs string) error {
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
 		return err
@@ -1833,7 +1847,7 @@ func blazegraphRestoreServiceBlock(composePath string) (string, error) {
 }
 
 func applyFcrepoOff(projectDir, drupalRootfs, targetScheme string) error {
-	if err := updateComposeForFcrepoOff(filepath.Join(projectDir, "docker-compose.yml")); err != nil {
+	if err := updateComposeForFcrepoOff(filepath.Join(projectDir, "compose.yaml")); err != nil {
 		return err
 	}
 	if err := removeFcrepoTraefikRoute(projectDir); err != nil {
@@ -1848,7 +1862,7 @@ func applyFcrepoOff(projectDir, drupalRootfs, targetScheme string) error {
 }
 
 func applyBlazegraphOff(projectDir, drupalRootfs string) error {
-	if err := updateComposeForBlazegraphOff(filepath.Join(projectDir, "docker-compose.yml")); err != nil {
+	if err := updateComposeForBlazegraphOff(filepath.Join(projectDir, "compose.yaml")); err != nil {
 		return err
 	}
 

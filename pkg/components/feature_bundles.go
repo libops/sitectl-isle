@@ -31,7 +31,7 @@ func FeatureBundle(source TemplateSource, name string) Definition {
 	onComposeCanonical := []RepoAsset{}
 	if spec.ComposeService != "" {
 		onComposeRules = append(onComposeRules, YAMLRule{
-			Files: []string{"docker-compose.yml"},
+			Files: []string{"compose.yaml"},
 			Op:    OpRestore,
 			Path:  ".services." + spec.ComposeService,
 		})
@@ -41,18 +41,18 @@ func FeatureBundle(source TemplateSource, name string) Definition {
 				secrets = append(secrets, map[string]any{"source": secret})
 			}
 			onComposeRules = append(onComposeRules, YAMLRule{
-				Files: []string{"docker-compose.yml"},
+				Files: []string{"compose.yaml"},
 				Op:    OpSet,
 				Path:  ".services.mergepdf.secrets",
 				Value: secrets,
 			})
 		}
 		offComposeRules = append(offComposeRules, YAMLRule{
-			Files: []string{"docker-compose.yml"},
+			Files: []string{"compose.yaml"},
 			Op:    OpDelete,
 			Path:  ".services." + spec.ComposeService,
 		})
-		onComposeCanonical = append(onComposeCanonical, source.ComposeAsset("docker-compose.yml"))
+		onComposeCanonical = append(onComposeCanonical, source.ComposeAsset("compose.yaml"))
 	}
 
 	onDrupalRules := []YAMLRule{}

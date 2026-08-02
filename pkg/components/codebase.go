@@ -32,7 +32,7 @@ func Codebase() Definition {
 			Compose: YAMLStateSpec{
 				Rules: []YAMLRule{
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpSet,
 						Path:  ".services.drupal.build.context",
 						Value: ".",
@@ -44,7 +44,7 @@ func Codebase() Definition {
 			Compose: YAMLStateSpec{
 				Rules: []YAMLRule{
 					{
-						Files: []string{"docker-compose.yml"},
+						Files: []string{"compose.yaml"},
 						Op:    OpSet,
 						Path:  ".services.drupal.build.context",
 						Value: "./drupal",

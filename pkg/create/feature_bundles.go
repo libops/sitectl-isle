@@ -254,7 +254,7 @@ func CheckFeatureBundleRequirements(opts Options, name string) error {
 	if !ok {
 		return fmt.Errorf("unknown feature bundle %q", name)
 	}
-	composePath := filepath.Join(opts.Path, "docker-compose.yml")
+	composePath := filepath.Join(opts.Path, "compose.yaml")
 	data, err := os.ReadFile(composePath) // #nosec G304 -- selected project compose path.
 	if err != nil {
 		return fmt.Errorf("read compose file for %s: %w", name, err)
@@ -505,7 +505,7 @@ func ValidateFeatureBundleObservedState(opts Options, name string, enabled bool)
 		if !enabled {
 			return nil
 		}
-		composePath := filepath.Join(opts.Path, "docker-compose.yml")
+		composePath := filepath.Join(opts.Path, "compose.yaml")
 		composeData, err := os.ReadFile(composePath) // #nosec G304 -- selected project Compose path.
 		if err != nil {
 			return fmt.Errorf("read Compose file for mergepdf image: %w", err)
@@ -608,7 +608,7 @@ func applyFeatureCompose(projectDir string, spec FeatureBundleSpec, enabled bool
 	if spec.ComposeService == "" {
 		return nil
 	}
-	composePath := filepath.Join(projectDir, "docker-compose.yml")
+	composePath := filepath.Join(projectDir, "compose.yaml")
 	original, err := os.ReadFile(composePath) // #nosec G304 -- selected project Compose path.
 	if err != nil {
 		return fmt.Errorf("read compose file: %w", err)

@@ -58,7 +58,7 @@ func applyISLEIngressFiles(ctx *config.Context, values map[string]string) error 
 }
 
 func applyISLEFcrepoIngressEnv(ctx *config.Context, values map[string]string) error {
-	compose, err := corecomponent.LoadComposeFileForContext(ctx, ctx.ResolveProjectPath("docker-compose.yml"))
+	compose, err := corecomponent.LoadComposeFileForContext(ctx, ctx.ResolveProjectPath("compose.yaml"))
 	if err != nil {
 		return err
 	}

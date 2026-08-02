@@ -533,8 +533,8 @@ func TestEnsureClonedCheckoutSkipsNonEmptyDirectory(t *testing.T) {
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll(projectDir) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile(docker-compose.yml) error = %v", err)
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose.yaml) error = %v", err)
 	}
 
 	oldClone := createCloneTemplateRepo
@@ -564,8 +564,8 @@ func TestRefreshCreateContextComposeMetadataKeepsContextDerivedNameWithoutTempla
 	t.Setenv("HOME", t.TempDir())
 
 	projectDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile(docker-compose.yml) error = %v", err)
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(compose.yaml) error = %v", err)
 	}
 	projectName := filepath.Base(projectDir)
 	ctx := &config.Context{
@@ -1036,6 +1036,32 @@ func TestShellEnvPrefixWorksBeforeCompoundCommands(t *testing.T) {
 	compound := got + "if [ -d drupal/rootfs ]; then find drupal/rootfs -type d -exec chmod 755 {} \\; ; fi"
 	if !strings.Contains(compound, "; if [ -d drupal/rootfs ]") {
 		t.Fatalf("expected export prefix to terminate before compound command, got %q", compound)
+	}
+}
+
+func TestNormalizeComposeProjectFilename(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	legacy := filepath.Join(projectDir, "docker-compose.yml")
+	canonical := filepath.Join(projectDir, "compose.yaml")
+	if err := os.WriteFile(legacy, []byte("services:\n  init:\n    volumes:\n      - ./docker-compose.yml:/docker-compose.yml:ro\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := normalizeComposeProjectFilename(&config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal}); err != nil {
+		t.Fatalf("normalizeComposeProjectFilename() error = %v", err)
+	}
+	if _, err := os.Stat(canonical); err != nil {
+		t.Fatalf("canonical Compose file missing: %v", err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy Compose file still exists: %v", err)
+	}
+	data, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "./compose.yaml:/docker-compose.yml:ro") {
+		t.Fatalf("canonical Compose self-mount was not updated:\n%s", data)
 	}
 }
 

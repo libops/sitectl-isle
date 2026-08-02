@@ -52,8 +52,8 @@ func TestFcrepoDefinition(t *testing.T) {
 	if len(definition.Off.Compose.Canonical) != 2 {
 		t.Fatalf("expected two canonical compose sources, got %d", len(definition.Off.Compose.Canonical))
 	}
-	if definition.Off.Compose.Canonical[0].Path != "docker-compose.yml" {
-		t.Fatalf("expected docker-compose.yml canonical path, got %q", definition.Off.Compose.Canonical[0].Path)
+	if definition.Off.Compose.Canonical[0].Path != "compose.yaml" {
+		t.Fatalf("expected compose.yaml canonical path, got %q", definition.Off.Compose.Canonical[0].Path)
 	}
 	if definition.Off.Compose.Canonical[1].Path != "conf/traefik/fcrepo.yml" {
 		t.Fatalf("expected fcrepo router canonical path, got %q", definition.Off.Compose.Canonical[1].Path)

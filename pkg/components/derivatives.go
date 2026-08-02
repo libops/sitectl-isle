@@ -24,27 +24,27 @@ func DerivativeService(name string) Definition {
 
 	onRules := []YAMLRule{
 		{
-			Files: []string{"docker-compose.yml"},
+			Files: []string{"compose.yaml"},
 			Op:    OpDelete,
 			Path:  ".services." + spec.Name,
 		},
 	}
 	offRules := []YAMLRule{
 		{
-			Files: []string{"docker-compose.yml"},
+			Files: []string{"compose.yaml"},
 			Op:    OpRestore,
 			Path:  ".services." + spec.Name,
 		},
 	}
 	if spec.AlpacaEnv != "" {
 		onRules = append(onRules, YAMLRule{
-			Files: []string{"docker-compose.yml"},
+			Files: []string{"compose.yaml"},
 			Op:    OpSet,
 			Path:  ".services.alpaca.environment." + spec.AlpacaEnv,
 			Value: spec.ExternalURL,
 		})
 		offRules = append(offRules, YAMLRule{
-			Files: []string{"docker-compose.yml"},
+			Files: []string{"compose.yaml"},
 			Op:    OpDelete,
 			Path:  ".services.alpaca.environment." + spec.AlpacaEnv,
 		})

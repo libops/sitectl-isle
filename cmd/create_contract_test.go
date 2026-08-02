@@ -10,8 +10,14 @@ import (
 func TestCreateDefinitionUsesTemplateInitContract(t *testing.T) {
 	t.Parallel()
 	spec := createDefinition()
-	if len(spec.DockerComposeInit) != 1 || spec.DockerComposeInit[0] != "./scripts/init.sh" {
-		t.Fatalf("create init must use the template ownership-aware script: %+v", spec.DockerComposeInit)
+	if len(spec.DockerComposeInit) != 3 || !strings.Contains(spec.DockerComposeInit[0], "cp sample.env .env") || !strings.Contains(spec.DockerComposeInit[2], "docker compose run --rm") || !strings.Contains(spec.DockerComposeInit[2], "HOST_UID") {
+		t.Fatalf("create init must use the shared Compose init service: %+v", spec.DockerComposeInit)
+	}
+	if !strings.Contains(spec.DockerComposeInit[0], "DRUPAL_HEALTHCHECK_START_PERIOD=5m") {
+		t.Fatalf("create must allow enough startup time for development dependency installation: %+v", spec.DockerComposeInit)
+	}
+	if !strings.Contains(spec.DockerComposeInit[2], `"$attempt" -ge 3`) {
+		t.Fatalf("create must tolerate transient certificate-tool download failures: %+v", spec.DockerComposeInit)
 	}
 	if len(spec.Images) != 1 || spec.Images[0].Service != "drupal" || spec.Images[0].Image != "libops/islandora:nginx-1.30.3-php84" || spec.Images[0].BuildPolicy != plugin.BuildPolicyAlways {
 		t.Fatalf("the derived ISLE application image must always rebuild: %+v", spec.Images)
