@@ -58,6 +58,20 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	if err != nil {
 		return err
 	}
+	legacyCompose, err := usesLegacyComposeFilename(ctx)
+	if err != nil {
+		return err
+	}
+	if err := normalizeComposeProjectFilename(ctx); err != nil {
+		return err
+	}
+	if legacyCompose {
+		defer func() {
+			if err := restoreLegacyComposeProjectFilename(ctx); err != nil && retErr == nil {
+				retErr = err
+			}
+		}()
+	}
 	rootfs, err := resolveCodebaseRootfsForContext(cmd, ctx, opts.CodebaseRootfs, opts.DrupalRootfs)
 	if err != nil {
 		return err
@@ -125,6 +139,10 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 			continue
 		}
 		if current == corecomponent.StateDrifted {
+			if inferred, ok := inferEnabledRepositoryComponent(ctx, componentName); ok {
+				currentStates[componentName] = inferred
+				continue
+			}
 			return fmt.Errorf("component %q is drifted (%s); resolve it first or set it explicitly before changing %q", componentName, componentDriftSummary(statusByName[componentName], 6), name)
 		}
 	}
@@ -259,6 +277,42 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	return nil
 }
 
+func usesLegacyComposeFilename(ctx *config.Context) (bool, error) {
+	if ctx == nil || ctx.DockerHostType != config.ContextLocal {
+		return false, nil
+	}
+	canonical := ctx.ResolveProjectPath("compose.yaml")
+	if _, err := os.Stat(canonical); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("inspect canonical Compose file: %w", err)
+	}
+	legacy := ctx.ResolveProjectPath("docker-compose.yml")
+	if _, err := os.Stat(legacy); err == nil {
+		return true, nil
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("inspect legacy Compose file: %w", err)
+	}
+	return false, nil
+}
+
+func restoreLegacyComposeProjectFilename(ctx *config.Context) error {
+	canonical := ctx.ResolveProjectPath("compose.yaml")
+	legacy := ctx.ResolveProjectPath("docker-compose.yml")
+	data, err := os.ReadFile(canonical)
+	if err != nil {
+		return fmt.Errorf("read canonical Compose file for legacy cleanup: %w", err)
+	}
+	data = []byte(strings.ReplaceAll(string(data), "./compose.yaml:/docker-compose.yml", "./docker-compose.yml:/docker-compose.yml"))
+	if err := os.WriteFile(canonical, data, 0o644); err != nil {
+		return fmt.Errorf("restore legacy Compose self-mount: %w", err)
+	}
+	if err := os.Rename(canonical, legacy); err != nil {
+		return fmt.Errorf("restore legacy Compose project filename: %w", err)
+	}
+	return nil
+}
+
 func remoteComponentSetAllowed(name string) bool {
 	switch name {
 	case coretraefik.IngressName, coredevmode.Name:
@@ -319,6 +373,21 @@ func blocksComponentSetOnDrift(targetName, driftedName string) bool {
 	default:
 		return !createpkg.IsDerivativeService(driftedName) && !createpkg.IsFeatureBundle(driftedName)
 	}
+}
+
+// inferEnabledRepositoryComponent preserves an older template's repository
+// service when newer rules classify its surrounding configuration as drifted.
+// Absence is not enough to infer disabled because a partially removed service
+// is exactly the ambiguity the drift guard is intended to catch.
+func inferEnabledRepositoryComponent(ctx *config.Context, name string) (corecomponent.DetectedState, bool) {
+	if name != "fcrepo" && name != "blazegraph" {
+		return "", false
+	}
+	compose, err := corecomponent.LoadComposeFileForContext(ctx, ctx.ResolveProjectPath("compose.yaml"))
+	if err != nil || !compose.HasService(name) {
+		return "", false
+	}
+	return corecomponent.DetectedState(corecomponent.StateOn), true
 }
 
 func normalizeComponentSetDispositionState(name string, disposition corecomponent.Disposition, state corecomponent.State) (corecomponent.Disposition, corecomponent.State) {

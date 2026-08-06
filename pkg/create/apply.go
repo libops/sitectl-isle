@@ -987,19 +987,8 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 	if err := compose.DeleteService(databaseInitServiceName); err != nil {
 		return err
 	}
-	if err := compose.SetServiceEnv("drupal", "DB_BOOTSTRAP_ENABLED", "true"); err != nil {
+	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_SITE_URL", composePublicSiteURLExpr); err != nil {
 		return err
-	}
-	for key, value := range map[string]string{
-		"DB_MYSQL_HOST":           "mariadb",
-		"DB_MYSQL_PORT":           "3306",
-		"DRUPAL_DEFAULT_DB_NAME":  "drupal_default",
-		"DRUPAL_DEFAULT_DB_USER":  "drupal_default",
-		"DRUPAL_DEFAULT_SITE_URL": composePublicSiteURLExpr,
-	} {
-		if err := compose.SetServiceEnv("drupal", key, value); err != nil {
-			return err
-		}
 	}
 	if _, ok := compose.SectionEntryBlock("secrets", "DB_ROOT_PASSWORD"); !ok {
 		if err := compose.AddSectionEntryBlock("secrets", "DB_ROOT_PASSWORD", `  DB_ROOT_PASSWORD:

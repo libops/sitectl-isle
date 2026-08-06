@@ -87,6 +87,105 @@ func TestRunComponentSetPreservesOtherDetectedState(t *testing.T) {
 	}
 }
 
+func TestRunComponentSetNormalizesLegacyComposeFilename(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	canonical := filepath.Join(projectDir, "compose.yaml")
+	legacy := filepath.Join(projectDir, "docker-compose.yml")
+	if err := os.Rename(canonical, legacy); err != nil {
+		t.Fatalf("Rename(compose.yaml, docker-compose.yml) error = %v", err)
+	}
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	if err := runComponentSet(newComponentSetTestCommand(), "blazegraph", "disabled"); err != nil {
+		t.Fatalf("runComponentSet(blazegraph disabled) error = %v", err)
+	}
+
+	compose := readFileForTest(t, legacy)
+	if strings.Contains(compose, "\n  blazegraph:\n") || strings.Contains(compose, "blazegraph-data") {
+		t.Fatalf("expected Blazegraph resources removed from restored legacy Compose file, got:\n%s", compose)
+	}
+	parsed, err := corecomponent.LoadComposeFile(legacy)
+	if err != nil {
+		t.Fatalf("LoadComposeFile(docker-compose.yml) error = %v", err)
+	}
+	drupalBlock, ok := parsed.ServiceBlock("drupal")
+	if !ok {
+		t.Fatal("expected drupal service")
+	}
+	for _, unexpected := range []string{
+		"DB_BOOTSTRAP_ENABLED",
+		"DB_MYSQL_HOST",
+		"DB_MYSQL_PORT",
+		"DRUPAL_DEFAULT_DB_NAME",
+		"DRUPAL_DEFAULT_DB_USER",
+	} {
+		if strings.Contains(drupalBlock, unexpected) {
+			t.Fatalf("component set added image default %s:\n%s", unexpected, drupalBlock)
+		}
+	}
+	if _, err := os.Stat(canonical); !os.IsNotExist(err) {
+		t.Fatalf("temporary canonical Compose file still exists: %v", err)
+	}
+}
+
+func TestRunComponentSetPreservesEnabledLegacyFcrepoWhileDisablingBlazegraph(t *testing.T) {
+	projectDir := t.TempDir()
+	writeISLEOnFixture(t, projectDir)
+
+	canonical := filepath.Join(projectDir, "compose.yaml")
+	compose := readFileForTest(t, canonical)
+	legacyFcrepoSetting := "      DB_BOOTSTRAP_ENABLED: \"true\"\n"
+	if !strings.Contains(compose, legacyFcrepoSetting) {
+		t.Fatalf("fixture does not contain Fedora setting needed to induce legacy drift:\n%s", compose)
+	}
+	compose = strings.Replace(compose, legacyFcrepoSetting, "", 1)
+	writeFileForTest(t, canonical, compose)
+
+	legacy := filepath.Join(projectDir, "docker-compose.yml")
+	if err := os.Rename(canonical, legacy); err != nil {
+		t.Fatalf("Rename(compose.yaml, docker-compose.yml) error = %v", err)
+	}
+
+	oldStatusPath := statusPath
+	oldDrupalRootfs := statusDrupalRootfs
+	oldYolo := componentSetYolo
+	t.Cleanup(func() {
+		statusPath = oldStatusPath
+		statusDrupalRootfs = oldDrupalRootfs
+		componentSetYolo = oldYolo
+	})
+
+	statusPath = projectDir
+	statusDrupalRootfs = createpkg.DefaultDrupalRootfs
+	componentSetYolo = true
+
+	if err := runComponentSet(newComponentSetTestCommand(), "blazegraph", "disabled"); err != nil {
+		t.Fatalf("runComponentSet(blazegraph disabled) error = %v", err)
+	}
+
+	compose = readFileForTest(t, legacy)
+	if !strings.Contains(compose, "\n  fcrepo:\n") || !strings.Contains(compose, "\n  milliner:\n") {
+		t.Fatalf("expected enabled Fedora services to be preserved, got:\n%s", compose)
+	}
+	if strings.Contains(compose, "\n  blazegraph:\n") || strings.Contains(compose, "blazegraph-data") {
+		t.Fatalf("expected Blazegraph resources removed, got:\n%s", compose)
+	}
+}
+
 func TestRunComponentSetUsesCurrentFilesystemURIWhenTurningFcrepoOff(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)
