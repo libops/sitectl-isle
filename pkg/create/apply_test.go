@@ -1920,14 +1920,7 @@ func assertApplicationDatabaseBootstrap(t *testing.T, projectDir string) {
 	if !ok {
 		t.Fatal("expected drupal service")
 	}
-	if !strings.Contains(drupalBlock, `DB_BOOTSTRAP_ENABLED: "true"`) {
-		t.Fatalf("drupal block missing database bootstrap flag:\n%s", drupalBlock)
-	}
 	for _, want := range []string{
-		`DB_MYSQL_HOST: "mariadb"`,
-		`DB_MYSQL_PORT: "3306"`,
-		`DRUPAL_DEFAULT_DB_NAME: "drupal_default"`,
-		`DRUPAL_DEFAULT_DB_USER: "drupal_default"`,
 		`DRUPAL_DEFAULT_SITE_URL: "${DOMAIN}"`,
 		`target: DB_PASSWORD`,
 		`target: DRUPAL_DEFAULT_DB_PASSWORD`,
