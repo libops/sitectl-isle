@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -40,21 +39,22 @@ var (
 	createEnsureJWTKeyPair   = createpkg.EnsureJWTKeyPair
 	createApply              = createpkg.Apply
 	createRunProjectCommand  = defaultRunProjectCommand
-	createBootstrapCheckout  = bootstrapCheckout
-	createRunStartup         = runStartup
-	createRewriteCommand     = rewriteCreateProjectShellCommand
-	createRefreshContext     = refreshCreateContextComposeMetadata
-	createPrepareStartup     = prepareCreateStartup
-	createCheckPrereqs       = checkPrereqs
-	createLookPath           = exec.LookPath
-	createRunCheckCommand    = runCheckCommand
-	createSleep              = time.Sleep
-	createComponentBindErr   error
+	createRunComposeCommand  = func(runCtx context.Context, ctx *config.Context, projectDir string, stdout, stderr io.Writer, command string) error {
+		return commandSDK.RunComposeProjectCommandContext(runCtx, ctx, projectDir, stdout, stderr, command)
+	}
+	createBootstrapCheckout = bootstrapCheckout
+	createRunStartup        = runStartup
+	createRefreshContext    = refreshCreateContextComposeMetadata
+	createCheckPrereqs      = checkPrereqs
+	createLookPath          = exec.LookPath
+	createRunCheckCommand   = runCheckCommand
+	createSleep             = time.Sleep
+	createComponentBindErr  error
 )
 
 const (
-	defaultTemplateRepo   = "https://github.com/islandora-devops/isle-site-template"
-	defaultTemplateBranch = "main"
+	defaultTemplateRepo   = "https://github.com/libops/isle"
+	defaultTemplateBranch = "v1.3.0"
 )
 
 type createRequest struct {
@@ -92,7 +92,7 @@ func (createRunner) Run(cmd *cobra.Command) error {
 func createDefinition() plugin.CreateSpec {
 	return plugin.CreateSpec{
 		Name:                "default",
-		Description:         "Create a new ISLE site from the Islandora site template",
+		Description:         "Create a new ISLE site from the LibOps ISLE template",
 		Default:             true,
 		MinCPUCores:         4,
 		MinMemory:           "8 GiB",
@@ -100,7 +100,7 @@ func createDefinition() plugin.CreateSpec {
 		DockerComposeRepo:   defaultTemplateRepo,
 		DockerComposeBranch: defaultTemplateBranch,
 		DockerComposeBuild: []string{
-			"if [ -d drupal/rootfs ]; then find drupal/rootfs -type d -exec chmod 755 {} \\; ; fi",
+			"bash scripts/sitectl-prepare-build.sh",
 			"docker compose pull --ignore-buildable --ignore-pull-failures",
 			"docker compose build",
 		},
@@ -108,9 +108,9 @@ func createDefinition() plugin.CreateSpec {
 			{Service: "drupal", Image: createpkg.DefaultDrupalBaseImageRef, BuildPolicy: plugin.BuildPolicyAlways},
 		},
 		DockerComposeInit: []string{
-			"if [ ! -f .env ]; then cp sample.env .env; fi; if ! grep -q '^DRUPAL_HEALTHCHECK_START_PERIOD=' .env; then printf '\\nDRUPAL_HEALTHCHECK_START_PERIOD=5m\\n' >> .env; fi",
-			"mkdir -p ./certs ./secrets",
-			"attempt=1; until docker compose run --rm -e HOST_UID=\"$(id -u)\" -e HOST_GID=\"$(id -g)\" init; do if [ \"$attempt\" -ge 3 ]; then exit 1; fi; attempt=$((attempt + 1)); sleep 5; done",
+			"bash scripts/sitectl-prepare-init.sh",
+			`docker compose run --rm -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" init`,
+			"bash scripts/sitectl-rollout-preflight.sh",
 		},
 		InitArtifacts: []plugin.InitArtifact{
 			{Path: "certs/cert.pem"},
@@ -135,8 +135,11 @@ func createDefinition() plugin.CreateSpec {
 		DockerComposeRollout: []string{
 			"docker compose pull --ignore-buildable --quiet || docker compose pull --ignore-buildable",
 			"docker compose build --pull",
-			"docker compose up --remove-orphans --pull missing --quiet-pull -d drupal",
-			"docker compose exec -T drupal sh -c 'attempt=0; until test -f /installed; do attempt=$((attempt + 1)); if [ \"$attempt\" -ge 150 ]; then echo \"Drupal did not become ready for database migration within 5 minutes\" >&2; exit 1; fi; sleep 2; done'",
+			"bash scripts/sitectl-rollout-preflight.sh",
+			rolloutComposeConfigCommand,
+			rolloutMountedWaitProbeCommand,
+			"docker compose up --remove-orphans --pull missing --quiet-pull --force-recreate -d drupal",
+			"docker compose exec -T drupal sh /usr/local/lib/sitectl/drupal-wait-installed.sh",
 			"docker compose exec -T --workdir /var/www/drupal drupal drush updb -y",
 			"docker compose exec -T --workdir /var/www/drupal drupal drush cr",
 			"docker compose up --remove-orphans --wait --wait-timeout 600 --pull missing --quiet-pull -d",
@@ -406,9 +409,41 @@ func normalizeComposeProjectFilename(ctx *config.Context) error {
 		return fmt.Errorf("context is nil")
 	}
 	if ctx.DockerHostType == config.ContextRemote {
-		command := "if [ ! -e compose.yaml ] && [ -f docker-compose.yml ]; then mv docker-compose.yml compose.yaml && sed -i 's#\\./docker-compose\\.yml:/docker-compose\\.yml#./compose.yaml:/docker-compose.yml#g' compose.yaml; fi"
-		if err := commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, ctx.ProjectDir, io.Discard, io.Discard, command); err != nil {
+		canonical := filepath.Join(ctx.ProjectDir, "compose.yaml")
+		canonicalExists, err := ctx.FileExists(canonical)
+		if err != nil {
+			return fmt.Errorf("inspect canonical Compose file: %w", err)
+		}
+		if canonicalExists {
+			return nil
+		}
+		legacy := filepath.Join(ctx.ProjectDir, "docker-compose.yml")
+		legacyExists, err := ctx.FileExists(legacy)
+		if err != nil {
+			return fmt.Errorf("inspect legacy Compose file: %w", err)
+		}
+		if !legacyExists {
+			return nil
+		}
+		if err := createRunComposeCommand(
+			context.Background(),
+			ctx,
+			ctx.ProjectDir,
+			io.Discard,
+			io.Discard,
+			plugin.ShellJoin([]string{"mv", "--", "docker-compose.yml", "compose.yaml"}),
+		); err != nil {
 			return fmt.Errorf("normalize Compose project filename: %w", err)
+		}
+		if err := createRunComposeCommand(
+			context.Background(),
+			ctx,
+			ctx.ProjectDir,
+			io.Discard,
+			io.Discard,
+			plugin.ShellJoin([]string{"sed", "-i", `s#\./docker-compose\.yml:/docker-compose\.yml#./compose.yaml:/docker-compose.yml#g`, "compose.yaml"}),
+		); err != nil {
+			return fmt.Errorf("update canonical Compose self-mount: %w", err)
 		}
 		return nil
 	}
@@ -580,19 +615,12 @@ This will completely stop and destroy the setup.`, shellPath(ctx.ProjectDir), cl
 	))
 	fmt.Fprintln(out)
 
-	startupEnv, err := createPrepareStartup(out, ctx)
-	if err != nil {
-		return err
-	}
-
 	if err := runWithSpinner(out, "Starting the Islandora stack", func() error {
 		for _, commandText := range startupCommands() {
 			commandText = strings.TrimSpace(commandText)
 			if commandText == "" {
 				continue
 			}
-			commandText = createRewriteCommand(ctx, commandText)
-			commandText = shellEnvPrefix(startupEnv) + commandText
 			if _, err := fmt.Fprintf(logFile, "Running %s\n", commandText); err != nil {
 				return err
 			}
@@ -622,20 +650,6 @@ This will completely stop and destroy the setup.`, shellPath(ctx.ProjectDir), cl
 	))
 	fmt.Fprintln(out)
 	return nil
-}
-
-func prepareCreateStartup(out io.Writer, ctx *config.Context) (map[string]string, error) {
-	if ctx == nil {
-		return nil, nil
-	}
-	envValues, messages, err := ctx.PrepareComposeUpPortOverride()
-	if err != nil {
-		return nil, err
-	}
-	for _, message := range messages {
-		fmt.Fprintln(out, message)
-	}
-	return envValues, nil
 }
 
 type prereqCheck struct {
@@ -756,47 +770,7 @@ func ensureClonedCheckoutForContext(out io.Writer, ctx *config.Context, req crea
 	if ctx == nil || ctx.DockerHostType != config.ContextRemote {
 		return ensureClonedCheckout(out, req)
 	}
-	repoURL := strings.TrimSpace(req.TemplateRepo)
-	branch := strings.TrimSpace(req.TemplateBranch)
-	projectDir := strings.TrimSpace(ctx.ProjectDir)
-	if repoURL == "" {
-		return false, fmt.Errorf("template repo cannot be empty")
-	}
-	if projectDir == "" {
-		return false, fmt.Errorf("project directory cannot be empty")
-	}
-
-	var present bytes.Buffer
-	checkCommand := fmt.Sprintf("if [ -d %s ] && [ -n \"$(ls -A %s 2>/dev/null)\" ]; then echo present; fi", plugin.ShellQuote(projectDir), plugin.ShellQuote(projectDir))
-	if err := commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, "", &present, io.Discard, checkCommand); err == nil && strings.TrimSpace(present.String()) == "present" {
-		return false, nil
-	}
-	if err := commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, "", io.Discard, io.Discard, fmt.Sprintf("mkdir -p %s", plugin.ShellQuote(filepath.Dir(projectDir)))); err != nil {
-		return false, fmt.Errorf("create parent directory for %q: %w", projectDir, err)
-	}
-
-	fmt.Fprintln(out, corecomponent.RenderSection(
-		"Template checkout",
-		fmt.Sprintf("Cloning %s at %s into %s on %s.", repoURL, helpers.FirstNonEmpty(branch, "default branch"), projectDir, ctx.SSHHostname),
-	))
-	fmt.Fprintln(out)
-	cloneArgs := []string{"git", "clone"}
-	if branch != "" {
-		cloneArgs = append(cloneArgs, "--branch", branch)
-	}
-	cloneArgs = append(cloneArgs, repoURL, projectDir)
-	initBranch := helpers.FirstNonEmpty(branch, "main")
-	cloneCommand := strings.Join([]string{
-		plugin.ShellJoin(cloneArgs),
-		"rm -rf " + plugin.ShellQuote(filepath.Join(projectDir, ".git")),
-		plugin.ShellJoin([]string{"git", "-C", projectDir, "init", "-b", initBranch}),
-	}, " && ")
-	if err := runWithSpinner(out, "Cloning template repository", func() error {
-		return commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, "", io.Discard, io.Discard, cloneCommand)
-	}); err != nil {
-		return false, err
-	}
-	return true, nil
+	return commandSDK.EnsureComposeTemplateCheckoutContext(context.Background(), out, req.ComposeCreateRequest, ctx)
 }
 
 func bootstrapCheckoutForContext(out io.Writer, ctx *config.Context) error {
@@ -812,10 +786,10 @@ func bootstrapCheckoutForContext(out io.Writer, ctx *config.Context) error {
 	fmt.Fprintln(out)
 	return runWithSpinner(out, "Creating initial git commit", func() error {
 		safeDirectory := "safe.directory=" + projectDir
-		if err := commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, projectDir, io.Discard, io.Discard, plugin.ShellJoin([]string{"git", "-c", safeDirectory, "add", "."})); err != nil {
+		if err := createRunComposeCommand(context.Background(), ctx, projectDir, io.Discard, io.Discard, plugin.ShellJoin([]string{"git", "-c", safeDirectory, "add", "."})); err != nil {
 			return fmt.Errorf("stage initial checkout: %w", err)
 		}
-		if err := commandSDK.RunComposeProjectCommandContext(
+		if err := createRunComposeCommand(
 			context.Background(),
 			ctx,
 			projectDir,
@@ -837,17 +811,14 @@ func bootstrapCheckoutForContext(out io.Writer, ctx *config.Context) error {
 }
 
 func runCreateProjectShellCommand(ctx *config.Context, stdout, stderr io.Writer, commandText string) error {
-	if ctx != nil && ctx.DockerHostType == config.ContextRemote {
-		return commandSDK.RunComposeProjectCommandContext(context.Background(), ctx, ctx.ProjectDir, stdout, stderr, commandText)
-	}
-	return createRunProjectCommand(ctx.ProjectDir, stdout, stderr, "bash", "-lc", commandText)
-}
-
-func rewriteCreateProjectShellCommand(ctx *config.Context, commandText string) string {
 	if ctx == nil {
-		return commandText
+		return fmt.Errorf("context is nil")
 	}
-	return ctx.DockerComposeShellCommand(commandText)
+	// The sitectl SDK owns local and remote shell transport. Its only
+	// context-aware project runner currently accepts shell text, invokes
+	// `bash -lc` locally, and has no argv variant. It also applies the local
+	// Compose port environment only to `docker compose up` operations.
+	return createRunComposeCommand(context.Background(), ctx, ctx.ProjectDir, stdout, stderr, commandText)
 }
 
 func bootstrapCheckout(out io.Writer, projectDir string) error {
@@ -898,10 +869,6 @@ func runCheckCommand(name string, args ...string) error {
 	command.Stderr = io.Discard
 	command.Env = os.Environ()
 	return command.Run()
-}
-
-func startupCommand() (string, string, []string) {
-	return "ISLE startup commands", "bash", []string{"-lc", strings.Join(startupCommands(), " && ")}
 }
 
 func startupCommands() []string {
@@ -1159,25 +1126,4 @@ func shellSingleQuote(value string) string {
 
 func shellPath(value string) string {
 	return shellSingleQuote(value)
-}
-
-func shellEnvPrefix(values map[string]string) string {
-	if len(values) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		if strings.TrimSpace(key) != "" {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, key+"="+shellSingleQuote(values[key]))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return "export " + strings.Join(parts, " ") + "; "
 }

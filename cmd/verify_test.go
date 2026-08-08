@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -52,33 +53,7 @@ func TestBotMitigationForwardedHeaderProbeEnabledDetectsIngressTrustedIPs(t *tes
 	}
 }
 
-func TestPrepareDemoObjectsScriptUsesInternalRoute(t *testing.T) {
-	t.Parallel()
-
-	input := `#!/usr/bin/env bash
-set -eou pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/profile.sh"
-URL="${URI_SCHEME}://${DOMAIN}"
-if [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then
-  URL="${URL}:${URI_PORT}"
-fi
-`
-	prepared, err := prepareDemoObjectsScript([]byte(input))
-	if err != nil {
-		t.Fatalf("prepareDemoObjectsScript() error = %v", err)
-	}
-	for _, want := range []string{
-		`source "./scripts/profile.sh"`,
-		`URL="${SITECTL_DEMO_OBJECTS_URL:-${URI_SCHEME}://${DOMAIN}}"`,
-		`if [ -z "${SITECTL_DEMO_OBJECTS_URL:-}" ]`,
-	} {
-		if !strings.Contains(prepared, want) {
-			t.Fatalf("expected prepared script to contain %q, got:\n%s", want, prepared)
-		}
-	}
-}
-
-func TestPrepareDemoObjectsScriptAcceptsManagedInternalRoute(t *testing.T) {
+func TestValidateDemoObjectsScriptContractAcceptsManagedInternalRoute(t *testing.T) {
 	t.Parallel()
 
 	input := `#!/usr/bin/env bash
@@ -87,56 +62,119 @@ URL="${SITECTL_DEMO_OBJECTS_URL:-$(site_url)}"
 WORKBENCH_URL="$(container_url_for_url "${URL}")"
 NETWORK="$(container_network_for_url "${WORKBENCH_URL}")"
 `
-	prepared, err := prepareDemoObjectsScript([]byte(input))
-	if err != nil {
-		t.Fatalf("prepareDemoObjectsScript() error = %v", err)
-	}
-	if prepared != input {
-		t.Fatalf("managed demo script was unexpectedly rewritten:\n%s", prepared)
+	if err := validateDemoObjectsScriptContract([]byte(input)); err != nil {
+		t.Fatalf("validateDemoObjectsScriptContract() error = %v", err)
 	}
 }
 
-func TestMaterializeDemoObjectsScriptUsesCanonicalFileWhenUnchanged(t *testing.T) {
+func TestValidateDemoObjectsScriptContractRejectsLegacyContractActionably(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "demo-objects.sh")
-	original := []byte("#!/usr/bin/env bash\nprintf 'canonical\\n'\n")
-	if err := os.WriteFile(path, original, 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
+	input := `#!/usr/bin/env bash
+set -eou pipefail
+URL="${URI_SCHEME}://${DOMAIN}"
+`
+	err := validateDemoObjectsScriptContract([]byte(input))
+	if err == nil {
+		t.Fatal("expected legacy contract failure")
 	}
-
-	gotPath, cleanup, err := materializeDemoObjectsScript(path, original, string(original))
-	if err != nil {
-		t.Fatalf("materializeDemoObjectsScript() error = %v", err)
-	}
-	defer cleanup()
-	if gotPath != path {
-		t.Fatalf("materializeDemoObjectsScript() path = %q, want %q", gotPath, path)
+	for _, want := range []string{"legacy runtime contract", "https://github.com/libops/isle", "v1.3.0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to contain %q, got %v", want, err)
+		}
 	}
 }
 
-func TestMaterializeDemoObjectsScriptWritesPreparedCompatibilityFile(t *testing.T) {
+func TestRunDemoObjectsScriptRejectsLegacyContractBeforeRuntimeWork(t *testing.T) {
 	t.Parallel()
 
-	original := []byte("original\n")
-	prepared := "prepared\n"
-	gotPath, cleanup, err := materializeDemoObjectsScript("canonical.sh", original, prepared)
+	projectDir := t.TempDir()
+	scriptsDir := filepath.Join(projectDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(scripts) error = %v", err)
+	}
+	legacy := []byte("#!/usr/bin/env bash\nURL=\"${URI_SCHEME}://${DOMAIN}\"\n")
+	if err := os.WriteFile(filepath.Join(scriptsDir, "demo-objects.sh"), legacy, 0o644); err != nil {
+		t.Fatalf("WriteFile(demo-objects.sh) error = %v", err)
+	}
+	if _, err := runDemoObjectsScript(t.Context(), projectDir); err == nil || !strings.Contains(err.Error(), "legacy runtime contract") {
+		t.Fatalf("runDemoObjectsScript() error = %v, want an early legacy contract failure", err)
+	}
+}
+
+func TestVerifyNoFedoraManagedFilesUsesDirectDrushArgv(t *testing.T) {
+	oldRun := verifyRunLocalProjectOutput
+	t.Cleanup(func() {
+		verifyRunLocalProjectOutput = oldRun
+	})
+
+	var gotName string
+	var gotArgs []string
+	verifyRunLocalProjectOutput = func(ctx context.Context, projectDir, name string, args ...string) (string, error) {
+		gotName = name
+		gotArgs = append([]string{}, args...)
+		return "0\n", nil
+	}
+
+	result := verifyNoFedoraManagedFiles(context.Background(), t.TempDir())
+	if result.Status != sitevalidate.StatusOK {
+		t.Fatalf("verifyNoFedoraManagedFiles() = %#v", result)
+	}
+	wantArgs := []string{
+		"compose", "exec", "-T", "--workdir", "/var/www/drupal", "drupal",
+		"drush", "--root=/var/www/drupal", "sql:query", "--extra=--skip-column-names",
+		"SELECT COUNT(*) FROM file_managed WHERE uri LIKE 'fedora%';",
+	}
+	if gotName != "docker" || !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("command = %q %#v, want docker %#v", gotName, gotArgs, wantArgs)
+	}
+}
+
+func TestCountContainerFilesUsesDirectFindArgv(t *testing.T) {
+	oldRun := verifyRunLocalProjectOutput
+	t.Cleanup(func() {
+		verifyRunLocalProjectOutput = oldRun
+	})
+
+	var gotName string
+	var gotArgs []string
+	verifyRunLocalProjectOutput = func(ctx context.Context, projectDir, name string, args ...string) (string, error) {
+		gotName = name
+		gotArgs = append([]string{}, args...)
+		return "first\x00second\x00", nil
+	}
+
+	count, err := countContainerFiles(context.Background(), t.TempDir(), "drupal", "/var/www/drupal/private")
 	if err != nil {
-		t.Fatalf("materializeDemoObjectsScript() error = %v", err)
+		t.Fatalf("countContainerFiles() error = %v", err)
 	}
-	if gotPath == "canonical.sh" {
-		t.Fatal("materializeDemoObjectsScript() unexpectedly reused the canonical path")
+	if count != 2 {
+		t.Fatalf("countContainerFiles() = %d, want 2", count)
 	}
-	contents, err := os.ReadFile(gotPath)
+	wantArgs := []string{"compose", "exec", "-T", "drupal", "find", "/var/www/drupal/private", "-type", "f", "-print0"}
+	if gotName != "docker" || !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("command = %q %#v, want docker %#v", gotName, gotArgs, wantArgs)
+	}
+}
+
+func TestVerifyRuntimeDoesNotMaterializeCompatibilityPrograms(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("verify.go")
 	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
+		t.Fatalf("ReadFile(verify.go) error = %v", err)
 	}
-	if string(contents) != prepared {
-		t.Fatalf("materializeDemoObjectsScript() contents = %q, want %q", contents, prepared)
-	}
-	cleanup()
-	if _, err := os.Stat(gotPath); !os.IsNotExist(err) {
-		t.Fatalf("cleanup left compatibility script at %q: %v", gotPath, err)
+	source := string(data)
+	for _, forbidden := range []string{
+		"prepareDemoObjectsScript(",
+		"materializeDemoObjectsScript(",
+		"os.CreateTemp(",
+		`"bash", "-lc"`,
+		"| wc -l",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("verify runtime must invoke checked-in programs and direct argv instead of containing %q", forbidden)
+		}
 	}
 }
 

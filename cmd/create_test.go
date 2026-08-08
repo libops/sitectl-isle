@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -459,28 +460,6 @@ func TestCheckPrereqsFailsEarly(t *testing.T) {
 	rendered := stripANSI(out.String())
 	if !strings.Contains(rendered, "• git is installed: failed") {
 		t.Fatalf("expected failed checklist line, got:\n%s", rendered)
-	}
-}
-
-func TestStartupCommandUsesCreateDefinitionLifecycle(t *testing.T) {
-	label, name, args := startupCommand()
-	if label != "ISLE startup commands" {
-		t.Fatalf("expected ISLE startup label, got %q", label)
-	}
-	if name != "bash" {
-		t.Fatalf("expected bash command, got %q", name)
-	}
-	if len(args) != 2 || args[0] != "-lc" {
-		t.Fatalf("expected bash lifecycle args, got %#v", args)
-	}
-	for _, want := range []string{
-		"docker compose pull --ignore-buildable",
-		"docker compose build",
-		"docker compose up --remove-orphans --wait --wait-timeout 600 -d",
-	} {
-		if !strings.Contains(args[1], want) {
-			t.Fatalf("expected startup command to contain %q, got %q", want, args[1])
-		}
 	}
 }
 
@@ -986,82 +965,41 @@ func TestBootstrapCheckoutRunsGitAddAndInitialCommit(t *testing.T) {
 	}
 }
 
-func TestRunStartupPreparesLocalPortEnv(t *testing.T) {
+func TestRunStartupDelegatesLifecycleCommandsToComposeSDK(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	projectDir := t.TempDir()
 
-	oldPrepare := createPrepareStartup
-	oldRunProject := createRunProjectCommand
-	oldRewrite := createRewriteCommand
+	oldRunCompose := createRunComposeCommand
 	t.Cleanup(func() {
-		createPrepareStartup = oldPrepare
-		createRunProjectCommand = oldRunProject
-		createRewriteCommand = oldRewrite
+		createRunComposeCommand = oldRunCompose
 	})
 
-	var prepared bool
-	createPrepareStartup = func(out io.Writer, ctx *config.Context) (map[string]string, error) {
-		prepared = true
-		if ctx.ProjectDir != projectDir {
-			t.Fatalf("expected prepare project dir %q, got %q", projectDir, ctx.ProjectDir)
-		}
-		return map[string]string{
-			"SITE_URL":   "http://localhost:8081",
-			"URI_SCHEME": "http",
-		}, nil
-	}
-
 	var commands []string
-	var rewrites []string
-	createRewriteCommand = func(ctx *config.Context, command string) string {
-		if strings.HasPrefix(command, "export ") {
-			t.Fatalf("expected compose rewrite before startup env prefix, got %q", command)
-		}
-		rewrites = append(rewrites, command)
-		return "rewritten(" + command + ")"
-	}
-	createRunProjectCommand = func(gotProjectDir string, stdout, stderr io.Writer, name string, args ...string) error {
+	createRunComposeCommand = func(runCtx context.Context, ctx *config.Context, gotProjectDir string, stdout, stderr io.Writer, command string) error {
 		if gotProjectDir != projectDir {
 			t.Fatalf("expected project dir %q, got %q", projectDir, gotProjectDir)
 		}
-		if name != "bash" || len(args) != 2 || args[0] != "-lc" {
-			t.Fatalf("expected bash -lc command, got %s %v", name, args)
+		if ctx == nil || ctx.Name != "isle-local" {
+			t.Fatalf("unexpected context: %#v", ctx)
 		}
-		commands = append(commands, args[1])
+		commands = append(commands, command)
 		return nil
 	}
 
 	if err := runStartup(io.Discard, &config.Context{Name: "isle-local", ProjectDir: projectDir}); err != nil {
 		t.Fatalf("runStartup() error = %v", err)
 	}
-	if !prepared {
-		t.Fatal("expected startup port preparation")
+	want := startupCommands()
+	if len(commands) != len(want) {
+		t.Fatalf("startup commands = %#v, want %#v", commands, want)
 	}
-	if len(commands) == 0 {
-		t.Fatal("expected startup commands")
-	}
-	if len(rewrites) != len(commands) {
-		t.Fatalf("expected every startup command to be rewritten before execution, got rewrites=%d commands=%d", len(rewrites), len(commands))
-	}
-	for _, command := range commands {
-		if !strings.HasPrefix(command, "export SITE_URL='http://localhost:8081' URI_SCHEME='http'; rewritten(") {
-			t.Fatalf("expected command to include local port env prefix, got %q", command)
+	for index := range want {
+		if commands[index] != want[index] {
+			t.Fatalf("startup command %d = %q, want %q", index, commands[index], want[index])
 		}
-	}
-}
-
-func TestShellEnvPrefixWorksBeforeCompoundCommands(t *testing.T) {
-	got := shellEnvPrefix(map[string]string{
-		"SITE_URL":   "http://localhost:8081",
-		"URI_SCHEME": "http",
-	})
-	want := "export SITE_URL='http://localhost:8081' URI_SCHEME='http'; "
-	if got != want {
-		t.Fatalf("shellEnvPrefix() = %q, want %q", got, want)
-	}
-	compound := got + "if [ -d drupal/rootfs ]; then find drupal/rootfs -type d -exec chmod 755 {} \\; ; fi"
-	if !strings.Contains(compound, "; if [ -d drupal/rootfs ]") {
-		t.Fatalf("expected export prefix to terminate before compound command, got %q", compound)
+		if strings.HasPrefix(commands[index], "export ") {
+			t.Fatalf("startup command %d unexpectedly materialized an environment prefix: %q", index, commands[index])
+		}
 	}
 }
 

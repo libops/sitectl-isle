@@ -19,6 +19,7 @@ func RegisterCommands(sdk *plugin.SDK) {
 	sdk.RegisterComponentCommand(componentExtensionCmd)
 	sdk.AddCommand(cacheCmd)
 	sdk.RegisterCreateRunner(createDefinition(), createRunner{})
+	sdk.RegisterDeployRunner(isleDeployDefinition(), isleDeployRunner{})
 	sdk.RegisterDebugRunner(&isleDebugRunner{})
 	sdk.RegisterConvergeRunner(&isleConvergeRunner{})
 	sdk.RegisterSetRunner(&isleSetRunner{})
