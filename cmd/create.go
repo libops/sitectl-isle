@@ -37,6 +37,7 @@ var (
 		return commandSDK.CloneTemplateRepo(opts)
 	}
 	createEnsureLocalContext = ensureCreateContext
+	createEnsureJWTKeyPair   = createpkg.EnsureJWTKeyPair
 	createApply              = createpkg.Apply
 	createRunProjectCommand  = defaultRunProjectCommand
 	createBootstrapCheckout  = bootstrapCheckout
@@ -339,6 +340,10 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 			printCreateFailureSummary(summary, req)
 			return err
 		}
+	}
+	if err := createEnsureJWTKeyPair(ctx); err != nil {
+		printCreateFailureSummary(summary, req)
+		return fmt.Errorf("prepare Islandora JWT keys: %w", err)
 	}
 	if err := applyCreateIngress(ctx, req); err != nil {
 		printCreateFailureSummary(summary, req)
