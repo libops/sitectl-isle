@@ -96,6 +96,50 @@ NETWORK="$(container_network_for_url "${WORKBENCH_URL}")"
 	}
 }
 
+func TestMaterializeDemoObjectsScriptUsesCanonicalFileWhenUnchanged(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "demo-objects.sh")
+	original := []byte("#!/usr/bin/env bash\nprintf 'canonical\\n'\n")
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	gotPath, cleanup, err := materializeDemoObjectsScript(path, original, string(original))
+	if err != nil {
+		t.Fatalf("materializeDemoObjectsScript() error = %v", err)
+	}
+	defer cleanup()
+	if gotPath != path {
+		t.Fatalf("materializeDemoObjectsScript() path = %q, want %q", gotPath, path)
+	}
+}
+
+func TestMaterializeDemoObjectsScriptWritesPreparedCompatibilityFile(t *testing.T) {
+	t.Parallel()
+
+	original := []byte("original\n")
+	prepared := "prepared\n"
+	gotPath, cleanup, err := materializeDemoObjectsScript("canonical.sh", original, prepared)
+	if err != nil {
+		t.Fatalf("materializeDemoObjectsScript() error = %v", err)
+	}
+	if gotPath == "canonical.sh" {
+		t.Fatal("materializeDemoObjectsScript() unexpectedly reused the canonical path")
+	}
+	contents, err := os.ReadFile(gotPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(contents) != prepared {
+		t.Fatalf("materializeDemoObjectsScript() contents = %q, want %q", contents, prepared)
+	}
+	cleanup()
+	if _, err := os.Stat(gotPath); !os.IsNotExist(err) {
+		t.Fatalf("cleanup left compatibility script at %q: %v", gotPath, err)
+	}
+}
+
 func verifyTestContext(projectDir string) *config.Context {
 	return &config.Context{
 		DockerHostType: config.ContextLocal,
