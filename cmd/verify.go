@@ -429,6 +429,11 @@ func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error
 
 func prepareDemoObjectsScript(data []byte) (string, error) {
 	script := string(data)
+	const managedURL = `URL="${SITECTL_DEMO_OBJECTS_URL:-$(site_url)}"`
+	if strings.Contains(script, managedURL) && strings.Contains(script, `container_url_for_url "${URL}"`) && strings.Contains(script, `container_network_for_url "${WORKBENCH_URL}"`) {
+		return script, nil
+	}
+
 	const profileSource = `source "$(dirname "${BASH_SOURCE[0]}")/profile.sh"`
 	const publicURL = `URL="${URI_SCHEME}://${DOMAIN}"`
 	const appendPublishedPort = `if [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then`

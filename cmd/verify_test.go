@@ -78,6 +78,24 @@ fi
 	}
 }
 
+func TestPrepareDemoObjectsScriptAcceptsManagedInternalRoute(t *testing.T) {
+	t.Parallel()
+
+	input := `#!/usr/bin/env bash
+set -eou pipefail
+URL="${SITECTL_DEMO_OBJECTS_URL:-$(site_url)}"
+WORKBENCH_URL="$(container_url_for_url "${URL}")"
+NETWORK="$(container_network_for_url "${WORKBENCH_URL}")"
+`
+	prepared, err := prepareDemoObjectsScript([]byte(input))
+	if err != nil {
+		t.Fatalf("prepareDemoObjectsScript() error = %v", err)
+	}
+	if prepared != input {
+		t.Fatalf("managed demo script was unexpectedly rewritten:\n%s", prepared)
+	}
+}
+
 func verifyTestContext(projectDir string) *config.Context {
 	return &config.Context{
 		DockerHostType: config.ContextLocal,
