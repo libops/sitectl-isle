@@ -63,7 +63,7 @@ const (
 	defaultDrupalHostRule         = "Host(`localhost`)"
 	databaseInitImageRef          = "libops/base:3.2.2.0@sha256:851e17742b5fee57038855f46b1a46d2716c0012c5f3a4788b7e5c7bc12fed5e"
 	// DefaultDrupalBaseImageRef is the tested base shared by create metadata and generated Dockerfiles.
-	DefaultDrupalBaseImageRef = "libops/islandora:nginx-1.30.4-php84@sha256:0e20f5d10af9431c3140179ef6bf1e41299026043d1a98974180ab54a5330cef"
+	DefaultDrupalBaseImageRef = "libops/islandora:nginx-1.30.4-php84@sha256:0320df015cab9951ff0ba1e5f30c0a18641398706c3af6fe9d27c29f02b21d2e"
 )
 
 // DefaultTrustedHostPatterns is the Drupal trusted-host regex for local sites.
