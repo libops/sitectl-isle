@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +27,8 @@ const (
 	verifyExpectedAuto = "auto"
 	verifyIIIFLocal    = "local"
 )
+
+var verifyRunLocalProjectOutput = runLocalProjectOutput
 
 type isleVerifyRunner struct {
 	path              string
@@ -317,7 +318,22 @@ func verifyNoFedoraManagedFiles(ctx context.Context, projectDir string) sitevali
 	if strings.TrimSpace(projectDir) == "" {
 		return warningVerifyResult("verify:fcrepo:file-managed", "skipped because the context does not define a local project directory")
 	}
-	out, err := runLocalProjectOutput(ctx, projectDir, "docker", "compose", "exec", "-T", "drupal", "bash", "-lc", `drush --root=/var/www/drupal sql:query --extra=--skip-column-names "SELECT COUNT(*) FROM file_managed WHERE uri LIKE 'fedora%';"`)
+	out, err := verifyRunLocalProjectOutput(
+		ctx,
+		projectDir,
+		"docker",
+		"compose",
+		"exec",
+		"-T",
+		"--workdir",
+		"/var/www/drupal",
+		"drupal",
+		"drush",
+		"--root=/var/www/drupal",
+		"sql:query",
+		"--extra=--skip-column-names",
+		"SELECT COUNT(*) FROM file_managed WHERE uri LIKE 'fedora%';",
+	)
 	if err != nil {
 		return failedVerifyResult("verify:fcrepo:file-managed", err.Error(), "")
 	}
@@ -360,6 +376,15 @@ func verifyDemoObjects(ctx context.Context, projectDir, fcrepoExpected, fileSyst
 }
 
 func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error) {
+	canonicalPath := filepath.Join(projectDir, "scripts", "demo-objects.sh")
+	data, err := os.ReadFile(canonicalPath) // #nosec G304 -- path is scoped to the selected project.
+	if err != nil {
+		return "", fmt.Errorf("read canonical demo-objects script: %w", err)
+	}
+	if err := validateDemoObjectsScriptContract(data); err != nil {
+		return "", err
+	}
+
 	if err := createpkg.SyncLocalDrupalInternalIngress(projectDir, true); err != nil {
 		return "", fmt.Errorf("reconcile Workbench internal route: %w", err)
 	}
@@ -399,22 +424,7 @@ func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error
 		return "", fmt.Errorf("workbench endpoint preflight failed for %s: %s", versionURL, detail)
 	}
 
-	canonicalPath := filepath.Join(projectDir, "scripts", "demo-objects.sh")
-	data, err := os.ReadFile(canonicalPath) // #nosec G304 -- path is scoped to the selected project.
-	if err != nil {
-		return "", fmt.Errorf("read canonical demo-objects script: %w", err)
-	}
-	script, err := prepareDemoObjectsScript(data)
-	if err != nil {
-		return "", err
-	}
-	scriptPath, cleanupScript, err := materializeDemoObjectsScript(filepath.Join("scripts", "demo-objects.sh"), data, script)
-	if err != nil {
-		return "", err
-	}
-	defer cleanupScript()
-
-	command := exec.CommandContext(ctx, "bash", scriptPath) // #nosec G204 -- the tracked template script is the canonical operation.
+	command := exec.CommandContext(ctx, "bash", filepath.Join("scripts", "demo-objects.sh")) // #nosec G204 -- the tracked template script is the canonical operation.
 	command.Dir = projectDir
 	command.Env = append(os.Environ(), "SITECTL_DEMO_OBJECTS_URL="+createpkg.LocalDrupalBaseURL)
 	var stdout bytes.Buffer
@@ -431,50 +441,31 @@ func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error
 	return stdout.String(), nil
 }
 
-func materializeDemoObjectsScript(path string, original []byte, prepared string) (string, func(), error) {
-	if prepared == string(original) {
-		return path, func() {}, nil
-	}
-
-	file, err := os.CreateTemp("", "sitectl-isle-demo-objects-*.sh")
-	if err != nil {
-		return "", nil, fmt.Errorf("create compatible demo-objects script: %w", err)
-	}
-	temporaryPath := file.Name()
-	cleanup := func() {
-		_ = os.Remove(temporaryPath) // Best-effort cleanup; the operating system also removes its temporary directory.
-	}
-	if _, err := file.WriteString(prepared); err != nil {
-		_ = file.Close()
-		cleanup()
-		return "", nil, fmt.Errorf("write compatible demo-objects script: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("close compatible demo-objects script: %w", err)
-	}
-
-	return temporaryPath, cleanup, nil
-}
-
-func prepareDemoObjectsScript(data []byte) (string, error) {
+func validateDemoObjectsScriptContract(data []byte) error {
 	script := string(data)
-	const managedURL = `URL="${SITECTL_DEMO_OBJECTS_URL:-$(site_url)}"`
-	if strings.Contains(script, managedURL) && strings.Contains(script, `container_url_for_url "${URL}"`) && strings.Contains(script, `container_network_for_url "${WORKBENCH_URL}"`) {
-		return script, nil
+	required := []struct {
+		label    string
+		fragment string
+	}{
+		{label: "SITECTL_DEMO_OBJECTS_URL override", fragment: `URL="${SITECTL_DEMO_OBJECTS_URL:-$(site_url)}"`},
+		{label: "container URL translation", fragment: `container_url_for_url "${URL}"`},
+		{label: "container network selection", fragment: `container_network_for_url "${WORKBENCH_URL}"`},
 	}
-
-	const profileSource = `source "$(dirname "${BASH_SOURCE[0]}")/profile.sh"`
-	const publicURL = `URL="${URI_SCHEME}://${DOMAIN}"`
-	const appendPublishedPort = `if [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then`
-	if !strings.Contains(script, profileSource) || !strings.Contains(script, publicURL) || !strings.Contains(script, appendPublishedPort) {
-		return "", fmt.Errorf("canonical demo-objects script has an unknown URL contract")
+	missing := make([]string, 0, len(required))
+	for _, requirement := range required {
+		if !strings.Contains(script, requirement.fragment) {
+			missing = append(missing, requirement.label)
+		}
 	}
-	script = strings.Replace(script, profileSource, `source "./scripts/profile.sh"`, 1)
-	script = strings.Replace(script, publicURL, `URL="${SITECTL_DEMO_OBJECTS_URL:-${URI_SCHEME}://${DOMAIN}}"`, 1)
-	script = strings.Replace(script, appendPublishedPort, `if [ -z "${SITECTL_DEMO_OBJECTS_URL:-}" ] && [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then`, 1)
-
-	return script, nil
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"scripts/demo-objects.sh uses a legacy runtime contract (missing %s); replace it from %s at %s or newer",
+		strings.Join(missing, ", "),
+		defaultTemplateRepo,
+		defaultTemplateBranch,
+	)
 }
 
 func demoObjectAssertTarget(fcrepoExpected, fileSystemURI string) (string, string) {
@@ -490,15 +481,11 @@ func demoObjectAssertTarget(fcrepoExpected, fileSystemURI string) (string, strin
 }
 
 func countContainerFiles(ctx context.Context, projectDir, service, target string) (int, error) {
-	out, err := runLocalProjectOutput(ctx, projectDir, "docker", "compose", "exec", "-T", service, "bash", "-lc", "find "+strconv.Quote(target)+" -type f 2>/dev/null | wc -l")
+	out, err := verifyRunLocalProjectOutput(ctx, projectDir, "docker", "compose", "exec", "-T", service, "find", target, "-type", "f", "-print0")
 	if err != nil {
 		return 0, err
 	}
-	count, err := strconv.Atoi(strings.TrimSpace(out))
-	if err != nil {
-		return 0, fmt.Errorf("parse file count %q: %w", strings.TrimSpace(out), err)
-	}
-	return count, nil
+	return bytes.Count([]byte(out), []byte{0}), nil
 }
 
 func verifyProjectFileContains(projectDir, relPath, expected, name string) sitevalidate.Result {

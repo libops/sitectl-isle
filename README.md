@@ -1,6 +1,6 @@
 # sitectl-isle
 
-`sitectl-isle` simplifies the creation and operation of repositories created using the [Islandora ISLE site template](https://github.com/islandora-devops/isle-site-template). It uses sitectl components to make features like Traefik bot mitigation, Triplet IIIF, and Islandora filesystem storage easy to enable and customize.
+`sitectl-isle` simplifies the creation and operation of repositories created using the [LibOps ISLE site template](https://github.com/libops/isle). It uses sitectl components to make features like Traefik bot mitigation, Triplet IIIF, and Islandora filesystem storage easy to enable and customize.
 
 Documentation: https://sitectl.libops.io/plugins/isle
 
@@ -16,14 +16,15 @@ Create a local ISLE site from the matching template:
 
 ```bash
 sitectl create isle/default \
-  --template-repo https://github.com/islandora-devops/isle-site-template \
+  --template-repo https://github.com/libops/isle \
+  --template-branch v1.3.0 \
   --path ./my-isle-site \
   --type local \
   --checkout-source template \
   --default-context
 ```
 
-The template README is at https://github.com/islandora-devops/isle-site-template.
+The template README is at https://github.com/libops/isle.
 
 ## Basic Operations
 
@@ -32,6 +33,8 @@ Use [`sitectl compose`](https://sitectl.libops.io/commands/compose) to start or 
 ```bash
 sitectl compose up --remove-orphans -d
 ```
+
+Before deploying a site created from an older template, update its checkout to the LibOps ISLE v1.3.0 template contract. The checkout must contain `scripts/sitectl-rollout-preflight.sh`, `scripts/drupal-media-storage-state.php`, and `scripts/drupal-wait-installed.sh`. The Drupal service must mount the latter two programs read-only at `/var/www/drupal/drupal-media-storage-state.php` and `/usr/local/lib/sitectl/drupal-wait-installed.sh`, respectively. The preflight also validates the template's Compose file, root CA, Triplet configuration, JWT-key generator, and initializer. `sitectl deploy` executes that complete checked-in preflight and verifies the program sources and effective Compose configuration before stopping services. The direct rollout repeats the preflight after its build preparation and before recreating Drupal.
 
 Use [`sitectl healthcheck`](https://sitectl.libops.io/commands/healthcheck) and [`sitectl validate`](https://sitectl.libops.io/commands/validate) to check the site:
 
