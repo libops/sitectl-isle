@@ -41,7 +41,7 @@ func (isleDeployRunner) BindFlags(*cobra.Command) {}
 
 func (isleDeployRunner) PreDown(cmd *cobra.Command, ctx *config.Context) error {
 	runCtx := context.Background()
-	if cmd != nil {
+	if cmd != nil && cmd.Context() != nil {
 		runCtx = cmd.Context()
 	}
 	if err := validateRolloutTemplateContractContext(runCtx, ctx); err != nil {
