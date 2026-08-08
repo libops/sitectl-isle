@@ -41,7 +41,7 @@ jobs:
       plugin: isle
       create-definition: default
       images: alpaca=islandora/alpaca:6.3.19@sha256:b7d61c14715376b78c0c01647fef2dc4597c3482e94006e9ab6080e963ca5c61
-      # Frozen at 64406d3637f2f1724ccb4953a8dc623f975984e6 until the template publishes v1.3.0.
+      # Frozen at c64d28d8384179d51a49b60c67185c9909db76bf until the template publishes v1.3.0.
       create-args: >-
         --template-repo https://github.com/libops/isle
         --template-branch checked-in-program-contracts
