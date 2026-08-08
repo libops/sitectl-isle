@@ -42,6 +42,8 @@ jobs:
       create-definition: default
       images: alpaca=islandora/alpaca:6.3.19@sha256:b7d61c14715376b78c0c01647fef2dc4597c3482e94006e9ab6080e963ca5c61
       create-args: >-
+        --template-repo https://github.com/libops/isle
+        --template-branch priority-review-remediation
         --fcrepo ${{ matrix.fcrepo_state }}
         --blazegraph ${{ matrix.blazegraph_state }}
         --isle-file-system-uri ${{ matrix.isle_file_system_uri }}
