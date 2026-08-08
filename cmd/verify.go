@@ -399,8 +399,8 @@ func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error
 		return "", fmt.Errorf("workbench endpoint preflight failed for %s: %s", versionURL, detail)
 	}
 
-	path := filepath.Join(projectDir, "scripts", "demo-objects.sh")
-	data, err := os.ReadFile(path) // #nosec G304 -- path is scoped to the selected project.
+	canonicalPath := filepath.Join(projectDir, "scripts", "demo-objects.sh")
+	data, err := os.ReadFile(canonicalPath) // #nosec G304 -- path is scoped to the selected project.
 	if err != nil {
 		return "", fmt.Errorf("read canonical demo-objects script: %w", err)
 	}
@@ -408,11 +408,15 @@ func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error
 	if err != nil {
 		return "", err
 	}
+	scriptPath, cleanupScript, err := materializeDemoObjectsScript(filepath.Join("scripts", "demo-objects.sh"), data, script)
+	if err != nil {
+		return "", err
+	}
+	defer cleanupScript()
 
-	command := exec.CommandContext(ctx, "bash", "-s") // #nosec G204 -- the tracked template script is the canonical operation.
+	command := exec.CommandContext(ctx, "bash", scriptPath) // #nosec G204 -- the tracked template script is the canonical operation.
 	command.Dir = projectDir
 	command.Env = append(os.Environ(), "SITECTL_DEMO_OBJECTS_URL="+createpkg.LocalDrupalBaseURL)
-	command.Stdin = strings.NewReader(script)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	command.Stdout = &stdout
@@ -427,8 +431,39 @@ func runDemoObjectsScript(ctx context.Context, projectDir string) (string, error
 	return stdout.String(), nil
 }
 
+func materializeDemoObjectsScript(path string, original []byte, prepared string) (string, func(), error) {
+	if prepared == string(original) {
+		return path, func() {}, nil
+	}
+
+	file, err := os.CreateTemp("", "sitectl-isle-demo-objects-*.sh")
+	if err != nil {
+		return "", nil, fmt.Errorf("create compatible demo-objects script: %w", err)
+	}
+	temporaryPath := file.Name()
+	cleanup := func() {
+		_ = os.Remove(temporaryPath) // Best-effort cleanup; the operating system also removes its temporary directory.
+	}
+	if _, err := file.WriteString(prepared); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", nil, fmt.Errorf("write compatible demo-objects script: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("close compatible demo-objects script: %w", err)
+	}
+
+	return temporaryPath, cleanup, nil
+}
+
 func prepareDemoObjectsScript(data []byte) (string, error) {
 	script := string(data)
+	const managedURL = `URL="${SITECTL_DEMO_OBJECTS_URL:-$(site_url)}"`
+	if strings.Contains(script, managedURL) && strings.Contains(script, `container_url_for_url "${URL}"`) && strings.Contains(script, `container_network_for_url "${WORKBENCH_URL}"`) {
+		return script, nil
+	}
+
 	const profileSource = `source "$(dirname "${BASH_SOURCE[0]}")/profile.sh"`
 	const publicURL = `URL="${URI_SCHEME}://${DOMAIN}"`
 	const appendPublishedPort = `if [ "${URI_PORT}" != "80" ] && [ "${URI_PORT}" != "443" ]; then`

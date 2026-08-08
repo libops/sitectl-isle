@@ -39,13 +39,13 @@ const (
 	CodebaseNested  = "nested"
 	CodebaseGitRoot = "git-root"
 
-	DefaultDrupalRootfs      = "drupal/rootfs/var/www/drupal"
-	DefaultISLEFileSystemURI = "private"
-	PublicISLEFileSystemURI  = "public"
-	PrivateISLEFileSystemURI = "private"
-	drupalFcrepoInternalURL  = "http://fcrepo:8080/fcrepo/rest/"
-	databaseInitServiceName  = "database-init"
-	legacyFcrepoDatabaseInit = "fcrepo-database-init"
+	DefaultDrupalRootfs           = "drupal/rootfs/var/www/drupal"
+	DefaultISLEFileSystemURI      = "private"
+	PublicISLEFileSystemURI       = "public"
+	PrivateISLEFileSystemURI      = "private"
+	drupalFcrepoInternalURL       = "http://fcrepo:8080/fcrepo/rest/"
+	databaseInitServiceName       = "database-init"
+	fcrepoDatabaseInitServiceName = "fcrepo-database-init"
 
 	drupalRouterName = "drupal"
 	localDrupalHost  = "traefik"
@@ -61,6 +61,9 @@ const (
 	workbenchClientUserAgentRule  = "HeaderRegexp(`User-Agent`, `(?i)^Islandora Workbench$`)"
 	workbenchClientRouterPriority = 100000
 	defaultDrupalHostRule         = "Host(`localhost`)"
+	databaseInitImageRef          = "libops/base:3.2.2.0@sha256:851e17742b5fee57038855f46b1a46d2716c0012c5f3a4788b7e5c7bc12fed5e"
+	// DefaultDrupalBaseImageRef is the tested base shared by create metadata and generated Dockerfiles.
+	DefaultDrupalBaseImageRef = "libops/islandora:nginx-1.30.4-php84@sha256:0320df015cab9951ff0ba1e5f30c0a18641398706c3af6fe9d27c29f02b21d2e"
 )
 
 // DefaultTrustedHostPatterns is the Drupal trusted-host regex for local sites.
@@ -882,7 +885,7 @@ func dockerfileHeader(contents string) string {
 	if foundTargetArch {
 		return strings.Join(out, "\n")
 	}
-	return `ARG BASE_IMAGE=libops/islandora:nginx-1.30.3-php84
+	return `ARG BASE_IMAGE=` + DefaultDrupalBaseImageRef + `
 FROM ${BASE_IMAGE}
 
 ARG TARGETARCH
@@ -970,10 +973,6 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 	if err != nil {
 		return fmt.Errorf("read compose file: %w", err)
 	}
-	data, err = removeComposeServiceDependency(data, "drupal", databaseInitServiceName)
-	if err != nil {
-		return err
-	}
 	data = expandEmptyComposeSection(data, "secrets")
 	data = expandEmptyComposeSection(data, "volumes")
 	if err := writeFilePreserveMode(composePath, data); err != nil {
@@ -982,9 +981,6 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 
 	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
-		return err
-	}
-	if err := compose.DeleteService(databaseInitServiceName); err != nil {
 		return err
 	}
 	if err := compose.SetServiceEnv("drupal", "DRUPAL_DEFAULT_SITE_URL", composePublicSiteURLExpr); err != nil {
@@ -996,14 +992,46 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 			return err
 		}
 	}
+	if _, ok := compose.SectionEntryBlock("secrets", "DRUPAL_DEFAULT_DB_PASSWORD"); !ok {
+		if err := compose.AddSectionEntryBlock("secrets", "DRUPAL_DEFAULT_DB_PASSWORD", `  DRUPAL_DEFAULT_DB_PASSWORD:
+    file: "./secrets/DRUPAL_DEFAULT_DB_PASSWORD"`); err != nil {
+			return err
+		}
+	}
+	if !compose.HasService(databaseInitServiceName) {
+		if err := compose.AddServiceBlock(databaseInitServiceName, databaseInitializerServiceBlock(databaseInitServiceName, "drupal_default", "drupal_default", "DRUPAL_DEFAULT_DB_PASSWORD")); err != nil {
+			return err
+		}
+	}
+	if err := compose.SetServiceScalar(databaseInitServiceName, "image", databaseInitImageRef); err != nil {
+		return err
+	}
+	if err := compose.SetServiceScalar(databaseInitServiceName, "restart", "no"); err != nil {
+		return err
+	}
+	if err := compose.SetServiceScalar(databaseInitServiceName, "entrypoint", "/usr/local/bin/init-database.sh"); err != nil {
+		return err
+	}
+	for _, setting := range []struct{ key, value string }{
+		{key: "DB_HOST", value: "mariadb"},
+		{key: "DB_PORT", value: "3306"},
+		{key: "DB_NAME", value: "drupal_default"},
+		{key: "DB_USER", value: "drupal_default"},
+		{key: "DB_CHARACTER_SET", value: "utf8mb4"},
+		{key: "DB_COLLATION", value: "utf8mb4_unicode_ci"},
+	} {
+		if err := compose.SetServiceEnv(databaseInitServiceName, setting.key, setting.value); err != nil {
+			return err
+		}
+	}
 	if err := compose.Save(); err != nil {
 		return err
 	}
 	if err := ensureMariaDBHealthcheck(composePath); err != nil {
 		return fmt.Errorf("configure authenticated MariaDB healthcheck: %w", err)
 	}
-	if err := ensureComposeServiceSecret(composePath, "drupal", "DB_ROOT_PASSWORD"); err != nil {
-		return fmt.Errorf("mount database root password for Drupal bootstrap: %w", err)
+	if err := removeComposeServiceSecret(composePath, "drupal", "DB_ROOT_PASSWORD"); err != nil {
+		return fmt.Errorf("remove database root password from Drupal: %w", err)
 	}
 	if err := ensureComposeServiceSecret(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD"); err != nil {
 		return fmt.Errorf("mount Drupal database password: %w", err)
@@ -1014,7 +1042,45 @@ func applyApplicationDatabaseBootstrap(projectDir string) error {
 	if err := ensureComposeServiceSecretAlias(composePath, "drupal", "DRUPAL_DEFAULT_DB_PASSWORD", "DRUPAL_DEFAULT_DB_PASSWORD"); err != nil {
 		return fmt.Errorf("expose Drupal database password to template settings: %w", err)
 	}
+	if err := ensureComposeServiceSecret(composePath, databaseInitServiceName, "DB_ROOT_PASSWORD"); err != nil {
+		return fmt.Errorf("mount root password for one-shot Drupal database initialization: %w", err)
+	}
+	if err := ensureComposeServiceSecret(composePath, databaseInitServiceName, "DRUPAL_DEFAULT_DB_PASSWORD"); err != nil {
+		return fmt.Errorf("mount scoped password for one-shot Drupal database initialization: %w", err)
+	}
+	if err := ensureComposeServiceSecretTarget(composePath, databaseInitServiceName, "DRUPAL_DEFAULT_DB_PASSWORD", "DB_PASSWORD"); err != nil {
+		return fmt.Errorf("target scoped password for one-shot Drupal database initialization: %w", err)
+	}
+	if err := ensureComposeServiceDependency(composePath, "drupal", databaseInitServiceName, "service_completed_successfully"); err != nil {
+		return fmt.Errorf("make Drupal wait for database initialization: %w", err)
+	}
+	if err := ensureComposeServiceDependency(composePath, databaseInitServiceName, "mariadb", "service_healthy"); err != nil {
+		return fmt.Errorf("make database initialization wait for MariaDB: %w", err)
+	}
 	return nil
+}
+
+func databaseInitializerServiceBlock(name, database, user, passwordSecret string) string {
+	return "  " + name + `:
+    image: ` + databaseInitImageRef + `
+    restart: "no"
+    networks:
+      default:
+    environment:
+      DB_HOST: mariadb
+      DB_PORT: "3306"
+      DB_NAME: ` + database + `
+      DB_USER: ` + user + `
+      DB_CHARACTER_SET: utf8mb4
+      DB_COLLATION: utf8mb4_unicode_ci
+    secrets:
+      - source: DB_ROOT_PASSWORD
+      - source: ` + passwordSecret + `
+        target: DB_PASSWORD
+    entrypoint: /usr/local/bin/init-database.sh
+    depends_on:
+      mariadb:
+        condition: service_healthy`
 }
 
 func ensureMariaDBHealthcheck(composePath string) error {
@@ -1127,6 +1193,76 @@ func ensureComposeServiceSecret(composePath, service, source string) error {
 		return err
 	}
 	return writeFilePreserveMode(composePath, updated)
+}
+
+func removeComposeServiceSecret(composePath, service, source string) error {
+	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
+	if err != nil {
+		return fmt.Errorf("read compose file: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	serviceStart, serviceEnd, ok := composeServiceLineBounds(lines, service)
+	if !ok {
+		return nil
+	}
+	secretsIndex, ok := findComposeMappingLine(lines, serviceStart+1, serviceEnd, 4, "secrets")
+	if !ok {
+		return nil
+	}
+	secretsEnd := composeMappingLineEnd(lines, secretsIndex, serviceEnd, 4)
+	for index := secretsIndex + 1; index < secretsEnd; index++ {
+		if leadingSpaceCount(lines[index]) != 6 {
+			continue
+		}
+		trimmed := strings.TrimSpace(lines[index])
+		if trimmed != "- "+source && trimmed != "- source: "+source {
+			continue
+		}
+		itemEnd := index + 1
+		for itemEnd < secretsEnd && leadingSpaceCount(lines[itemEnd]) > 6 {
+			itemEnd++
+		}
+		lines = removeComposeLines(lines, index, itemEnd)
+		secretsEnd -= itemEnd - index
+		index--
+	}
+	if !composeMappingHasChildren(lines, secretsIndex, secretsEnd, 4) {
+		lines = removeComposeLines(lines, secretsIndex, secretsIndex+1)
+	}
+	return writeFilePreserveMode(composePath, []byte(strings.Join(lines, "\n")))
+}
+
+func ensureComposeServiceDependency(composePath, service, dependency, condition string) error {
+	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
+	if err != nil {
+		return fmt.Errorf("read compose file: %w", err)
+	}
+	data, err = removeComposeServiceDependency(data, service, dependency)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	serviceStart, serviceEnd, ok := composeServiceLineBounds(lines, service)
+	if !ok {
+		return fmt.Errorf("service %q not found in compose file", service)
+	}
+	dependsIndex, ok := findComposeMappingLine(lines, serviceStart+1, serviceEnd, 4, "depends_on")
+	if !ok {
+		insertAt := composeInsertionIndex(lines, serviceStart+1, serviceEnd)
+		lines = insertComposeLines(lines, insertAt,
+			"    depends_on:",
+			"      "+dependency+":",
+			"        condition: "+condition,
+		)
+	} else {
+		dependsEnd := composeMappingLineEnd(lines, dependsIndex, serviceEnd, 4)
+		insertAt := composeInsertionIndex(lines, dependsIndex+1, dependsEnd)
+		lines = insertComposeLines(lines, insertAt,
+			"      "+dependency+":",
+			"        condition: "+condition,
+		)
+	}
+	return writeFilePreserveMode(composePath, []byte(strings.Join(lines, "\n")))
 }
 
 func composeServiceHasSecret(data []byte, service, source string) (bool, error) {
@@ -1297,12 +1433,12 @@ func removeComposeLines(lines []string, start, end int) []string {
 	return append(lines[:start], lines[end:]...)
 }
 
-func removeLegacyFcrepoDatabaseInitializer(composePath string) error {
+func removeFcrepoDatabaseInitializer(composePath string) error {
 	data, err := os.ReadFile(composePath) // #nosec G304 -- composePath is scoped to the selected project.
 	if err != nil {
 		return fmt.Errorf("read compose file: %w", err)
 	}
-	data, err = removeComposeServiceDependency(data, "fcrepo", legacyFcrepoDatabaseInit)
+	data, err = removeComposeServiceDependency(data, "fcrepo", fcrepoDatabaseInitServiceName)
 	if err != nil {
 		return err
 	}
@@ -1313,7 +1449,7 @@ func removeLegacyFcrepoDatabaseInitializer(composePath string) error {
 	if err != nil {
 		return err
 	}
-	if err := compose.DeleteService(legacyFcrepoDatabaseInit); err != nil {
+	if err := compose.DeleteService(fcrepoDatabaseInitServiceName); err != nil {
 		return err
 	}
 	return compose.Save()
@@ -1321,9 +1457,6 @@ func removeLegacyFcrepoDatabaseInitializer(composePath string) error {
 
 func applyFcrepoOn(projectDir, drupalRootfs string) error {
 	composePath := filepath.Join(projectDir, "compose.yaml")
-	if err := removeLegacyFcrepoDatabaseInitializer(composePath); err != nil {
-		return err
-	}
 	compose, err := corecomponent.LoadComposeFile(composePath)
 	if err != nil {
 		return err
@@ -1356,12 +1489,38 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 			return err
 		}
 	}
+	if !compose.HasService(fcrepoDatabaseInitServiceName) {
+		if err := compose.AddServiceBlock(fcrepoDatabaseInitServiceName, databaseInitializerServiceBlock(fcrepoDatabaseInitServiceName, "fcrepo", "fcrepo", "FCREPO_DB_PASSWORD")); err != nil {
+			return err
+		}
+	}
+	if err := compose.SetServiceScalar(fcrepoDatabaseInitServiceName, "image", databaseInitImageRef); err != nil {
+		return err
+	}
+	if err := compose.SetServiceScalar(fcrepoDatabaseInitServiceName, "restart", "no"); err != nil {
+		return err
+	}
+	if err := compose.SetServiceScalar(fcrepoDatabaseInitServiceName, "entrypoint", "/usr/local/bin/init-database.sh"); err != nil {
+		return err
+	}
+	for _, setting := range []struct{ key, value string }{
+		{key: "DB_HOST", value: "mariadb"},
+		{key: "DB_PORT", value: "3306"},
+		{key: "DB_NAME", value: "fcrepo"},
+		{key: "DB_USER", value: "fcrepo"},
+		{key: "DB_CHARACTER_SET", value: "utf8mb4"},
+		{key: "DB_COLLATION", value: "utf8mb4_unicode_ci"},
+	} {
+		if err := compose.SetServiceEnv(fcrepoDatabaseInitServiceName, setting.key, setting.value); err != nil {
+			return err
+		}
+	}
 	if !compose.HasService("milliner") {
 		if err := compose.AddServiceBlock("milliner", millinerRestoreServiceBlock(images.Milliner, commonMerge)); err != nil {
 			return err
 		}
 	}
-	if err := compose.SetServiceEnv("fcrepo", "DB_BOOTSTRAP_ENABLED", "true"); err != nil {
+	if err := compose.SetServiceEnv("fcrepo", "DB_BOOTSTRAP_ENABLED", "false"); err != nil {
 		return err
 	}
 	for key, value := range map[string]string{
@@ -1393,8 +1552,29 @@ func applyFcrepoOn(projectDir, drupalRootfs string) error {
 	if err := compose.Save(); err != nil {
 		return err
 	}
-	if err := ensureComposeServiceSecret(composePath, "fcrepo", "DB_ROOT_PASSWORD"); err != nil {
-		return fmt.Errorf("mount database root password for Fcrepo bootstrap: %w", err)
+	if err := removeComposeServiceSecret(composePath, "fcrepo", "DB_ROOT_PASSWORD"); err != nil {
+		return fmt.Errorf("remove database root password from Fcrepo: %w", err)
+	}
+	if err := ensureComposeServiceSecret(composePath, "fcrepo", "FCREPO_DB_PASSWORD"); err != nil {
+		return fmt.Errorf("mount scoped Fcrepo database password: %w", err)
+	}
+	if err := ensureComposeServiceSecretTarget(composePath, "fcrepo", "FCREPO_DB_PASSWORD", "DB_PASSWORD"); err != nil {
+		return fmt.Errorf("target scoped Fcrepo database password: %w", err)
+	}
+	if err := ensureComposeServiceSecret(composePath, fcrepoDatabaseInitServiceName, "DB_ROOT_PASSWORD"); err != nil {
+		return fmt.Errorf("mount root password for one-shot Fcrepo database initialization: %w", err)
+	}
+	if err := ensureComposeServiceSecret(composePath, fcrepoDatabaseInitServiceName, "FCREPO_DB_PASSWORD"); err != nil {
+		return fmt.Errorf("mount scoped password for one-shot Fcrepo database initialization: %w", err)
+	}
+	if err := ensureComposeServiceSecretTarget(composePath, fcrepoDatabaseInitServiceName, "FCREPO_DB_PASSWORD", "DB_PASSWORD"); err != nil {
+		return fmt.Errorf("target scoped password for one-shot Fcrepo database initialization: %w", err)
+	}
+	if err := ensureComposeServiceDependency(composePath, "fcrepo", fcrepoDatabaseInitServiceName, "service_completed_successfully"); err != nil {
+		return fmt.Errorf("make Fcrepo wait for database initialization: %w", err)
+	}
+	if err := ensureComposeServiceDependency(composePath, fcrepoDatabaseInitServiceName, "mariadb", "service_healthy"); err != nil {
+		return fmt.Errorf("make Fcrepo database initialization wait for MariaDB: %w", err)
 	}
 	if err := restoreFcrepoTraefikRoute(projectDir); err != nil {
 		return err
@@ -1761,8 +1941,10 @@ func fcrepoRestoreServiceBlock(image, commonMerge string) string {
 ` + commonMerge + `    depends_on:
       activemq:
         condition: service_healthy
+      fcrepo-database-init:
+        condition: service_completed_successfully
     environment:
-      DB_BOOTSTRAP_ENABLED: "true"
+      DB_BOOTSTRAP_ENABLED: "false"
       DB_HOST: mariadb
       DB_PORT: 3306
       FCREPO_ALLOW_EXTERNAL_DEFAULT: http://default/
@@ -1770,7 +1952,6 @@ func fcrepoRestoreServiceBlock(image, commonMerge string) string {
       FCREPO_PERSISTENCE_TYPE: mysql
     image: ` + image + `
     secrets:
-      - source: DB_ROOT_PASSWORD
       - source: FCREPO_DB_PASSWORD
         target: DB_PASSWORD
       - source: TOMCAT_ADMIN_PASSWORD
@@ -1863,7 +2044,7 @@ func applyBlazegraphOff(projectDir, drupalRootfs string) error {
 }
 
 func updateComposeForFcrepoOff(composePath string) error {
-	if err := removeLegacyFcrepoDatabaseInitializer(composePath); err != nil {
+	if err := removeFcrepoDatabaseInitializer(composePath); err != nil {
 		return err
 	}
 	compose, err := corecomponent.LoadComposeFile(composePath)

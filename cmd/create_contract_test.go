@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	createpkg "github.com/libops/sitectl-isle/pkg/create"
 	"github.com/libops/sitectl/pkg/plugin"
 )
 
@@ -19,7 +20,7 @@ func TestCreateDefinitionUsesTemplateInitContract(t *testing.T) {
 	if !strings.Contains(spec.DockerComposeInit[2], `"$attempt" -ge 3`) {
 		t.Fatalf("create must tolerate transient certificate-tool download failures: %+v", spec.DockerComposeInit)
 	}
-	if len(spec.Images) != 1 || spec.Images[0].Service != "drupal" || spec.Images[0].Image != "libops/islandora:nginx-1.30.3-php84" || spec.Images[0].BuildPolicy != plugin.BuildPolicyAlways {
+	if len(spec.Images) != 1 || spec.Images[0].Service != "drupal" || spec.Images[0].Image != createpkg.DefaultDrupalBaseImageRef || spec.Images[0].BuildPolicy != plugin.BuildPolicyAlways {
 		t.Fatalf("the derived ISLE application image must always rebuild: %+v", spec.Images)
 	}
 	if len(spec.DockerComposeUp) != 1 || !strings.Contains(spec.DockerComposeUp[0], "--wait --wait-timeout 600") {

@@ -76,26 +76,10 @@ Enable Fedora only when this site requires a Fedora-backed Islandora repository.
 						Path:  ".",
 					},
 					{
-						Files: []string{"compose.yaml"},
-						Op:    OpDelete,
-						Path:  ".services.fcrepo-database-init",
-					},
-					{
 						Files:       []string{"compose.yaml"},
 						SourceFiles: []string{"compose.yaml"},
 						Op:          OpRestore,
 						Path:        ".services.fcrepo",
-					},
-					{
-						Files: []string{"compose.yaml"},
-						Op:    OpSet,
-						Path:  ".services.fcrepo.environment.DB_BOOTSTRAP_ENABLED",
-						Value: "true",
-					},
-					{
-						Files: []string{"compose.yaml"},
-						Op:    OpDelete,
-						Path:  ".services.fcrepo.depends_on.fcrepo-database-init",
 					},
 					{
 						Files:       []string{"compose.yaml"},

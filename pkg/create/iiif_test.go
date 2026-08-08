@@ -123,7 +123,7 @@ func TestApplyTripletLocalWithoutFcrepoOmitsFedoraDependencyAndMount(t *testing.
 
 	compose := readFileForIIIFTest(t, filepath.Join(projectDir, "compose.yaml"))
 	assertContainsIIIF(t, compose, "\n  triplet:\n")
-	if strings.Contains(compose, "source: fcrepo-data") || strings.Contains(compose, "subpath: home/data/ocfl-root") || strings.Contains(compose, "condition: service_healthy") {
+	if strings.Contains(compose, "source: fcrepo-data") || strings.Contains(compose, "subpath: home/data/ocfl-root") {
 		t.Fatalf("expected triplet without Fedora dependency or mount after fcrepo off, got:\n%s", compose)
 	}
 

@@ -26,5 +26,6 @@ func RegisterCommands(sdk *plugin.SDK) {
 	sdk.RegisterHealthcheckRunner(isleHealthcheckRunner{})
 	sdk.RegisterIngressRouteProvider(isleIngressRouteProvider{})
 	sdk.RegisterVerifyRunner(&isleVerifyRunner{})
+	sdk.AddCommand(recoveryCmd)
 	sdk.AddCommand(syncCmd)
 }

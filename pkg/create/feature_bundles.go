@@ -20,7 +20,7 @@ import (
 const (
 	FeatureBundleMergePDF   = "mergepdf"
 	FeatureBundleHOCRSearch = "hocr-search"
-	DefaultMergePDFImage    = "islandora/mergepdf:6.3.19"
+	DefaultMergePDFImage    = "islandora/mergepdf:6.3.19@sha256:69f391d2058463f815c87b6703a39e38f5e61bf27b15b305ebf4bda64268110c"
 
 	featureMutationSet         = "set"
 	featureMutationAppend      = "append"

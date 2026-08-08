@@ -605,6 +605,7 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	oldEnsure := createEnsureLocalContext
 	oldClone := createCloneTemplateRepo
 	oldApply := createApply
+	oldEnsureJWTKeyPair := createEnsureJWTKeyPair
 	oldBootstrap := createBootstrapCheckout
 	oldRunStartup := createRunStartup
 	oldSleep := createSleep
@@ -613,6 +614,7 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 		createEnsureLocalContext = oldEnsure
 		createCloneTemplateRepo = oldClone
 		createApply = oldApply
+		createEnsureJWTKeyPair = oldEnsureJWTKeyPair
 		createBootstrapCheckout = oldBootstrap
 		createRunStartup = oldRunStartup
 		createSleep = oldSleep
@@ -628,6 +630,14 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 		return os.MkdirAll(opts.ProjectDir, 0o755)
 	}
 	createApply = func(opts createpkg.Options) error { return nil }
+	var jwtKeyPairPrepared bool
+	createEnsureJWTKeyPair = func(ctx *config.Context) error {
+		jwtKeyPairPrepared = true
+		if ctx.ProjectDir != projectDir {
+			t.Fatalf("expected JWT keys prepared in %q, got %q", projectDir, ctx.ProjectDir)
+		}
+		return nil
+	}
 	var bootstrapped bool
 	createBootstrapCheckout = func(_ io.Writer, gotProjectDir string) error {
 		bootstrapped = true
@@ -640,6 +650,9 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	var ranStartup bool
 	createRunStartup = func(_ io.Writer, ctx *config.Context) error {
 		ranStartup = true
+		if !jwtKeyPairPrepared {
+			t.Fatal("expected JWT keypair to be prepared before startup")
+		}
 		if ctx.ProjectDir != projectDir {
 			t.Fatalf("expected startup in %q, got %q", projectDir, ctx.ProjectDir)
 		}
@@ -718,6 +731,7 @@ func TestRunCreateCommandWritesProgressToStderrDuringRPC(t *testing.T) {
 	oldEnsure := createEnsureLocalContext
 	oldClone := createCloneTemplateRepo
 	oldApply := createApply
+	oldEnsureJWTKeyPair := createEnsureJWTKeyPair
 	oldBootstrap := createBootstrapCheckout
 	oldRunStartup := createRunStartup
 	oldSleep := createSleep
@@ -726,6 +740,7 @@ func TestRunCreateCommandWritesProgressToStderrDuringRPC(t *testing.T) {
 		createEnsureLocalContext = oldEnsure
 		createCloneTemplateRepo = oldClone
 		createApply = oldApply
+		createEnsureJWTKeyPair = oldEnsureJWTKeyPair
 		createBootstrapCheckout = oldBootstrap
 		createRunStartup = oldRunStartup
 		createSleep = oldSleep
@@ -741,6 +756,7 @@ func TestRunCreateCommandWritesProgressToStderrDuringRPC(t *testing.T) {
 		return os.MkdirAll(opts.ProjectDir, 0o755)
 	}
 	createApply = func(opts createpkg.Options) error { return nil }
+	createEnsureJWTKeyPair = func(_ *config.Context) error { return nil }
 	createBootstrapCheckout = func(out io.Writer, gotProjectDir string) error {
 		if gotProjectDir != projectDir {
 			t.Fatalf("expected bootstrap in %q, got %q", projectDir, gotProjectDir)
@@ -847,6 +863,7 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	oldEnsure := createEnsureLocalContext
 	oldClone := createCloneTemplateRepo
 	oldApply := createApply
+	oldEnsureJWTKeyPair := createEnsureJWTKeyPair
 	oldBootstrap := createBootstrapCheckout
 	oldRunStartup := createRunStartup
 	oldSleep := createSleep
@@ -855,6 +872,7 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 		createEnsureLocalContext = oldEnsure
 		createCloneTemplateRepo = oldClone
 		createApply = oldApply
+		createEnsureJWTKeyPair = oldEnsureJWTKeyPair
 		createBootstrapCheckout = oldBootstrap
 		createRunStartup = oldRunStartup
 		createSleep = oldSleep
@@ -870,6 +888,11 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 		return os.MkdirAll(opts.ProjectDir, 0o755)
 	}
 	createApply = func(opts createpkg.Options) error { return nil }
+	var jwtKeyPairPrepared bool
+	createEnsureJWTKeyPair = func(_ *config.Context) error {
+		jwtKeyPairPrepared = true
+		return nil
+	}
 	var bootstrapped bool
 	createBootstrapCheckout = func(_ io.Writer, gotProjectDir string) error {
 		bootstrapped = true
@@ -907,6 +930,9 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	}
 	if !bootstrapped {
 		t.Fatal("expected bootstrap to run for a fresh clone")
+	}
+	if !jwtKeyPairPrepared {
+		t.Fatal("expected setup-only create to prepare the JWT keypair")
 	}
 
 	rendered := out.String()

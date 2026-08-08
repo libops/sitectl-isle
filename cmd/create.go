@@ -37,6 +37,7 @@ var (
 		return commandSDK.CloneTemplateRepo(opts)
 	}
 	createEnsureLocalContext = ensureCreateContext
+	createEnsureJWTKeyPair   = createpkg.EnsureJWTKeyPair
 	createApply              = createpkg.Apply
 	createRunProjectCommand  = defaultRunProjectCommand
 	createBootstrapCheckout  = bootstrapCheckout
@@ -104,7 +105,7 @@ func createDefinition() plugin.CreateSpec {
 			"docker compose build",
 		},
 		Images: []plugin.ComposeImageSpec{
-			{Service: "drupal", Image: "libops/islandora:nginx-1.30.3-php84", BuildPolicy: plugin.BuildPolicyAlways},
+			{Service: "drupal", Image: createpkg.DefaultDrupalBaseImageRef, BuildPolicy: plugin.BuildPolicyAlways},
 		},
 		DockerComposeInit: []string{
 			"if [ ! -f .env ]; then cp sample.env .env; fi; if ! grep -q '^DRUPAL_HEALTHCHECK_START_PERIOD=' .env; then printf '\\nDRUPAL_HEALTHCHECK_START_PERIOD=5m\\n' >> .env; fi",
@@ -339,6 +340,10 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 			printCreateFailureSummary(summary, req)
 			return err
 		}
+	}
+	if err := createEnsureJWTKeyPair(ctx); err != nil {
+		printCreateFailureSummary(summary, req)
+		return fmt.Errorf("prepare Islandora JWT keys: %w", err)
 	}
 	if err := applyCreateIngress(ctx, req); err != nil {
 		printCreateFailureSummary(summary, req)
