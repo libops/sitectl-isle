@@ -104,7 +104,7 @@ func createDefinition() plugin.CreateSpec {
 			"docker compose build",
 		},
 		Images: []plugin.ComposeImageSpec{
-			{Service: "drupal", Image: "libops/islandora:nginx-1.30.3-php84", BuildPolicy: plugin.BuildPolicyAlways},
+			{Service: "drupal", Image: createpkg.DefaultDrupalBaseImageRef, BuildPolicy: plugin.BuildPolicyAlways},
 		},
 		DockerComposeInit: []string{
 			"if [ ! -f .env ]; then cp sample.env .env; fi; if ! grep -q '^DRUPAL_HEALTHCHECK_START_PERIOD=' .env; then printf '\\nDRUPAL_HEALTHCHECK_START_PERIOD=5m\\n' >> .env; fi",

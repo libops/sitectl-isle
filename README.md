@@ -43,7 +43,7 @@ sitectl validate
 Use [`sitectl image`](https://sitectl.libops.io/commands/image) for local image or build-arg overrides:
 
 ```bash
-sitectl image set --tag drupal=nginx-1.30.3-php84 --tag solr=9
+sitectl image set --tag drupal=nginx-1.30.4-php84 --tag solr=9
 ```
 
 Use [`sitectl set`](https://sitectl.libops.io/commands/set) for component changes. It updates the component-owned project files immediately:
@@ -53,6 +53,16 @@ sitectl set bot-mitigation on
 ```
 
 Use [`sitectl converge`](https://sitectl.libops.io/commands/converge) later to inspect and repair component drift after manual edits or upstream updates.
+
+Create and validate a checksummed full-state recovery bundle with the application-owned recovery workflow:
+
+```bash
+sitectl isle recovery plan
+sitectl isle recovery backup --output /var/backups/isle/site-$(date +%F).tar.gz
+sitectl isle recovery validate --input /var/backups/isle/site-2026-08-07.tar.gz
+```
+
+Bundles include authoritative Drupal and optional Fcrepo state. They exclude secrets and rebuildable indexes, queues, caches, and derivatives. Store bundles encrypted and off-host, restore secrets from Vault, and prove customer RPO/RTO by regularly restoring into a disposable context and running `sitectl healthcheck` plus `sitectl verify --strict`.
 
 See the [ISLE plugin docs](https://sitectl.libops.io/plugins/isle) for Fedora, Blazegraph, IIIF, derivatives, sync, migration, cache, TLS, and bot mitigation details.
 

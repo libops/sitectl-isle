@@ -43,7 +43,7 @@ services:
 	for _, want := range []string{
 		"  mergepdf:\n",
 		"    <<: *common\n",
-		"    image: islandora/mergepdf:6.3.19\n",
+		"    image: " + DefaultMergePDFImage + "\n",
 		"      - source: JWT_PUBLIC_KEY\n",
 	} {
 		if !strings.Contains(compose, want) {
@@ -103,7 +103,7 @@ services:
 	if _, err := os.Stat(filepath.Join(projectDir, ".env")); !os.IsNotExist(err) {
 		t.Fatalf("apply unexpectedly wrote a Compose environment file: %v", err)
 	}
-	if compose := readFeatureTestFile(t, filepath.Join(projectDir, "compose.yaml")); !strings.Contains(compose, "image: islandora/mergepdf:6.3.19") || strings.Contains(compose, "libops/mergepdf") || strings.Contains(compose, "DOWNSTREAM_DRIFT") {
+	if compose := readFeatureTestFile(t, filepath.Join(projectDir, "compose.yaml")); !strings.Contains(compose, "image: "+DefaultMergePDFImage) || strings.Contains(compose, "libops/mergepdf") || strings.Contains(compose, "DOWNSTREAM_DRIFT") {
 		t.Fatalf("expected drifted service to converge to the exact upstream mergepdf contract:\n%s", compose)
 	}
 

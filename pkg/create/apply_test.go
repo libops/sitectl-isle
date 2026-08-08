@@ -249,7 +249,7 @@ volumes: {}
 	if !ok {
 		t.Fatal("expected fcrepo service block")
 	}
-	for _, want := range []string{`DB_BOOTSTRAP_ENABLED: "true"`, "source: DB_ROOT_PASSWORD", "source: FCREPO_DB_PASSWORD", "target: DB_PASSWORD", "source: TOMCAT_ADMIN_PASSWORD", "source: JWT_ADMIN_TOKEN", "source: JWT_PUBLIC_KEY"} {
+	for _, want := range []string{`DB_BOOTSTRAP_ENABLED: "false"`, "source: FCREPO_DB_PASSWORD", "target: DB_PASSWORD", "source: TOMCAT_ADMIN_PASSWORD", "source: JWT_ADMIN_TOKEN", "source: JWT_PUBLIC_KEY", "fcrepo-database-init:", "condition: service_completed_successfully"} {
 		if !strings.Contains(fcrepoBlock, want) {
 			t.Fatalf("fcrepo block missing %q:\n%s", want, fcrepoBlock)
 		}
@@ -257,8 +257,17 @@ volumes: {}
 	if _, ok := parsed.SectionEntryBlock("secrets", "TOMCAT_ADMIN_PASSWORD"); !ok {
 		t.Fatal("expected TOMCAT_ADMIN_PASSWORD top-level secret")
 	}
-	if parsed.HasService(legacyFcrepoDatabaseInit) {
-		t.Fatal("expected legacy fcrepo database initializer removed")
+	if !parsed.HasService(fcrepoDatabaseInitServiceName) {
+		t.Fatal("expected one-shot fcrepo database initializer")
+	}
+	if strings.Contains(fcrepoBlock, "source: DB_ROOT_PASSWORD") {
+		t.Fatalf("long-running fcrepo service retained DB_ROOT_PASSWORD:\n%s", fcrepoBlock)
+	}
+	fcrepoInitBlock, _ := parsed.ServiceBlock(fcrepoDatabaseInitServiceName)
+	for _, want := range []string{"source: DB_ROOT_PASSWORD", "source: FCREPO_DB_PASSWORD", "target: DB_PASSWORD", "condition: service_healthy"} {
+		if !strings.Contains(fcrepoInitBlock, want) {
+			t.Fatalf("fcrepo initializer missing %q:\n%s", want, fcrepoInitBlock)
+		}
 	}
 	drupalBlock, ok := parsed.ServiceBlock("drupal")
 	if !ok {
@@ -948,7 +957,7 @@ volumes:
 	if !strings.Contains(compose, "\n  triplet:\n") {
 		t.Fatalf("expected triplet service, got:\n%s", compose)
 	}
-	for _, absent := range []string{"\n  fcrepo:\n", "\n  milliner:\n", "\n  blazegraph:\n", "fcrepo-data", "blazegraph-data", "condition: service_healthy", "source: fcrepo-data"} {
+	for _, absent := range []string{"\n  fcrepo:\n", "\n  milliner:\n", "\n  blazegraph:\n", "fcrepo-data", "blazegraph-data", "source: fcrepo-data"} {
 		if strings.Contains(compose, absent) {
 			t.Fatalf("expected %q removed, got:\n%s", absent, compose)
 		}
@@ -1146,13 +1155,16 @@ func TestApplyFcrepoOnNoOp(t *testing.T) {
 	if !ok {
 		t.Fatal("expected existing fcrepo service preserved")
 	}
-	for _, want := range []string{`DB_BOOTSTRAP_ENABLED: "true"`, "source: DB_ROOT_PASSWORD"} {
+	for _, want := range []string{`DB_BOOTSTRAP_ENABLED: "false"`, "source: FCREPO_DB_PASSWORD", "fcrepo-database-init:"} {
 		if !strings.Contains(fcrepoBlock, want) {
 			t.Fatalf("existing fcrepo block missing %q:\n%s", want, fcrepoBlock)
 		}
 	}
-	if parsed.HasService(legacyFcrepoDatabaseInit) || strings.Contains(fcrepoBlock, legacyFcrepoDatabaseInit) {
-		t.Fatalf("expected legacy fcrepo initializer and dependency removed:\n%s", rendered)
+	if !parsed.HasService(fcrepoDatabaseInitServiceName) || !strings.Contains(fcrepoBlock, fcrepoDatabaseInitServiceName) {
+		t.Fatalf("expected one-shot fcrepo initializer and dependency:\n%s", rendered)
+	}
+	if strings.Contains(fcrepoBlock, "source: DB_ROOT_PASSWORD") {
+		t.Fatalf("long-running fcrepo service retained root credentials:\n%s", fcrepoBlock)
 	}
 }
 
@@ -1270,6 +1282,16 @@ RUN --mount=type=cache,id=custom-drupal-composer-${TARGETARCH},sharing=locked,ta
 	dockerignore := readTestFile(t, filepath.Join(projectDir, ".dockerignore"))
 	if !strings.Contains(dockerignore, "web/core") || !strings.Contains(dockerignore, "drupal/rootfs/var/www/drupal") {
 		t.Fatalf("expected git-root .dockerignore, got:\n%s", dockerignore)
+	}
+}
+
+func TestDockerfileHeaderUsesDigestPinnedDefaultBase(t *testing.T) {
+	header := dockerfileHeader("")
+	if !strings.Contains(header, "ARG BASE_IMAGE="+DefaultDrupalBaseImageRef) {
+		t.Fatalf("fallback Dockerfile does not use the shared base contract:\n%s", header)
+	}
+	if !strings.Contains(DefaultDrupalBaseImageRef, "@sha256:") {
+		t.Fatalf("default base image is not digest pinned: %s", DefaultDrupalBaseImageRef)
 	}
 }
 
@@ -1913,8 +1935,8 @@ func assertApplicationDatabaseBootstrap(t *testing.T, projectDir string) {
 	if err != nil {
 		t.Fatalf("LoadComposeFile() error = %v", err)
 	}
-	if compose.HasService(databaseInitServiceName) {
-		t.Fatal("expected standalone database initializer removed")
+	if !compose.HasService(databaseInitServiceName) {
+		t.Fatal("expected one-shot database initializer")
 	}
 	drupalBlock, ok := compose.ServiceBlock("drupal")
 	if !ok {
@@ -1933,11 +1955,17 @@ func assertApplicationDatabaseBootstrap(t *testing.T, projectDir string) {
 	if err != nil {
 		t.Fatalf("composeServiceHasSecret() error = %v", err)
 	}
-	if !hasRootSecret {
-		t.Fatalf("drupal block missing DB_ROOT_PASSWORD secret:\n%s", drupalBlock)
+	if hasRootSecret {
+		t.Fatalf("drupal block retained DB_ROOT_PASSWORD secret:\n%s", drupalBlock)
 	}
-	if strings.Contains(drupalBlock, databaseInitServiceName+":") {
-		t.Fatalf("drupal block retains standalone database initializer dependency:\n%s", drupalBlock)
+	if !strings.Contains(drupalBlock, databaseInitServiceName+":") || !strings.Contains(drupalBlock, "condition: service_completed_successfully") {
+		t.Fatalf("drupal block does not wait for one-shot database initialization:\n%s", drupalBlock)
+	}
+	initializerBlock, _ := compose.ServiceBlock(databaseInitServiceName)
+	for _, want := range []string{"source: DB_ROOT_PASSWORD", "source: DRUPAL_DEFAULT_DB_PASSWORD", "target: DB_PASSWORD", `DB_NAME: "drupal_default"`, `DB_USER: "drupal_default"`, "condition: service_healthy"} {
+		if !strings.Contains(initializerBlock, want) {
+			t.Fatalf("database initializer missing %q:\n%s", want, initializerBlock)
+		}
 	}
 }
 

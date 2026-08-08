@@ -29,6 +29,44 @@ func Register(s *plugin.SDK) {
 		Name:        "fcrepo-db-import",
 		Description: "Import an Fcrepo SQL dump compressed as gzip",
 	}, &fcrepoDBImportJob{})
+	sdk.RegisterContextJob(job.Spec{
+		Name:        "recovery-backup",
+		Description: "Create a checksummed full-state ISLE recovery bundle",
+	}, &recoveryBackupJob{})
+	sdk.RegisterContextJob(job.Spec{
+		Name:        "recovery-restore",
+		Description: "Restore an ISLE full-state recovery bundle",
+	}, &recoveryRestoreJob{})
+}
+
+type recoveryBackupJob struct{ Output string }
+
+func (j *recoveryBackupJob) BindFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&j.Output, "output", "", "Absolute recovery bundle path on the context host")
+}
+
+func (j *recoveryBackupJob) Run(cmd *cobra.Command, ctx *config.Context) error {
+	if strings.TrimSpace(j.Output) == "" {
+		return fmt.Errorf("--output is required")
+	}
+	return RunRecoveryBackup(cmd, ctx, j.Output)
+}
+
+type recoveryRestoreJob struct {
+	Input string
+	Yolo  bool
+}
+
+func (j *recoveryRestoreJob) BindFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&j.Input, "input", "", "Absolute recovery bundle path on the context host")
+	cmd.Flags().BoolVar(&j.Yolo, "yolo", false, "Skip confirmation before destructive authoritative-state replacement")
+}
+
+func (j *recoveryRestoreJob) Run(cmd *cobra.Command, ctx *config.Context) error {
+	if strings.TrimSpace(j.Input) == "" {
+		return fmt.Errorf("--input is required")
+	}
+	return RunRecoveryRestore(cmd, ctx, j.Input, j.Yolo)
 }
 
 type fcrepoDBBackupJob struct {
