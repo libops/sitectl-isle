@@ -401,6 +401,12 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) (returnErr error) {
 	if err := validateISLECreateTarget(req); err != nil {
 		return err
 	}
+	if cmd == nil {
+		return fmt.Errorf("create command is nil")
+	}
+	if cmd.Context() == nil {
+		cmd.SetContext(context.Background())
+	}
 	if commandSDK == nil {
 		return fmt.Errorf("plugin sdk is not initialized")
 	}
