@@ -62,7 +62,7 @@ func runComponentSetWithOptions(cmd *cobra.Command, name, stateValue string, opt
 	if err != nil {
 		return err
 	}
-	if err := normalizeComposeProjectFilename(ctx); err != nil {
+	if err := normalizeComposeProjectFilename(cmd.Context(), ctx); err != nil {
 		return err
 	}
 	if legacyCompose {

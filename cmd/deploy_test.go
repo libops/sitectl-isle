@@ -262,7 +262,7 @@ func assertActionableRolloutContractError(t *testing.T, err error, detail string
 		"before services were stopped",
 		detail,
 		"https://github.com/libops/isle",
-		"v1.3.0",
+		"v1.3.1",
 		"then rerun sitectl deploy",
 	} {
 		if !strings.Contains(err.Error(), want) {

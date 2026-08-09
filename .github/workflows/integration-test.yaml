@@ -36,14 +36,14 @@ jobs:
             iiif_implementation: triplet
             iiif_topology: disabled
             bot_mitigation_state: on
-    uses: libops/.github/.github/workflows/sitectl-create-smoke-test.yaml@5f44a8c8d157bb7e5cf6d9e1c98847a604e87455 # main
+    uses: libops/.github/.github/workflows/sitectl-create-smoke-test.yaml@ac5db178c5335b456c20f28aa9f447d93c572aa9 # main
     with:
       plugin: isle
       create-definition: default
       images: alpaca=islandora/alpaca:6.3.19@sha256:b7d61c14715376b78c0c01647fef2dc4597c3482e94006e9ab6080e963ca5c61
       create-args: >-
         --template-repo https://github.com/libops/isle
-        --template-branch v1.3.0
+        --template-branch v1.3.1
         --fcrepo ${{ matrix.fcrepo_state }}
         --blazegraph ${{ matrix.blazegraph_state }}
         --isle-file-system-uri ${{ matrix.isle_file_system_uri }}
@@ -68,7 +68,7 @@ jobs:
       project-path: isle-site-template
       local-plugin-path: sitectl-isle
       packages: sitectl sitectl-drupal
-      package-versions: sitectl=1.8.2 sitectl-drupal=1.4.1
+      package-versions: sitectl=1.9.0 sitectl-drupal=1.4.1
       allow-unversioned-packages: false
       expected-template-lock-revision: v1.0.0
       timeout-minutes: 120
