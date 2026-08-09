@@ -769,7 +769,7 @@ func TestRunCreateCommandAcceptsCanonicalNonGitExistingCheckoutWithoutNormalizat
 
 	cmd := &cobra.Command{Use: "create"}
 	cmd.SetOut(io.Discard)
-	err := runCreateCommand(cmd, createRequest{
+	err = runCreateCommand(cmd, createRequest{
 		ComposeCreateRequest: plugin.ComposeCreateRequest{
 			TargetType:     config.ContextLocal,
 			CheckoutSource: plugin.CheckoutSourceExisting,
