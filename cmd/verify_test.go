@@ -78,7 +78,7 @@ URL="${URI_SCHEME}://${DOMAIN}"
 	if err == nil {
 		t.Fatal("expected legacy contract failure")
 	}
-	for _, want := range []string{"legacy runtime contract", "https://github.com/libops/isle", "v1.3.0"} {
+	for _, want := range []string{"legacy runtime contract", "https://github.com/libops/isle", "v1.3.1"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error to contain %q, got %v", want, err)
 		}
