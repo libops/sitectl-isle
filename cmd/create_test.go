@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -463,79 +464,350 @@ func TestCheckPrereqsFailsEarly(t *testing.T) {
 	}
 }
 
-func TestEnsureClonedCheckoutClonesEmptyDirectory(t *testing.T) {
-	tmpDir := t.TempDir()
-	projectDir := filepath.Join(tmpDir, "site")
-
-	oldClone := createCloneTemplateRepo
+func TestCreateRunnerRejectsRemoteBeforeLocalPrerequisites(t *testing.T) {
+	oldResolve := createResolveRequest
+	oldPrereqs := createCheckPrereqs
 	t.Cleanup(func() {
-		createCloneTemplateRepo = oldClone
+		createResolveRequest = oldResolve
+		createCheckPrereqs = oldPrereqs
 	})
 
-	var cloneInvoked bool
-	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
-		cloneInvoked = true
-		if opts.TemplateRepo != defaultTemplateRepo {
-			t.Fatalf("expected repo %q, got %q", defaultTemplateRepo, opts.TemplateRepo)
-		}
-		if opts.TemplateBranch != defaultTemplateBranch {
-			t.Fatalf("expected branch %q, got %q", defaultTemplateBranch, opts.TemplateBranch)
-		}
-		if opts.ProjectDir != projectDir {
-			t.Fatalf("expected dir %q, got %q", projectDir, opts.ProjectDir)
-		}
-		if !opts.Quiet {
-			t.Fatal("expected clone to run in quiet mode")
-		}
-		return os.MkdirAll(opts.ProjectDir, 0o755)
+	createResolveRequest = func(*cobra.Command) (createRequest, error) {
+		return createRequest{ComposeCreateRequest: plugin.ComposeCreateRequest{TargetType: config.ContextRemote}}, nil
 	}
-
-	cloned, err := ensureClonedCheckout(io.Discard, createRequest{ComposeCreateRequest: plugin.ComposeCreateRequest{
-		TemplateRepo:   defaultTemplateRepo,
-		TemplateBranch: defaultTemplateBranch,
-		Path:           projectDir,
-	}})
-	if err != nil {
-		t.Fatalf("ensureClonedCheckout() error = %v", err)
-	}
-	if !cloned {
-		t.Fatal("expected checkout to be reported as cloned")
-	}
-	if !cloneInvoked {
-		t.Fatal("expected clone to run")
-	}
-}
-
-func TestEnsureClonedCheckoutSkipsNonEmptyDirectory(t *testing.T) {
-	tmpDir := t.TempDir()
-	projectDir := filepath.Join(tmpDir, "site")
-	if err := os.MkdirAll(projectDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll(projectDir) error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte("services: {}\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile(compose.yaml) error = %v", err)
-	}
-
-	oldClone := createCloneTemplateRepo
-	t.Cleanup(func() {
-		createCloneTemplateRepo = oldClone
-	})
-
-	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
-		t.Fatal("did not expect clone to run")
+	createCheckPrereqs = func(io.Writer) error {
+		t.Fatal("remote create ran local Docker/buildx prerequisites")
 		return nil
 	}
 
-	cloned, err := ensureClonedCheckout(io.Discard, createRequest{ComposeCreateRequest: plugin.ComposeCreateRequest{
-		TemplateRepo:   defaultTemplateRepo,
-		TemplateBranch: defaultTemplateBranch,
-		Path:           projectDir,
-	}})
-	if err != nil {
-		t.Fatalf("ensureClonedCheckout() error = %v", err)
+	cmd := &cobra.Command{Use: "create", Short: "Create ISLE"}
+	cmd.SetOut(io.Discard)
+	err := (createRunner{}).Run(cmd)
+	if err == nil || !strings.Contains(err.Error(), "Cloud Compose") || !strings.Contains(err.Error(), "fenced remote customization hooks") {
+		t.Fatalf("createRunner.Run() error = %v, want remote provisioning guidance", err)
 	}
-	if cloned {
-		t.Fatal("did not expect checkout to be reported as cloned")
+}
+
+func TestRunCreateCommandRejectsRemoteBeforeContextMutation(t *testing.T) {
+	oldEnsure := createEnsureLocalContext
+	t.Cleanup(func() { createEnsureLocalContext = oldEnsure })
+	createEnsureLocalContext = func(*plugin.SDK, createRequest) (*config.Context, error) {
+		t.Fatal("remote create attempted to create or update a sitectl context")
+		return nil, nil
+	}
+
+	cmd := &cobra.Command{Use: "create"}
+	cmd.SetOut(io.Discard)
+	err := runCreateCommand(cmd, createRequest{ComposeCreateRequest: plugin.ComposeCreateRequest{TargetType: config.ContextRemote}})
+	if err == nil || !strings.Contains(err.Error(), "remote ISLE create is not supported") {
+		t.Fatalf("runCreateCommand() error = %v, want remote create rejection", err)
+	}
+}
+
+func writeCurrentExistingISLECheckout(t *testing.T, projectDir string) {
+	t.Helper()
+	files := map[string]string{
+		"compose.yaml":                            "services:\n  alpaca: {}\n  drupal:\n    volumes:\n      - ./scripts/drupal-media-storage-state.php:/var/www/drupal/drupal-media-storage-state.php:ro\n      - ./scripts/drupal-wait-installed.sh:/usr/local/lib/sitectl/drupal-wait-installed.sh:ro\n  init:\n    volumes:\n      - ./compose.yaml:/work/compose.yaml:ro\n      - ./scripts/ensure-islandora-jwt-keypair.sh:/usr/local/lib/sitectl/ensure-islandora-jwt-keypair.sh:ro\n      - ./scripts/initialize-compose.sh:/usr/local/lib/sitectl/initialize-compose.sh:ro\n",
+		".libops/template-contract.yaml":          "apiVersion: sitectl.libops.io/v1alpha1\nkind: TemplateContract\nschema: 1\nspec:\n  componentDefaults:\n    revision: v1.0.0\n",
+		"conf/triplet/config.yaml":                "services: {}\n",
+		"scripts/drupal-media-storage-state.php":  "<?php\n",
+		"scripts/drupal-wait-installed.sh":        "#!/usr/bin/env bash\n",
+		"scripts/ensure-islandora-jwt-keypair.sh": "#!/usr/bin/env bash\n",
+		"scripts/initialize-compose.sh":           "#!/usr/bin/env bash\n",
+		"scripts/sitectl-prepare-build.sh":        "#!/usr/bin/env bash\n",
+		"scripts/sitectl-prepare-init.sh":         "#!/usr/bin/env bash\n",
+		"scripts/sitectl-rollout-preflight.sh":    "#!/usr/bin/env bash\n",
+	}
+	for name, contents := range files {
+		filename := filepath.Join(projectDir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(filename), 0o750); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", filepath.Dir(filename), err)
+		}
+		if err := os.WriteFile(filename, []byte(contents), 0o640); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", filename, err)
+		}
+	}
+}
+
+func currentExistingISLEComposeModel(projectDir string) existingISLEComposeModel {
+	readOnlyBind := func(source, target string) existingISLEComposeVolume {
+		return existingISLEComposeVolume{
+			Type:     "bind",
+			Source:   filepath.Join(projectDir, filepath.FromSlash(source)),
+			Target:   target,
+			ReadOnly: true,
+		}
+	}
+	return existingISLEComposeModel{Services: map[string]existingISLEComposeService{
+		"alpaca": {},
+		"drupal": {Volumes: []existingISLEComposeVolume{
+			readOnlyBind("scripts/drupal-media-storage-state.php", "/var/www/drupal/drupal-media-storage-state.php"),
+			readOnlyBind("scripts/drupal-wait-installed.sh", "/usr/local/lib/sitectl/drupal-wait-installed.sh"),
+		}},
+		"init": {Volumes: []existingISLEComposeVolume{
+			readOnlyBind("compose.yaml", "/work/compose.yaml"),
+			readOnlyBind("scripts/ensure-islandora-jwt-keypair.sh", "/usr/local/lib/sitectl/ensure-islandora-jwt-keypair.sh"),
+			readOnlyBind("scripts/initialize-compose.sh", "/usr/local/lib/sitectl/initialize-compose.sh"),
+		}},
+	}}
+}
+
+func existingISLEComposeModelJSON(t *testing.T, model existingISLEComposeModel) string {
+	t.Helper()
+	data, err := json.Marshal(model)
+	if err != nil {
+		t.Fatalf("Marshal(existing ISLE Compose model) error = %v", err)
+	}
+	return string(data)
+}
+
+func TestValidateExistingISLECheckoutRejectsUnrelatedComposeProject(t *testing.T) {
+	projectDir := t.TempDir()
+	writeCurrentExistingISLECheckout(t, projectDir)
+	oldRunArgv := createRunComposeArgv
+	t.Cleanup(func() { createRunComposeArgv = oldRunArgv })
+	createRunComposeArgv = composeConfigRunnerForTest(t, config.ContextLocal, `{"services":{"wordpress":{}}}`)
+	ctx := &config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal}
+	err := validateExistingISLECheckout(context.Background(), ctx)
+	if err == nil || !strings.Contains(err.Error(), "not an existing ISLE checkout") {
+		t.Fatalf("validateExistingISLECheckout() error = %v, want existing-checkout rejection", err)
+	}
+}
+
+func TestValidateExistingISLECheckoutAcceptsISLEComposeProject(t *testing.T) {
+	projectDir := t.TempDir()
+	writeCurrentExistingISLECheckout(t, projectDir)
+	oldRunArgv := createRunComposeArgv
+	t.Cleanup(func() { createRunComposeArgv = oldRunArgv })
+	createRunComposeArgv = composeConfigRunnerForTest(t, config.ContextLocal, existingISLEComposeModelJSON(t, currentExistingISLEComposeModel(projectDir)))
+	ctx := &config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal}
+	err := validateExistingISLECheckout(context.Background(), ctx)
+	if err != nil {
+		t.Fatalf("validateExistingISLECheckout() error = %v", err)
+	}
+}
+
+func TestValidateExistingISLECheckoutRejectsMissingInitService(t *testing.T) {
+	projectDir := t.TempDir()
+	writeCurrentExistingISLECheckout(t, projectDir)
+	model := currentExistingISLEComposeModel(projectDir)
+	delete(model.Services, "init")
+	oldRunArgv := createRunComposeArgv
+	t.Cleanup(func() { createRunComposeArgv = oldRunArgv })
+	createRunComposeArgv = composeConfigRunnerForTest(t, config.ContextLocal, existingISLEComposeModelJSON(t, model))
+	err := validateExistingISLECheckout(context.Background(), &config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal})
+	if err == nil || !strings.Contains(err.Error(), "init") || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("validateExistingISLECheckout() error = %v, want init-service rejection", err)
+	}
+}
+
+func TestValidateExistingISLECheckoutRejectsWritableLifecycleBind(t *testing.T) {
+	projectDir := t.TempDir()
+	writeCurrentExistingISLECheckout(t, projectDir)
+	model := currentExistingISLEComposeModel(projectDir)
+	drupal := model.Services["drupal"]
+	drupal.Volumes[1].ReadOnly = false
+	model.Services["drupal"] = drupal
+	oldRunArgv := createRunComposeArgv
+	t.Cleanup(func() { createRunComposeArgv = oldRunArgv })
+	createRunComposeArgv = composeConfigRunnerForTest(t, config.ContextLocal, existingISLEComposeModelJSON(t, model))
+	err := validateExistingISLECheckout(context.Background(), &config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal})
+	if err == nil || !strings.Contains(err.Error(), "drupal-wait-installed.sh") || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("validateExistingISLECheckout() error = %v, want read-only lifecycle-bind rejection", err)
+	}
+}
+
+func TestValidateExistingISLECheckoutRejectsLegacyComposeBeforeInspection(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "docker-compose.yml"), []byte("services:\n  drupal: {}\n  alpaca: {}\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	oldRunArgv := createRunComposeArgv
+	t.Cleanup(func() { createRunComposeArgv = oldRunArgv })
+	createRunComposeArgv = func(context.Context, *config.Context, string, io.Writer, io.Writer, []string) error {
+		t.Fatal("legacy checkout reached Docker Compose inspection")
+		return nil
+	}
+	err := validateExistingISLECheckout(context.Background(), &config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal})
+	if err == nil || !strings.Contains(err.Error(), "legacy Compose file") || !strings.Contains(err.Error(), "will not rename") {
+		t.Fatalf("validateExistingISLECheckout() error = %v, want explicit legacy migration guidance", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(projectDir, "docker-compose.yml")); statErr != nil {
+		t.Fatalf("legacy checkout was mutated during rejection: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(projectDir, "compose.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("legacy checkout was silently normalized: %v", statErr)
+	}
+}
+
+func TestValidateExistingISLECheckoutRejectsMissingLifecycleContractBeforeInspection(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "compose.yaml"), []byte("services:\n  drupal: {}\n  alpaca: {}\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	oldRunArgv := createRunComposeArgv
+	t.Cleanup(func() { createRunComposeArgv = oldRunArgv })
+	createRunComposeArgv = func(context.Context, *config.Context, string, io.Writer, io.Writer, []string) error {
+		t.Fatal("incomplete checkout reached Docker Compose inspection")
+		return nil
+	}
+	err := validateExistingISLECheckout(context.Background(), &config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal})
+	if err == nil || !strings.Contains(err.Error(), existingISLETemplateContractPath) || !strings.Contains(err.Error(), "v1.3.1") {
+		t.Fatalf("validateExistingISLECheckout() error = %v, want lifecycle-contract migration guidance", err)
+	}
+}
+
+func TestValidateExistingISLECheckoutRejectsUnsupportedTemplateContractBeforeInspection(t *testing.T) {
+	projectDir := t.TempDir()
+	writeCurrentExistingISLECheckout(t, projectDir)
+	contractPath := filepath.Join(projectDir, filepath.FromSlash(existingISLETemplateContractPath))
+	if err := os.WriteFile(contractPath, []byte("apiVersion: sitectl.libops.io/v1alpha1\nkind: TemplateContract\nschema: 1\nspec:\n  componentDefaults:\n    revision: legacy\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	oldRunArgv := createRunComposeArgv
+	t.Cleanup(func() { createRunComposeArgv = oldRunArgv })
+	createRunComposeArgv = func(context.Context, *config.Context, string, io.Writer, io.Writer, []string) error {
+		t.Fatal("unsupported contract reached Docker Compose inspection")
+		return nil
+	}
+	err := validateExistingISLECheckout(context.Background(), &config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal})
+	if err == nil || !strings.Contains(err.Error(), "unsupported") || !strings.Contains(err.Error(), "v1.3.1") {
+		t.Fatalf("validateExistingISLECheckout() error = %v, want contract migration guidance", err)
+	}
+}
+
+func TestValidateExistingISLECheckoutRejectsOversizedEffectiveComposeModel(t *testing.T) {
+	projectDir := t.TempDir()
+	writeCurrentExistingISLECheckout(t, projectDir)
+	oldRunArgv := createRunComposeArgv
+	t.Cleanup(func() { createRunComposeArgv = oldRunArgv })
+	createRunComposeArgv = composeConfigRunnerForTest(t, config.ContextLocal, `{"services":{"drupal":{},"alpaca":{}},"padding":"0123456789"}`)
+	ctx := &config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal}
+	err := validateExistingISLECheckoutLimit(context.Background(), ctx, 32)
+	if err == nil || !strings.Contains(err.Error(), "exceeds 32 bytes") {
+		t.Fatalf("validateExistingISLECheckoutLimit() error = %v, want bounded-output rejection", err)
+	}
+}
+
+func TestValidateExistingISLECheckoutUsesEffectiveComposeServices(t *testing.T) {
+	projectDir := t.TempDir()
+	writeCurrentExistingISLECheckout(t, projectDir)
+	oldRunArgv := createRunComposeArgv
+	t.Cleanup(func() { createRunComposeArgv = oldRunArgv })
+	model := currentExistingISLEComposeModel(projectDir)
+	model.Services["mariadb"] = existingISLEComposeService{}
+	createRunComposeArgv = composeConfigRunnerForTest(t, config.ContextLocal, existingISLEComposeModelJSON(t, model))
+	ctx := &config.Context{DockerHostType: config.ContextLocal, ProjectDir: projectDir}
+	if err := validateExistingISLECheckout(context.Background(), ctx); err != nil {
+		t.Fatalf("validateExistingISLECheckout() error = %v", err)
+	}
+}
+
+func TestRunCreateCommandAcceptsCanonicalNonGitExistingCheckoutWithoutNormalization(t *testing.T) {
+	oldSDK := commandSDK
+	oldEnsure := createEnsureLocalContext
+	oldNormalize := createNormalizeCheckout
+	oldBootstrapForContext := createBootstrapForContext
+	oldApply := createApply
+	oldEnsureJWTKeyPair := createEnsureJWTKeyPair
+	oldAcquireProjectLock := createAcquireProjectLock
+	oldRunArgv := createRunComposeArgv
+	oldSleep := createSleep
+	t.Cleanup(func() {
+		commandSDK = oldSDK
+		createEnsureLocalContext = oldEnsure
+		createNormalizeCheckout = oldNormalize
+		createBootstrapForContext = oldBootstrapForContext
+		createApply = oldApply
+		createEnsureJWTKeyPair = oldEnsureJWTKeyPair
+		createAcquireProjectLock = oldAcquireProjectLock
+		createRunComposeArgv = oldRunArgv
+		createSleep = oldSleep
+	})
+
+	commandSDK = &plugin.SDK{}
+	createSleep = func(time.Duration) {}
+	projectDir := t.TempDir()
+	writeCurrentExistingISLECheckout(t, projectDir)
+	canonicalCompose := filepath.Join(projectDir, "compose.yaml")
+	before, err := os.ReadFile(canonicalCompose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(projectDir, ".git")); !os.IsNotExist(err) {
+		t.Fatalf("test checkout unexpectedly has Git metadata: %v", err)
+	}
+	ctx := &config.Context{
+		Name:           "isle-existing",
+		Plugin:         "isle",
+		DockerHostType: config.ContextLocal,
+		ProjectDir:     projectDir,
+		ComposeFile:    []string{"compose.yaml"},
+	}
+	createEnsureLocalContext = func(_ *plugin.SDK, _ createRequest) (*config.Context, error) {
+		return ctx, nil
+	}
+	stubComposeCreateTargetLifecycle(t, projectDir, false, nil)
+	createRunComposeArgv = composeConfigRunnerForTest(t, config.ContextLocal, existingISLEComposeModelJSON(t, currentExistingISLEComposeModel(projectDir)))
+	createAcquireProjectLock = func(runCtx context.Context, got *config.Context) (*config.ProjectMutationLock, error) {
+		return got.AcquireProjectMutationLock(runCtx)
+	}
+
+	createNormalizeCheckout = func(context.Context, *config.Context) error {
+		t.Fatal("explicit existing checkout was sent through filename normalization")
+		return nil
+	}
+	createBootstrapForContext = func(context.Context, io.Writer, *config.Context) error {
+		t.Fatal("explicit existing checkout was sent through Git bootstrap")
+		return nil
+	}
+	createApply = func(context.Context, createpkg.Options) error { return nil }
+	reachedConfiguration := errors.New("reached existing-checkout configuration")
+	createEnsureJWTKeyPair = func(context.Context, *config.Context) error {
+		return reachedConfiguration
+	}
+
+	cmd := &cobra.Command{Use: "create"}
+	cmd.SetOut(io.Discard)
+	err := runCreateCommand(cmd, createRequest{
+		ComposeCreateRequest: plugin.ComposeCreateRequest{
+			TargetType:     config.ContextLocal,
+			CheckoutSource: plugin.CheckoutSourceExisting,
+			Path:           projectDir,
+			SetupOnly:      true,
+		},
+		Apply: createpkg.Options{DrupalRootfs: createpkg.DefaultDrupalRootfs},
+	})
+	if !errors.Is(err, reachedConfiguration) {
+		t.Fatalf("runCreateCommand() error = %v, want existing checkout to reach configuration", err)
+	}
+	after, readErr := os.ReadFile(canonicalCompose)
+	if readErr != nil {
+		t.Fatalf("read admitted Compose file: %v", readErr)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("existing Compose file changed during admission:\nbefore: %s\nafter: %s", before, after)
+	}
+	if _, err := os.Lstat(filepath.Join(projectDir, ".git")); !os.IsNotExist(err) {
+		t.Fatalf("explicit existing checkout gained Git metadata: %v", err)
+	}
+}
+
+func composeConfigRunnerForTest(t *testing.T, targetType config.ContextType, model string) func(context.Context, *config.Context, string, io.Writer, io.Writer, []string) error {
+	t.Helper()
+	return func(runCtx context.Context, ctx *config.Context, projectDir string, stdout, stderr io.Writer, argv []string) error {
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
+		if ctx == nil || ctx.DockerHostType != targetType || projectDir != ctx.ProjectDir {
+			t.Fatalf("unexpected Compose target: context=%#v project=%q", ctx, projectDir)
+		}
+		want := []string{"docker", "compose", "config", "--format", "json"}
+		if strings.Join(argv, "\x00") != strings.Join(want, "\x00") {
+			t.Fatalf("Compose config argv = %#v, want %#v", argv, want)
+		}
+		_, err := io.WriteString(stdout, model)
+		return err
 	}
 }
 
@@ -579,21 +851,54 @@ func TestRefreshCreateContextComposeMetadataKeepsContextDerivedNameWithoutTempla
 	}
 }
 
+func stubComposeCreateTargetLifecycle(t *testing.T, projectDir string, cloned bool, checkout func(context.Context, *config.Context)) {
+	t.Helper()
+	oldPrepare := createPrepareTarget
+	oldRevalidate := createRevalidateTarget
+	oldEnsureObserved := createEnsureObservedCheckout
+	t.Cleanup(func() {
+		createPrepareTarget = oldPrepare
+		createRevalidateTarget = oldRevalidate
+		createEnsureObservedCheckout = oldEnsureObserved
+	})
+	createPrepareTarget = func(runCtx context.Context, req plugin.ComposeCreateRequest, ctx *config.Context) (plugin.ComposeCreateTargetObservation, error) {
+		if err := runCtx.Err(); err != nil {
+			return plugin.ComposeCreateTargetObservation{}, err
+		}
+		if ctx == nil || ctx.ProjectDir != projectDir || req.Path != projectDir {
+			t.Fatalf("unexpected prepared create target: context=%#v request path=%q", ctx, req.Path)
+		}
+		if err := os.MkdirAll(projectDir, 0o750); err != nil {
+			return plugin.ComposeCreateTargetObservation{}, err
+		}
+		return plugin.ComposeCreateTargetObservation{}, nil
+	}
+	createRevalidateTarget = func(runCtx context.Context, _ plugin.ComposeCreateRequest, _ *config.Context, _ plugin.ComposeCreateTargetObservation) error {
+		return runCtx.Err()
+	}
+	createEnsureObservedCheckout = func(runCtx context.Context, _ io.Writer, _ plugin.ComposeCreateRequest, ctx *config.Context, _ plugin.ComposeCreateTargetObservation) (bool, error) {
+		if checkout != nil {
+			checkout(runCtx, ctx)
+		}
+		return cloned, runCtx.Err()
+	}
+}
+
 func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	oldSDK := commandSDK
 	oldEnsure := createEnsureLocalContext
-	oldClone := createCloneTemplateRepo
 	oldApply := createApply
 	oldEnsureJWTKeyPair := createEnsureJWTKeyPair
+	oldAcquireProjectLock := createAcquireProjectLock
 	oldBootstrap := createBootstrapCheckout
 	oldRunStartup := createRunStartup
 	oldSleep := createSleep
 	t.Cleanup(func() {
 		commandSDK = oldSDK
 		createEnsureLocalContext = oldEnsure
-		createCloneTemplateRepo = oldClone
 		createApply = oldApply
 		createEnsureJWTKeyPair = oldEnsureJWTKeyPair
+		createAcquireProjectLock = oldAcquireProjectLock
 		createBootstrapCheckout = oldBootstrap
 		createRunStartup = oldRunStartup
 		createSleep = oldSleep
@@ -605,12 +910,37 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	createEnsureLocalContext = func(_ *plugin.SDK, req createRequest) (*config.Context, error) {
 		return &config.Context{Name: "isle-local-2", Plugin: "isle", DockerHostType: config.ContextLocal, ProjectDir: projectDir}, nil
 	}
-	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
-		return os.MkdirAll(opts.ProjectDir, 0o755)
+	var lockHeldDuringCheckout bool
+	stubComposeCreateTargetLifecycle(t, projectDir, true, func(lockedContext context.Context, ctx *config.Context) {
+		reentrantContext, cancelReentrant := context.WithTimeout(lockedContext, 20*time.Millisecond)
+		defer cancelReentrant()
+		reentrantLock, err := ctx.AcquireProjectMutationLock(reentrantContext)
+		if err != nil {
+			t.Fatalf("checkout did not receive the held project mutation lock context: %v", err)
+		}
+		if err := reentrantLock.Release(); err != nil {
+			t.Fatalf("release reentrant project mutation lock: %v", err)
+		}
+		probeContext, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		competingLock, err := ctx.AcquireProjectMutationLock(probeContext)
+		if err == nil {
+			_ = competingLock.Release()
+			t.Fatal("custom create did not hold its project mutation lock during checkout")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("competing project lock during checkout error = %v, want deadline exceeded", err)
+		}
+		lockHeldDuringCheckout = true
+	})
+	createApply = func(_ context.Context, opts createpkg.Options) error { return nil }
+	var projectLockAcquisitions int
+	createAcquireProjectLock = func(runCtx context.Context, ctx *config.Context) (*config.ProjectMutationLock, error) {
+		projectLockAcquisitions++
+		return ctx.AcquireProjectMutationLock(runCtx)
 	}
-	createApply = func(opts createpkg.Options) error { return nil }
 	var jwtKeyPairPrepared bool
-	createEnsureJWTKeyPair = func(ctx *config.Context) error {
+	createEnsureJWTKeyPair = func(_ context.Context, ctx *config.Context) error {
 		jwtKeyPairPrepared = true
 		if ctx.ProjectDir != projectDir {
 			t.Fatalf("expected JWT keys prepared in %q, got %q", projectDir, ctx.ProjectDir)
@@ -618,7 +948,7 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 		return nil
 	}
 	var bootstrapped bool
-	createBootstrapCheckout = func(_ io.Writer, gotProjectDir string) error {
+	createBootstrapCheckout = func(_ context.Context, _ io.Writer, gotProjectDir string) error {
 		bootstrapped = true
 		if gotProjectDir != projectDir {
 			t.Fatalf("expected bootstrap in %q, got %q", projectDir, gotProjectDir)
@@ -627,7 +957,7 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	}
 
 	var ranStartup bool
-	createRunStartup = func(_ io.Writer, ctx *config.Context) error {
+	createRunStartup = func(_ context.Context, _ io.Writer, ctx *config.Context) error {
 		ranStartup = true
 		if !jwtKeyPairPrepared {
 			t.Fatal("expected JWT keypair to be prepared before startup")
@@ -637,6 +967,16 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 		}
 		if ctx.Name != "isle-local-2" {
 			t.Fatalf("expected context isle-local-2, got %q", ctx.Name)
+		}
+		probeContext, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		competingLock, err := ctx.AcquireProjectMutationLock(probeContext)
+		if err == nil {
+			_ = competingLock.Release()
+			t.Fatal("custom create released its project mutation lock before startup completed")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("competing project lock error = %v, want deadline exceeded while create lock is held", err)
 		}
 		return nil
 	}
@@ -675,6 +1015,12 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	if !bootstrapped {
 		t.Fatal("expected bootstrap to run for a fresh clone")
 	}
+	if projectLockAcquisitions != 1 {
+		t.Fatalf("project mutation lock acquisitions = %d, want 1", projectLockAcquisitions)
+	}
+	if !lockHeldDuringCheckout {
+		t.Fatal("expected project mutation lock to be held before checkout")
+	}
 
 	rendered := out.String()
 	if !strings.Contains(rendered, "cd '") {
@@ -703,12 +1049,159 @@ func TestRunCreateCommandRunsMakeUpAndPrintsCommitSuggestion(t *testing.T) {
 	}
 }
 
+func TestRunCreateCommandStopsWhenTargetChangesBeforeLock(t *testing.T) {
+	oldSDK := commandSDK
+	oldEnsure := createEnsureLocalContext
+	oldPrepare := createPrepareTarget
+	oldRevalidate := createRevalidateTarget
+	oldEnsureObserved := createEnsureObservedCheckout
+	oldAcquireProjectLock := createAcquireProjectLock
+	t.Cleanup(func() {
+		commandSDK = oldSDK
+		createEnsureLocalContext = oldEnsure
+		createPrepareTarget = oldPrepare
+		createRevalidateTarget = oldRevalidate
+		createEnsureObservedCheckout = oldEnsureObserved
+		createAcquireProjectLock = oldAcquireProjectLock
+	})
+
+	commandSDK = &plugin.SDK{}
+	projectDir := filepath.Join(t.TempDir(), "site")
+	createEnsureLocalContext = func(_ *plugin.SDK, _ createRequest) (*config.Context, error) {
+		return &config.Context{Name: "isle-race", Plugin: "isle", DockerHostType: config.ContextLocal, ProjectDir: projectDir}, nil
+	}
+	createPrepareTarget = func(runCtx context.Context, _ plugin.ComposeCreateRequest, _ *config.Context) (plugin.ComposeCreateTargetObservation, error) {
+		if err := runCtx.Err(); err != nil {
+			return plugin.ComposeCreateTargetObservation{}, err
+		}
+		return plugin.ComposeCreateTargetObservation{}, os.MkdirAll(projectDir, 0o750)
+	}
+	targetChanged := errors.New("target changed while waiting for lock")
+	createRevalidateTarget = func(runCtx context.Context, _ plugin.ComposeCreateRequest, _ *config.Context, _ plugin.ComposeCreateTargetObservation) error {
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
+		return targetChanged
+	}
+	var checkoutCalled bool
+	createEnsureObservedCheckout = func(context.Context, io.Writer, plugin.ComposeCreateRequest, *config.Context, plugin.ComposeCreateTargetObservation) (bool, error) {
+		checkoutCalled = true
+		return false, nil
+	}
+	createAcquireProjectLock = func(runCtx context.Context, ctx *config.Context) (*config.ProjectMutationLock, error) {
+		return ctx.AcquireProjectMutationLock(runCtx)
+	}
+
+	type commandContextKey struct{}
+	originalContext := context.WithValue(context.Background(), commandContextKey{}, "original")
+	cmd := &cobra.Command{Use: "create"}
+	cmd.SetContext(originalContext)
+	cmd.SetOut(io.Discard)
+	err := runCreateCommand(cmd, createRequest{ComposeCreateRequest: plugin.ComposeCreateRequest{
+		CheckoutSource: plugin.CheckoutSourceTemplate,
+		TemplateRepo:   defaultTemplateRepo,
+		TemplateBranch: defaultTemplateBranch,
+		Path:           projectDir,
+		SetupOnly:      true,
+	}})
+	if !errors.Is(err, targetChanged) {
+		t.Fatalf("runCreateCommand() error = %v, want target transition rejection", err)
+	}
+	if checkoutCalled {
+		t.Fatal("target transition rejection did not stop before checkout mutation")
+	}
+	if cmd.Context() != originalContext {
+		t.Fatal("runCreateCommand() did not restore the command context after releasing the mutation lock")
+	}
+	lock, err := (&config.Context{ProjectDir: projectDir}).AcquireProjectMutationLock(context.Background())
+	if err != nil {
+		t.Fatalf("reacquire project mutation lock after transition rejection: %v", err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatalf("release reacquired project mutation lock: %v", err)
+	}
+}
+
+func TestRunCreateCommandNormalizesAndBootstrapsVerifiedRetry(t *testing.T) {
+	oldSDK := commandSDK
+	oldEnsure := createEnsureLocalContext
+	oldApply := createApply
+	oldEnsureJWTKeyPair := createEnsureJWTKeyPair
+	oldBootstrap := createBootstrapCheckout
+	oldRefresh := createRefreshContext
+	oldSleep := createSleep
+	t.Cleanup(func() {
+		commandSDK = oldSDK
+		createEnsureLocalContext = oldEnsure
+		createApply = oldApply
+		createEnsureJWTKeyPair = oldEnsureJWTKeyPair
+		createBootstrapCheckout = oldBootstrap
+		createRefreshContext = oldRefresh
+		createSleep = oldSleep
+	})
+
+	createSleep = func(time.Duration) {}
+	commandSDK = &plugin.SDK{}
+	projectDir := t.TempDir()
+	canonical := filepath.Join(projectDir, "compose.yaml")
+	if err := os.WriteFile(canonical, []byte("services:\n  init:\n    volumes:\n      - ./docker-compose.yml:/docker-compose.yml:ro\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	createEnsureLocalContext = func(_ *plugin.SDK, _ createRequest) (*config.Context, error) {
+		return &config.Context{Name: "isle-retry", Plugin: "isle", DockerHostType: config.ContextLocal, ProjectDir: projectDir}, nil
+	}
+	stubComposeCreateTargetLifecycle(t, projectDir, false, nil)
+	createApply = func(context.Context, createpkg.Options) error { return nil }
+	createEnsureJWTKeyPair = func(context.Context, *config.Context) error { return nil }
+	var bootstrapped bool
+	createBootstrapCheckout = func(_ context.Context, _ io.Writer, gotProjectDir string) error {
+		bootstrapped = true
+		if gotProjectDir != projectDir {
+			t.Fatalf("bootstrap project directory = %q, want %q", gotProjectDir, projectDir)
+		}
+		return nil
+	}
+	createRefreshContext = func(context.Context, *config.Context) error { return nil }
+
+	cmd := &cobra.Command{Use: "create"}
+	cmd.SetOut(io.Discard)
+	err := runCreateCommand(cmd, createRequest{
+		ComposeCreateRequest: plugin.ComposeCreateRequest{
+			CheckoutSource: plugin.CheckoutSourceTemplate,
+			TemplateRepo:   defaultTemplateRepo,
+			TemplateBranch: defaultTemplateBranch,
+			Path:           projectDir,
+			SetupOnly:      true,
+		},
+		Apply: createpkg.Options{DrupalRootfs: createpkg.DefaultDrupalRootfs},
+	})
+	if err != nil {
+		t.Fatalf("runCreateCommand() retry error = %v", err)
+	}
+	if !bootstrapped {
+		t.Fatal("verified retry skipped checkout bootstrap")
+	}
+	data, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "./docker-compose.yml:/docker-compose.yml") || !strings.Contains(string(data), "./compose.yaml:/docker-compose.yml:ro") {
+		t.Fatalf("verified retry skipped Compose normalization:\n%s", data)
+	}
+	info, err := os.Stat(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("normalized retry mode = %o, want 640", info.Mode().Perm())
+	}
+}
+
 func TestRunCreateCommandWritesProgressToStderrDuringRPC(t *testing.T) {
 	t.Setenv("SITECTL_RPC", "1")
 
 	oldSDK := commandSDK
 	oldEnsure := createEnsureLocalContext
-	oldClone := createCloneTemplateRepo
 	oldApply := createApply
 	oldEnsureJWTKeyPair := createEnsureJWTKeyPair
 	oldBootstrap := createBootstrapCheckout
@@ -717,7 +1210,6 @@ func TestRunCreateCommandWritesProgressToStderrDuringRPC(t *testing.T) {
 	t.Cleanup(func() {
 		commandSDK = oldSDK
 		createEnsureLocalContext = oldEnsure
-		createCloneTemplateRepo = oldClone
 		createApply = oldApply
 		createEnsureJWTKeyPair = oldEnsureJWTKeyPair
 		createBootstrapCheckout = oldBootstrap
@@ -731,19 +1223,17 @@ func TestRunCreateCommandWritesProgressToStderrDuringRPC(t *testing.T) {
 	createEnsureLocalContext = func(_ *plugin.SDK, req createRequest) (*config.Context, error) {
 		return &config.Context{Name: "isle-local", Plugin: "isle", DockerHostType: config.ContextLocal, ProjectDir: projectDir}, nil
 	}
-	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
-		return os.MkdirAll(opts.ProjectDir, 0o755)
-	}
-	createApply = func(opts createpkg.Options) error { return nil }
-	createEnsureJWTKeyPair = func(_ *config.Context) error { return nil }
-	createBootstrapCheckout = func(out io.Writer, gotProjectDir string) error {
+	stubComposeCreateTargetLifecycle(t, projectDir, true, nil)
+	createApply = func(context.Context, createpkg.Options) error { return nil }
+	createEnsureJWTKeyPair = func(context.Context, *config.Context) error { return nil }
+	createBootstrapCheckout = func(_ context.Context, out io.Writer, gotProjectDir string) error {
 		if gotProjectDir != projectDir {
 			t.Fatalf("expected bootstrap in %q, got %q", projectDir, gotProjectDir)
 		}
 		_, err := fmt.Fprintln(out, "bootstrap progress")
 		return err
 	}
-	createRunStartup = func(_ io.Writer, ctx *config.Context) error {
+	createRunStartup = func(_ context.Context, _ io.Writer, ctx *config.Context) error {
 		t.Fatal("did not expect startup to run")
 		return nil
 	}
@@ -840,7 +1330,6 @@ func TestPrintCreateFailureSummaryUsesPlainReplayCommand(t *testing.T) {
 func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	oldSDK := commandSDK
 	oldEnsure := createEnsureLocalContext
-	oldClone := createCloneTemplateRepo
 	oldApply := createApply
 	oldEnsureJWTKeyPair := createEnsureJWTKeyPair
 	oldBootstrap := createBootstrapCheckout
@@ -849,7 +1338,6 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	t.Cleanup(func() {
 		commandSDK = oldSDK
 		createEnsureLocalContext = oldEnsure
-		createCloneTemplateRepo = oldClone
 		createApply = oldApply
 		createEnsureJWTKeyPair = oldEnsureJWTKeyPair
 		createBootstrapCheckout = oldBootstrap
@@ -863,24 +1351,22 @@ func TestRunCreateCommandSkipsMakeUpWhenSetupOnly(t *testing.T) {
 	createEnsureLocalContext = func(_ *plugin.SDK, req createRequest) (*config.Context, error) {
 		return &config.Context{Name: "isle-local", Plugin: "isle", DockerHostType: config.ContextLocal, ProjectDir: projectDir}, nil
 	}
-	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
-		return os.MkdirAll(opts.ProjectDir, 0o755)
-	}
-	createApply = func(opts createpkg.Options) error { return nil }
+	stubComposeCreateTargetLifecycle(t, projectDir, true, nil)
+	createApply = func(context.Context, createpkg.Options) error { return nil }
 	var jwtKeyPairPrepared bool
-	createEnsureJWTKeyPair = func(_ *config.Context) error {
+	createEnsureJWTKeyPair = func(_ context.Context, _ *config.Context) error {
 		jwtKeyPairPrepared = true
 		return nil
 	}
 	var bootstrapped bool
-	createBootstrapCheckout = func(_ io.Writer, gotProjectDir string) error {
+	createBootstrapCheckout = func(_ context.Context, _ io.Writer, gotProjectDir string) error {
 		bootstrapped = true
 		if gotProjectDir != projectDir {
 			t.Fatalf("expected bootstrap in %q, got %q", projectDir, gotProjectDir)
 		}
 		return nil
 	}
-	createRunStartup = func(_ io.Writer, ctx *config.Context) error {
+	createRunStartup = func(_ context.Context, _ io.Writer, ctx *config.Context) error {
 		t.Fatal("did not expect startup to run")
 		return nil
 	}
@@ -939,7 +1425,7 @@ func TestBootstrapCheckoutRunsGitAddAndInitialCommit(t *testing.T) {
 	createSleep = func(time.Duration) {}
 
 	var commands [][]string
-	createRunProjectCommand = func(gotProjectDir string, stdout, stderr io.Writer, name string, args ...string) error {
+	createRunProjectCommand = func(_ context.Context, gotProjectDir string, stdout, stderr io.Writer, name string, args ...string) error {
 		if gotProjectDir != projectDir {
 			t.Fatalf("expected project dir %q, got %q", projectDir, gotProjectDir)
 		}
@@ -947,6 +1433,14 @@ func TestBootstrapCheckoutRunsGitAddAndInitialCommit(t *testing.T) {
 			t.Fatalf("expected git command, got %q", name)
 		}
 		commands = append(commands, append([]string{name}, args...))
+		command := strings.Join(args, " ")
+		if strings.Contains(command, "rev-parse --verify HEAD") {
+			return errors.New("HEAD is unborn")
+		}
+		if strings.Contains(command, "rev-parse --is-inside-work-tree") {
+			_, err := io.WriteString(stdout, "true\n")
+			return err
+		}
 		return nil
 	}
 
@@ -954,20 +1448,109 @@ func TestBootstrapCheckoutRunsGitAddAndInitialCommit(t *testing.T) {
 		t.Fatalf("bootstrapCheckout() error = %v", err)
 	}
 
-	if len(commands) != 2 {
-		t.Fatalf("expected 2 git commands, got %#v", commands)
+	if len(commands) != 4 {
+		t.Fatalf("expected 4 git commands, got %#v", commands)
 	}
-	if got, want := strings.Join(commands[0], " "), fmt.Sprintf("git -c safe.directory=%s add .", projectDir); got != want {
+	if got, want := strings.Join(commands[0], " "), fmt.Sprintf("git -c safe.directory=%s rev-parse --verify HEAD", projectDir); got != want {
+		t.Fatalf("unexpected HEAD inspection command %q", got)
+	}
+	if got, want := strings.Join(commands[1], " "), fmt.Sprintf("git -c safe.directory=%s rev-parse --is-inside-work-tree", projectDir); got != want {
+		t.Fatalf("unexpected work-tree inspection command %q", got)
+	}
+	if got, want := strings.Join(commands[2], " "), fmt.Sprintf("git -c safe.directory=%s add .", projectDir); got != want {
 		t.Fatalf("expected first command `git add .`, got %q", got)
 	}
-	if got, want := strings.Join(commands[1], " "), fmt.Sprintf("git -c safe.directory=%s -c user.name=sitectl-isle -c user.email=sitectl-isle@localhost commit -m initial commit.", projectDir); got != want {
+	if got, want := strings.Join(commands[3], " "), fmt.Sprintf("git -c safe.directory=%s -c user.name=sitectl-isle -c user.email=sitectl-isle@localhost commit -m initial commit.", projectDir); got != want {
 		t.Fatalf("unexpected commit command %q", got)
+	}
+}
+
+func TestBootstrapCheckoutSkipsCommitWhenRetryAlreadyHasHEAD(t *testing.T) {
+	projectDir := t.TempDir()
+	oldRunProject := createRunProjectCommand
+	t.Cleanup(func() { createRunProjectCommand = oldRunProject })
+
+	var commands [][]string
+	createRunProjectCommand = func(_ context.Context, gotProjectDir string, stdout, stderr io.Writer, name string, args ...string) error {
+		if gotProjectDir != projectDir || name != "git" {
+			t.Fatalf("unexpected command target: project=%q name=%q", gotProjectDir, name)
+		}
+		commands = append(commands, append([]string{name}, args...))
+		_, err := io.WriteString(stdout, strings.Repeat("b", 40)+"\n")
+		return err
+	}
+
+	if err := bootstrapCheckout(io.Discard, projectDir); err != nil {
+		t.Fatalf("bootstrapCheckout() retry error = %v", err)
+	}
+	if len(commands) != 1 || !strings.Contains(strings.Join(commands[0], " "), "rev-parse --verify HEAD") {
+		t.Fatalf("retry bootstrap commands = %#v, want only checked HEAD inspection", commands)
+	}
+}
+
+func TestBootstrapCheckoutContextStopsBeforeGitWhenCancelled(t *testing.T) {
+	oldRunProject := createRunProjectCommand
+	t.Cleanup(func() { createRunProjectCommand = oldRunProject })
+	createRunProjectCommand = func(context.Context, string, io.Writer, io.Writer, string, ...string) error {
+		t.Fatal("cancelled bootstrap executed Git")
+		return nil
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := bootstrapCheckoutContext(runCtx, io.Discard, t.TempDir()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("bootstrapCheckoutContext() error = %v, want context cancellation", err)
+	}
+}
+
+func TestBootstrapRemoteCheckoutUsesCheckedArgv(t *testing.T) {
+	projectDir := "/srv/isle site"
+	oldRunArgv := createRunComposeArgv
+	oldSleep := createSleep
+	t.Cleanup(func() {
+		createRunComposeArgv = oldRunArgv
+		createSleep = oldSleep
+	})
+	createSleep = func(time.Duration) {}
+
+	var commands [][]string
+	createRunComposeArgv = func(_ context.Context, ctx *config.Context, gotProjectDir string, stdout, stderr io.Writer, argv []string) error {
+		if ctx == nil || ctx.DockerHostType != config.ContextRemote || gotProjectDir != projectDir {
+			t.Fatalf("unexpected remote command target: context=%#v project=%q", ctx, gotProjectDir)
+		}
+		commands = append(commands, append([]string(nil), argv...))
+		command := strings.Join(argv, " ")
+		switch {
+		case strings.Contains(command, "rev-parse --verify HEAD"):
+			return errors.New("HEAD is unborn")
+		case strings.Contains(command, "rev-parse --is-inside-work-tree"):
+			_, err := io.WriteString(stdout, "true\n")
+			return err
+		default:
+			return nil
+		}
+	}
+
+	ctx := &config.Context{DockerHostType: config.ContextRemote, ProjectDir: projectDir}
+	if err := bootstrapCheckoutForContext(context.Background(), io.Discard, ctx); err != nil {
+		t.Fatalf("bootstrapCheckoutForContext() error = %v", err)
+	}
+	if len(commands) != 4 {
+		t.Fatalf("remote bootstrap commands = %#v, want two inspections plus add and commit", commands)
+	}
+	wantAdd := []string{"git", "-c", "safe.directory=" + projectDir, "add", "."}
+	if strings.Join(commands[2], "\x00") != strings.Join(wantAdd, "\x00") {
+		t.Fatalf("remote git add argv = %#v, want %#v", commands[2], wantAdd)
+	}
+	wantCommit := []string{"git", "-c", "safe.directory=" + projectDir, "-c", "user.name=sitectl-isle", "-c", "user.email=sitectl-isle@localhost", "commit", "-m", "initial commit."}
+	if strings.Join(commands[3], "\x00") != strings.Join(wantCommit, "\x00") {
+		t.Fatalf("remote git commit argv = %#v, want %#v", commands[3], wantCommit)
 	}
 }
 
 func TestRunStartupDelegatesLifecycleCommandsToComposeSDK(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	projectDir := t.TempDir()
+	runCtx := context.WithValue(context.Background(), createTestContextKey{}, "held-lock")
 
 	oldRunCompose := createRunComposeCommand
 	t.Cleanup(func() {
@@ -976,6 +1559,9 @@ func TestRunStartupDelegatesLifecycleCommandsToComposeSDK(t *testing.T) {
 
 	var commands []string
 	createRunComposeCommand = func(runCtx context.Context, ctx *config.Context, gotProjectDir string, stdout, stderr io.Writer, command string) error {
+		if runCtx.Value(createTestContextKey{}) != "held-lock" {
+			t.Fatal("startup command did not receive the held lock context")
+		}
 		if gotProjectDir != projectDir {
 			t.Fatalf("expected project dir %q, got %q", projectDir, gotProjectDir)
 		}
@@ -986,7 +1572,7 @@ func TestRunStartupDelegatesLifecycleCommandsToComposeSDK(t *testing.T) {
 		return nil
 	}
 
-	if err := runStartup(io.Discard, &config.Context{Name: "isle-local", ProjectDir: projectDir}); err != nil {
+	if err := runStartup(runCtx, io.Discard, &config.Context{Name: "isle-local", ProjectDir: projectDir}); err != nil {
 		t.Fatalf("runStartup() error = %v", err)
 	}
 	want := startupCommands()
@@ -1003,6 +1589,8 @@ func TestRunStartupDelegatesLifecycleCommandsToComposeSDK(t *testing.T) {
 	}
 }
 
+type createTestContextKey struct{}
+
 func TestNormalizeComposeProjectFilename(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
@@ -1011,7 +1599,7 @@ func TestNormalizeComposeProjectFilename(t *testing.T) {
 	if err := os.WriteFile(legacy, []byte("services:\n  init:\n    volumes:\n      - ./docker-compose.yml:/docker-compose.yml:ro\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := normalizeComposeProjectFilename(&config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal}); err != nil {
+	if err := normalizeComposeProjectFilename(context.Background(), &config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal}); err != nil {
 		t.Fatalf("normalizeComposeProjectFilename() error = %v", err)
 	}
 	if _, err := os.Stat(canonical); err != nil {
@@ -1026,6 +1614,60 @@ func TestNormalizeComposeProjectFilename(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "./compose.yaml:/docker-compose.yml:ro") {
 		t.Fatalf("canonical Compose self-mount was not updated:\n%s", data)
+	}
+}
+
+func TestNormalizeComposeProjectFilenameRepairsCanonicalRetry(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	canonical := filepath.Join(projectDir, "compose.yaml")
+	if err := os.WriteFile(canonical, []byte("services:\n  init:\n    volumes:\n      - ./docker-compose.yml:/docker-compose.yml:ro\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	ctx := &config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal}
+	if err := normalizeComposeProjectFilename(context.Background(), ctx); err != nil {
+		t.Fatalf("normalizeComposeProjectFilename() retry error = %v", err)
+	}
+	data, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "./docker-compose.yml:/docker-compose.yml") || !strings.Contains(string(data), "./compose.yaml:/docker-compose.yml:ro") {
+		t.Fatalf("canonical Compose self-mount was not repaired on retry:\n%s", data)
+	}
+	info, err := os.Stat(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("canonical Compose mode = %o, want 640", info.Mode().Perm())
+	}
+	if err := normalizeComposeProjectFilename(context.Background(), ctx); err != nil {
+		t.Fatalf("idempotent normalizeComposeProjectFilename() error = %v", err)
+	}
+}
+
+func TestNormalizeComposeProjectFilenameStopsBeforeMutationWhenCancelled(t *testing.T) {
+	projectDir := t.TempDir()
+	legacy := filepath.Join(projectDir, "docker-compose.yml")
+	if err := os.WriteFile(legacy, []byte("services: {}\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	oldRunArgv := createRunComposeArgv
+	t.Cleanup(func() { createRunComposeArgv = oldRunArgv })
+	createRunComposeArgv = func(context.Context, *config.Context, string, io.Writer, io.Writer, []string) error {
+		t.Fatal("cancelled normalization executed a move")
+		return nil
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := normalizeComposeProjectFilename(runCtx, &config.Context{ProjectDir: projectDir, DockerHostType: config.ContextLocal})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("normalizeComposeProjectFilename() error = %v, want context cancellation", err)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("cancelled normalization changed legacy Compose file: %v", err)
 	}
 }
 

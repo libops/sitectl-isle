@@ -61,7 +61,7 @@ const (
 	workbenchClientUserAgentRule  = "HeaderRegexp(`User-Agent`, `(?i)^Islandora Workbench$`)"
 	workbenchClientRouterPriority = 100000
 	defaultDrupalHostRule         = "Host(`localhost`)"
-	databaseInitImageRef          = "libops/base:3.2.2.0@sha256:851e17742b5fee57038855f46b1a46d2716c0012c5f3a4788b7e5c7bc12fed5e"
+	databaseInitImageRef          = "libops/base:3.2.2.0@sha256:aa0c61029734f3293bca068a95c72c0b07ac949292c446c83ada78e81a42c85d"
 	// DefaultDrupalBaseImageRef is the tested base shared by create metadata and generated Dockerfiles.
 	DefaultDrupalBaseImageRef = "libops/islandora:nginx-1.30.4-php84@sha256:0320df015cab9951ff0ba1e5f30c0a18641398706c3af6fe9d27c29f02b21d2e"
 )

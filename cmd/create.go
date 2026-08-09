@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -22,40 +24,123 @@ import (
 	coredevmode "github.com/libops/sitectl/pkg/services/devmode"
 	coretraefik "github.com/libops/sitectl/pkg/services/traefik"
 	"github.com/spf13/cobra"
+	yaml "gopkg.in/yaml.v3"
 )
 
 var (
-	createPath              string
-	createDrupalRootfs      string
-	createTemplateRepo      string
-	createTemplateBranch    string
-	createSetDefaultContext bool
-	createSetupOnly         bool
-	createInput             = config.GetInput
-	createCloneTemplateRepo = func(opts plugin.GitTemplateOptions) error {
-		return commandSDK.CloneTemplateRepo(opts)
-	}
+	createPath               string
+	createDrupalRootfs       string
+	createTemplateRepo       string
+	createTemplateBranch     string
+	createSetDefaultContext  bool
+	createSetupOnly          bool
+	createInput              = config.GetInput
 	createEnsureLocalContext = ensureCreateContext
-	createEnsureJWTKeyPair   = createpkg.EnsureJWTKeyPair
-	createApply              = createpkg.Apply
-	createRunProjectCommand  = defaultRunProjectCommand
-	createRunComposeCommand  = func(runCtx context.Context, ctx *config.Context, projectDir string, stdout, stderr io.Writer, command string) error {
+	createPrepareTarget      = func(runCtx context.Context, req plugin.ComposeCreateRequest, ctx *config.Context) (plugin.ComposeCreateTargetObservation, error) {
+		return commandSDK.PrepareComposeCreateTargetContext(runCtx, req, ctx)
+	}
+	createRevalidateTarget = func(runCtx context.Context, req plugin.ComposeCreateRequest, ctx *config.Context, observation plugin.ComposeCreateTargetObservation) error {
+		return commandSDK.RevalidateComposeCreateTargetContext(runCtx, req, ctx, observation)
+	}
+	createEnsureObservedCheckout = func(runCtx context.Context, out io.Writer, req plugin.ComposeCreateRequest, ctx *config.Context, observation plugin.ComposeCreateTargetObservation) (bool, error) {
+		return commandSDK.EnsureObservedComposeTemplateCheckoutContext(runCtx, out, req, ctx, observation)
+	}
+	createEnsureJWTKeyPair = func(runCtx context.Context, ctx *config.Context) error {
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
+		if err := createpkg.EnsureJWTKeyPair(ctx); err != nil {
+			return err
+		}
+		return runCtx.Err()
+	}
+	createApply = func(runCtx context.Context, opts createpkg.Options) error {
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
+		if err := createpkg.Apply(opts); err != nil {
+			return err
+		}
+		return runCtx.Err()
+	}
+	createRunProjectCommand = defaultRunProjectCommand
+	createRunComposeCommand = func(runCtx context.Context, ctx *config.Context, projectDir string, stdout, stderr io.Writer, command string) error {
 		return commandSDK.RunComposeProjectCommandContext(runCtx, ctx, projectDir, stdout, stderr, command)
 	}
-	createBootstrapCheckout = bootstrapCheckout
-	createRunStartup        = runStartup
-	createRefreshContext    = refreshCreateContextComposeMetadata
-	createCheckPrereqs      = checkPrereqs
-	createLookPath          = exec.LookPath
-	createRunCheckCommand   = runCheckCommand
-	createSleep             = time.Sleep
-	createComponentBindErr  error
+	createRunComposeArgv = func(runCtx context.Context, ctx *config.Context, projectDir string, stdout, stderr io.Writer, argv []string) error {
+		return commandSDK.RunComposeProjectArgvContext(runCtx, ctx, projectDir, nil, stdout, stderr, argv)
+	}
+	createAcquireProjectLock = func(runCtx context.Context, ctx *config.Context) (*config.ProjectMutationLock, error) {
+		return ctx.AcquireProjectMutationLock(runCtx)
+	}
+	createNormalizeCheckout   = normalizeComposeProjectFilename
+	createBootstrapCheckout   = bootstrapCheckoutContext
+	createBootstrapForContext = bootstrapCheckoutForContext
+	createRunStartup          = runStartup
+	createRefreshContext      = func(runCtx context.Context, ctx *config.Context) error {
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
+		if err := refreshCreateContextComposeMetadata(ctx); err != nil {
+			return err
+		}
+		return runCtx.Err()
+	}
+	createCheckPrereqs     = checkPrereqs
+	createLookPath         = exec.LookPath
+	createRunCheckCommand  = runCheckCommand
+	createSleep            = time.Sleep
+	createComponentBindErr error
+	createResolveRequest   = resolveCreateRequest
 )
 
 const (
-	defaultTemplateRepo   = "https://github.com/libops/isle"
-	defaultTemplateBranch = "v1.3.0"
+	defaultTemplateRepo                   = "https://github.com/libops/isle"
+	defaultTemplateBranch                 = "v1.3.1"
+	maxExistingISLEComposeConfigJSONBytes = 16 << 20
+	maxExistingISLETemplateContractBytes  = 1 << 20
+	existingISLETemplateContractPath      = ".libops/template-contract.yaml"
+	existingISLEComponentRevision         = "v1.0.0"
 )
+
+var existingISLELifecycleFiles = []string{
+	"conf/triplet/config.yaml",
+	"scripts/drupal-media-storage-state.php",
+	"scripts/drupal-wait-installed.sh",
+	"scripts/ensure-islandora-jwt-keypair.sh",
+	"scripts/initialize-compose.sh",
+	"scripts/sitectl-prepare-build.sh",
+	"scripts/sitectl-prepare-init.sh",
+	"scripts/sitectl-rollout-preflight.sh",
+}
+
+var existingISLERequiredReadOnlyBinds = []existingISLERequiredReadOnlyBind{
+	{
+		Service: "drupal",
+		Source:  "scripts/drupal-media-storage-state.php",
+		Target:  "/var/www/drupal/drupal-media-storage-state.php",
+	},
+	{
+		Service: "drupal",
+		Source:  "scripts/drupal-wait-installed.sh",
+		Target:  "/usr/local/lib/sitectl/drupal-wait-installed.sh",
+	},
+	{
+		Service: "init",
+		Source:  "compose.yaml",
+		Target:  "/work/compose.yaml",
+	},
+	{
+		Service: "init",
+		Source:  "scripts/ensure-islandora-jwt-keypair.sh",
+		Target:  "/usr/local/lib/sitectl/ensure-islandora-jwt-keypair.sh",
+	},
+	{
+		Service: "init",
+		Source:  "scripts/initialize-compose.sh",
+		Target:  "/usr/local/lib/sitectl/initialize-compose.sh",
+	},
+}
 
 type createRequest struct {
 	plugin.ComposeCreateRequest
@@ -79,14 +164,24 @@ func (createRunner) BindFlags(cmd *cobra.Command) {
 func (createRunner) Run(cmd *cobra.Command) error {
 	progress := createProgressOutput(cmd)
 	printIslandoraIntro(cmd, progress)
-	if err := createCheckPrereqs(progress); err != nil {
-		return err
-	}
-	req, err := resolveCreateRequest(cmd)
+	req, err := createResolveRequest(cmd)
 	if err != nil {
 		return err
 	}
+	if err := validateISLECreateTarget(req); err != nil {
+		return err
+	}
+	if err := createCheckPrereqs(progress); err != nil {
+		return err
+	}
 	return runCreateCommand(cmd, req)
+}
+
+func validateISLECreateTarget(req createRequest) error {
+	if req.TargetType != config.ContextRemote {
+		return nil
+	}
+	return fmt.Errorf("remote ISLE create is not supported: manage the remote site lifecycle through LibOps provisioning and Cloud Compose until sitectl core provides fenced remote customization hooks; use a local create target for developer-managed checkouts")
 }
 
 func createDefinition() plugin.CreateSpec {
@@ -302,7 +397,10 @@ func createCodebaseValue(disposition corecomponent.Disposition) string {
 	return createpkg.CodebaseNested
 }
 
-func runCreateCommand(cmd *cobra.Command, req createRequest) error {
+func runCreateCommand(cmd *cobra.Command, req createRequest) (returnErr error) {
+	if err := validateISLECreateTarget(req); err != nil {
+		return err
+	}
 	if commandSDK == nil {
 		return fmt.Errorf("plugin sdk is not initialized")
 	}
@@ -319,15 +417,51 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	req.Path = ctx.ProjectDir
 	req.Apply.Path = ctx.ProjectDir
 	req.Apply.EnvFiles = append([]string{}, ctx.EnvFile...)
-	cloned, err := ensureClonedCheckoutForContext(progress, ctx, req)
+	existingCheckout := plugin.CheckoutSource(strings.TrimSpace(string(req.CheckoutSource))) == plugin.CheckoutSourceExisting
+	observation, err := createPrepareTarget(cmd.Context(), req.ComposeCreateRequest, ctx)
 	if err != nil {
 		return err
 	}
-	if cloned {
-		if err := normalizeComposeProjectFilename(ctx); err != nil {
+	if existingCheckout {
+		if err := validateExistingISLECheckout(cmd.Context(), ctx); err != nil {
 			return err
 		}
-		if err := bootstrapCheckoutForContext(progress, ctx); err != nil {
+	}
+	lock, err := createAcquireProjectLock(cmd.Context(), ctx)
+	if err != nil {
+		return fmt.Errorf("acquire project mutation lock: %w", err)
+	}
+	originalContext := cmd.Context()
+	cmd.SetContext(lock.Context())
+	defer func() {
+		cmd.SetContext(originalContext)
+		if releaseErr := lock.Release(); releaseErr != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("release project mutation lock: %w", releaseErr))
+		}
+	}()
+	lockedContext := lock.Context()
+	if err := createRevalidateTarget(lockedContext, req.ComposeCreateRequest, ctx, observation); err != nil {
+		return err
+	}
+	if existingCheckout {
+		if err := validateExistingISLECheckout(lockedContext, ctx); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintln(progress, corecomponent.RenderSection("Template checkout", "Validating and preparing the requested checkout."))
+	fmt.Fprintln(progress)
+	if _, err := createEnsureObservedCheckout(lockedContext, progress, req.ComposeCreateRequest, ctx, observation); err != nil {
+		return err
+	}
+	// A prior template-owned create may have stopped after cloning but before
+	// filename normalization or the pristine commit. Existing checkouts are
+	// accepted only when they already implement the canonical template contract,
+	// so sitectl must not rewrite or rename them during admission.
+	if !existingCheckout {
+		if err := createNormalizeCheckout(lockedContext, ctx); err != nil {
+			return err
+		}
+		if err := createBootstrapForContext(lockedContext, progress, ctx); err != nil {
 			return err
 		}
 	}
@@ -338,21 +472,21 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		fmt.Fprintln(progress, "Warning: remote ISLE create leaves template-level Drupal/codebase rewrites to version-controlled local changes.")
 	} else {
 		if err := runWithSpinner(progress, "Applying ISLE options", func() error {
-			return createApply(req.Apply)
+			return createApply(lockedContext, req.Apply)
 		}); err != nil {
 			printCreateFailureSummary(summary, req)
 			return err
 		}
 	}
-	if err := createEnsureJWTKeyPair(ctx); err != nil {
+	if err := createEnsureJWTKeyPair(lockedContext, ctx); err != nil {
 		printCreateFailureSummary(summary, req)
 		return fmt.Errorf("prepare Islandora JWT keys: %w", err)
 	}
-	if err := applyCreateIngress(ctx, req); err != nil {
+	if err := applyCreateIngress(lockedContext, ctx, req); err != nil {
 		printCreateFailureSummary(summary, req)
 		return err
 	}
-	if err := applyCreateDevMode(ctx, req); err != nil {
+	if err := applyCreateDevMode(lockedContext, ctx, req); err != nil {
 		printCreateFailureSummary(summary, req)
 		return err
 	}
@@ -372,11 +506,17 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		printCreateFailureSummary(summary, req)
 		return fmt.Errorf("build component desired state: %w", err)
 	}
+	if err := lockedContext.Err(); err != nil {
+		return err
+	}
 	if err := corecomponent.SaveDesiredState(ctx, desired); err != nil {
 		printCreateFailureSummary(summary, req)
 		return fmt.Errorf("save component desired state: %w", err)
 	}
-	if err := createRefreshContext(ctx); err != nil {
+	if err := lockedContext.Err(); err != nil {
+		return err
+	}
+	if err := createRefreshContext(lockedContext, ctx); err != nil {
 		printCreateFailureSummary(summary, req)
 		return err
 	}
@@ -384,8 +524,14 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		if ctx.DockerHostType == config.ContextRemote {
 			fmt.Fprintln(progress, "Warning: modifying remote project files directly; commit and review these changes through version control before promoting them.")
 		}
+		if err := lockedContext.Err(); err != nil {
+			return err
+		}
 		if err := plugin.ApplyComposeImageOverridesContext(ctx, req.ImageOverrides); err != nil {
 			printCreateFailureSummary(summary, req)
+			return err
+		}
+		if err := lockedContext.Err(); err != nil {
 			return err
 		}
 		fmt.Fprintf(progress, "Wrote %s\n", plugin.ComposeImageOverrideFile)
@@ -394,7 +540,7 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 		fmt.Fprintln(progress, botMitigationTurnstileWarning)
 	}
 	if !req.SetupOnly {
-		if err := createRunStartup(progress, ctx); err != nil {
+		if err := createRunStartup(lockedContext, progress, ctx); err != nil {
 			printCreateFailureSummary(summary, req)
 			return err
 		}
@@ -404,77 +550,87 @@ func runCreateCommand(cmd *cobra.Command, req createRequest) error {
 	return nil
 }
 
-func normalizeComposeProjectFilename(ctx *config.Context) error {
+func normalizeComposeProjectFilename(runCtx context.Context, ctx *config.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("context is nil")
 	}
-	if ctx.DockerHostType == config.ContextRemote {
-		canonical := filepath.Join(ctx.ProjectDir, "compose.yaml")
-		canonicalExists, err := ctx.FileExists(canonical)
-		if err != nil {
-			return fmt.Errorf("inspect canonical Compose file: %w", err)
-		}
-		if canonicalExists {
-			return nil
-		}
-		legacy := filepath.Join(ctx.ProjectDir, "docker-compose.yml")
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
+	canonical := ctx.ResolveProjectPath("compose.yaml")
+	canonicalExists, err := ctx.FileExists(canonical)
+	if err != nil {
+		return fmt.Errorf("inspect canonical Compose file: %w", err)
+	}
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
+	if !canonicalExists {
+		legacy := ctx.ResolveProjectPath("docker-compose.yml")
 		legacyExists, err := ctx.FileExists(legacy)
 		if err != nil {
 			return fmt.Errorf("inspect legacy Compose file: %w", err)
 		}
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
 		if !legacyExists {
 			return nil
 		}
-		if err := createRunComposeCommand(
-			context.Background(),
-			ctx,
-			ctx.ProjectDir,
-			io.Discard,
-			io.Discard,
-			plugin.ShellJoin([]string{"mv", "--", "docker-compose.yml", "compose.yaml"}),
-		); err != nil {
+		if err := ctx.ValidateProjectRegularFile(ctx.ProjectDir, legacy); err != nil {
+			return fmt.Errorf("validate legacy Compose file: %w", err)
+		}
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
+		if ctx.DockerHostType == config.ContextRemote {
+			if err := createRunComposeArgv(runCtx, ctx, ctx.ProjectDir, io.Discard, io.Discard, []string{"mv", "--", "docker-compose.yml", "compose.yaml"}); err != nil {
+				return fmt.Errorf("normalize Compose project filename: %w", err)
+			}
+		} else if err := os.Rename(legacy, canonical); err != nil {
 			return fmt.Errorf("normalize Compose project filename: %w", err)
 		}
-		if err := createRunComposeCommand(
-			context.Background(),
-			ctx,
-			ctx.ProjectDir,
-			io.Discard,
-			io.Discard,
-			plugin.ShellJoin([]string{"sed", "-i", `s#\./docker-compose\.yml:/docker-compose\.yml#./compose.yaml:/docker-compose.yml#g`, "compose.yaml"}),
-		); err != nil {
-			return fmt.Errorf("update canonical Compose self-mount: %w", err)
-		}
-		return nil
 	}
-	canonical := filepath.Join(ctx.ProjectDir, "compose.yaml")
-	legacy := filepath.Join(ctx.ProjectDir, "docker-compose.yml")
-	if _, err := os.Stat(canonical); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect canonical Compose file: %w", err)
+	return repairCanonicalComposeSelfMount(runCtx, ctx, canonical)
+}
+
+func repairCanonicalComposeSelfMount(runCtx context.Context, ctx *config.Context, canonical string) error {
+	if err := runCtx.Err(); err != nil {
+		return err
 	}
-	if _, err := os.Stat(legacy); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("inspect legacy Compose file: %w", err)
+	if err := ctx.ValidateProjectRegularFile(ctx.ProjectDir, canonical); err != nil {
+		return fmt.Errorf("validate canonical Compose file: %w", err)
 	}
-	if err := os.Rename(legacy, canonical); err != nil {
-		return fmt.Errorf("normalize Compose project filename: %w", err)
+	if err := runCtx.Err(); err != nil {
+		return err
 	}
-	data, err := os.ReadFile(canonical)
+	data, err := ctx.ReadFile(canonical)
 	if err != nil {
 		return fmt.Errorf("read canonical Compose file: %w", err)
 	}
-	data = bytes.ReplaceAll(data, []byte("./docker-compose.yml:/docker-compose.yml"), []byte("./compose.yaml:/docker-compose.yml"))
-	if err := os.WriteFile(canonical, data, 0o644); err != nil {
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
+	repaired := bytes.ReplaceAll(data, []byte("./docker-compose.yml:/docker-compose.yml"), []byte("./compose.yaml:/docker-compose.yml"))
+	if bytes.Equal(data, repaired) {
+		return runCtx.Err()
+	}
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
+	if err := ctx.WriteProjectFile(ctx.ProjectDir, canonical, repaired); err != nil {
 		return fmt.Errorf("update canonical Compose self-mount: %w", err)
 	}
-	return nil
+	return runCtx.Err()
 }
 
-func applyCreateIngress(ctx *config.Context, req createRequest) error {
+func applyCreateIngress(runCtx context.Context, ctx *config.Context, req createRequest) error {
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
 	if req.IngressState == "" {
 		return nil
 	}
@@ -494,16 +650,25 @@ func applyCreateIngress(ctx *config.Context, req createRequest) error {
 	spec := component.SpecForWithOptions(req.IngressState, values)
 	switch req.IngressState {
 	case corecomponent.StateOn:
-		if err := manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+		if err := manager.EnableComponentWithOptions(runCtx, spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
 			return err
 		}
-		return applyISLEIngressFiles(ctx, values)
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
+		if err := applyISLEIngressFiles(ctx, values); err != nil {
+			return err
+		}
+		return runCtx.Err()
 	default:
 		return fmt.Errorf("unsupported ingress state %q", req.IngressState)
 	}
 }
 
-func applyCreateDevMode(ctx *config.Context, req createRequest) error {
+func applyCreateDevMode(runCtx context.Context, ctx *config.Context, req createRequest) error {
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
 	if req.DevModeState == "" {
 		return nil
 	}
@@ -515,15 +680,27 @@ func applyCreateDevMode(ctx *config.Context, req createRequest) error {
 	spec := component.SpecForWithOptions(req.DevModeState, nil)
 	switch req.DevModeState {
 	case corecomponent.StateOn:
-		if err := manager.EnableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+		if err := manager.EnableComponentWithOptions(runCtx, spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
 			return err
 		}
-		return applyISLEDevMode(ctx, true)
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
+		if err := applyISLEDevMode(ctx, true); err != nil {
+			return err
+		}
+		return runCtx.Err()
 	case corecomponent.StateOff:
-		if err := manager.DisableComponentWithOptions(context.Background(), spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
+		if err := manager.DisableComponentWithOptions(runCtx, spec, corecomponent.ApplyOptions{Yolo: true}); err != nil {
 			return err
 		}
-		return applyISLEDevMode(ctx, false)
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
+		if err := applyISLEDevMode(ctx, false); err != nil {
+			return err
+		}
+		return runCtx.Err()
 	default:
 		return fmt.Errorf("unsupported dev mode state %q", req.DevModeState)
 	}
@@ -581,7 +758,16 @@ func refreshCreateContextComposeMetadata(ctx *config.Context) error {
 	return config.SaveContext(ctx, false)
 }
 
-func runStartup(out io.Writer, ctx *config.Context) error {
+func runStartup(runCtx context.Context, out io.Writer, ctx *config.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("context is nil")
+	}
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
 	cleanupLabel, _, _ := cleanupCommand()
 	logPath, err := startupLogPath(ctx.Name)
 	if err != nil {
@@ -617,6 +803,9 @@ This will completely stop and destroy the setup.`, shellPath(ctx.ProjectDir), cl
 
 	if err := runWithSpinner(out, "Starting the Islandora stack", func() error {
 		for _, commandText := range startupCommands() {
+			if err := runCtx.Err(); err != nil {
+				return err
+			}
 			commandText = strings.TrimSpace(commandText)
 			if commandText == "" {
 				continue
@@ -624,11 +813,11 @@ This will completely stop and destroy the setup.`, shellPath(ctx.ProjectDir), cl
 			if _, err := fmt.Fprintf(logFile, "Running %s\n", commandText); err != nil {
 				return err
 			}
-			if err := runCreateProjectShellCommand(ctx, logFile, logFile, commandText); err != nil {
+			if err := runCreateProjectShellCommand(runCtx, ctx, logFile, logFile, commandText); err != nil {
 				return fmt.Errorf("run %s: %w", commandText, err)
 			}
 		}
-		return nil
+		return runCtx.Err()
 	}); err != nil {
 		const failureLogLines = 200
 		tail, tailErr := tailLines(logPath, failureLogLines)
@@ -724,60 +913,233 @@ func checkPrereqs(out io.Writer) error {
 	return nil
 }
 
-func ensureClonedCheckout(out io.Writer, req createRequest) (bool, error) {
-	repoURL := strings.TrimSpace(req.TemplateRepo)
-	branch := strings.TrimSpace(req.TemplateBranch)
-	projectDir := strings.TrimSpace(req.Path)
-	if repoURL == "" {
-		return false, fmt.Errorf("template repo cannot be empty")
-	}
-	if projectDir == "" {
-		return false, fmt.Errorf("project directory cannot be empty")
-	}
-
-	entries, err := os.ReadDir(projectDir)
-	if err == nil && len(entries) > 0 {
-		return false, nil
-	}
-	if err != nil && !os.IsNotExist(err) {
-		return false, fmt.Errorf("read project directory %q: %w", projectDir, err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(projectDir), 0o750); err != nil {
-		return false, fmt.Errorf("create parent directory for %q: %w", projectDir, err)
-	}
-
-	parent := corecomponent.RenderSection(
-		"Template checkout",
-		fmt.Sprintf("Cloning %s at %s into %s.", repoURL, helpers.FirstNonEmpty(branch, "default branch"), projectDir),
-	)
-	fmt.Fprintln(out, parent)
-	fmt.Fprintln(out)
-	if err := runWithSpinner(out, "Cloning template repository", func() error {
-		return createCloneTemplateRepo(plugin.GitTemplateOptions{
-			TemplateRepo:   repoURL,
-			TemplateBranch: branch,
-			ProjectDir:     projectDir,
-			Quiet:          true,
-		})
-	}); err != nil {
-		return false, err
-	}
-	return true, nil
+func validateExistingISLECheckout(runCtx context.Context, ctx *config.Context) error {
+	return validateExistingISLECheckoutLimit(runCtx, ctx, maxExistingISLEComposeConfigJSONBytes)
 }
 
-func ensureClonedCheckoutForContext(out io.Writer, ctx *config.Context, req createRequest) (bool, error) {
-	if ctx == nil || ctx.DockerHostType != config.ContextRemote {
-		return ensureClonedCheckout(out, req)
-	}
-	return commandSDK.EnsureComposeTemplateCheckoutContext(context.Background(), out, req.ComposeCreateRequest, ctx)
+type cappedComposeConfigBuffer struct {
+	buffer   bytes.Buffer
+	maximum  int
+	exceeded bool
 }
 
-func bootstrapCheckoutForContext(out io.Writer, ctx *config.Context) error {
-	if ctx == nil || ctx.DockerHostType != config.ContextRemote {
-		return createBootstrapCheckout(out, ctx.ProjectDir)
+type existingISLEComposeModel struct {
+	Services map[string]existingISLEComposeService `json:"services"`
+}
+
+type existingISLEComposeService struct {
+	Volumes []existingISLEComposeVolume `json:"volumes"`
+}
+
+type existingISLEComposeVolume struct {
+	Type     string `json:"type"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	ReadOnly bool   `json:"read_only"`
+}
+
+type existingISLERequiredReadOnlyBind struct {
+	Service string
+	Source  string
+	Target  string
+}
+
+func (b *cappedComposeConfigBuffer) Write(data []byte) (int, error) {
+	originalLength := len(data)
+	remaining := b.maximum - b.buffer.Len()
+	if remaining > 0 {
+		if len(data) > remaining {
+			data = data[:remaining]
+		}
+		_, _ = b.buffer.Write(data)
+	}
+	if originalLength > remaining {
+		b.exceeded = true
+	}
+	// Report the full write so a remote Compose process can finish and close its
+	// pipes; excess bytes are deliberately discarded after the cap is reached.
+	return originalLength, nil
+}
+
+func validateExistingISLECheckoutLimit(runCtx context.Context, ctx *config.Context, maximum int) error {
+	if ctx == nil {
+		return fmt.Errorf("context is nil")
+	}
+	if maximum < 1 {
+		return fmt.Errorf("effective Compose model size limit must be positive")
+	}
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
+	if err := validateExistingISLETemplateContract(runCtx, ctx); err != nil {
+		return err
+	}
+	output := &cappedComposeConfigBuffer{maximum: maximum}
+	if err := createRunComposeArgv(runCtx, ctx, ctx.ProjectDir, output, io.Discard, []string{"docker", "compose", "config", "--format", "json"}); err != nil {
+		return fmt.Errorf("resolve effective Compose model for existing ISLE checkout: %w", err)
+	}
+	if output.exceeded {
+		return fmt.Errorf("effective Compose model for existing ISLE checkout exceeds %d bytes", maximum)
+	}
+	var model existingISLEComposeModel
+	if err := json.Unmarshal(output.buffer.Bytes(), &model); err != nil {
+		return fmt.Errorf("parse effective Compose model for existing ISLE checkout: %w", err)
+	}
+	missing := make([]string, 0, 3)
+	for _, service := range []string{"drupal", "alpaca", "init"} {
+		if _, ok := model.Services[service]; !ok {
+			missing = append(missing, service)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("project directory %q is not an existing ISLE checkout: effective Compose services %s are required", ctx.ProjectDir, strings.Join(missing, ", "))
+	}
+	if err := validateExistingISLELifecycleBinds(ctx, model); err != nil {
+		return err
+	}
+	return runCtx.Err()
+}
+
+func validateExistingISLELifecycleBinds(ctx *config.Context, model existingISLEComposeModel) error {
+	for _, required := range existingISLERequiredReadOnlyBinds {
+		expectedSource := filepath.Clean(ctx.ResolveProjectPath(required.Source))
+		valid := false
+		for _, volume := range model.Services[required.Service].Volumes {
+			if volume.Target != required.Target || volume.Type != "bind" || !volume.ReadOnly {
+				continue
+			}
+			actualSource := volume.Source
+			if !filepath.IsAbs(actualSource) {
+				actualSource = filepath.Join(ctx.ProjectDir, actualSource)
+			}
+			if filepath.Clean(actualSource) == expectedSource {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("existing ISLE checkout service %q must bind lifecycle file %q to %q read-only; migrate the checkout to the current ISLE template v1.3.1 lifecycle contract before retrying", required.Service, required.Source, required.Target)
+		}
+	}
+	return nil
+}
+
+type existingISLETemplateContract struct {
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+	Schema     int    `yaml:"schema"`
+	Spec       struct {
+		ComponentDefaults struct {
+			Revision string `yaml:"revision"`
+		} `yaml:"componentDefaults"`
+	} `yaml:"spec"`
+}
+
+func validateExistingISLETemplateContract(runCtx context.Context, ctx *config.Context) error {
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
+	canonical := ctx.ResolveProjectPath("compose.yaml")
+	canonicalExists, err := ctx.FileExists(canonical)
+	if err != nil {
+		return fmt.Errorf("inspect canonical Compose file: %w", err)
+	}
+	if !canonicalExists {
+		for _, legacyName := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml"} {
+			legacyExists, legacyErr := ctx.FileExists(ctx.ResolveProjectPath(legacyName))
+			if legacyErr != nil {
+				return fmt.Errorf("inspect legacy Compose file %q: %w", legacyName, legacyErr)
+			}
+			if legacyExists {
+				return fmt.Errorf("existing ISLE checkout uses legacy Compose file %q; migrate the checkout to the canonical ISLE template v1.3.1 contract with compose.yaml before retrying (sitectl will not rename an existing checkout)", legacyName)
+			}
+		}
+		return fmt.Errorf("existing ISLE checkout is missing canonical compose.yaml; migrate the checkout to the ISLE template v1.3.1 contract before retrying")
+	}
+	if err := ctx.ValidateProjectRegularFile(ctx.ProjectDir, canonical); err != nil {
+		return fmt.Errorf("validate canonical compose.yaml: %w", err)
+	}
+	for _, legacyName := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml"} {
+		legacyExists, legacyErr := ctx.FileExists(ctx.ResolveProjectPath(legacyName))
+		if legacyErr != nil {
+			return fmt.Errorf("inspect legacy Compose file %q: %w", legacyName, legacyErr)
+		}
+		if legacyExists {
+			return fmt.Errorf("existing ISLE checkout contains legacy Compose file %q alongside compose.yaml; migrate the checkout fully to the ISLE template v1.3.1 contract before retrying", legacyName)
+		}
+	}
+	requiredFiles := append([]string{existingISLETemplateContractPath}, existingISLELifecycleFiles...)
+	for _, relativePath := range requiredFiles {
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
+		filename := ctx.ResolveProjectPath(relativePath)
+		exists, existsErr := ctx.FileExists(filename)
+		if existsErr != nil {
+			return fmt.Errorf("inspect required ISLE template file %q: %w", relativePath, existsErr)
+		}
+		if !exists {
+			return fmt.Errorf("existing ISLE checkout is missing required template v1.3.1 file %q; migrate the checkout to the current ISLE lifecycle contract before retrying", relativePath)
+		}
+		if err := ctx.ValidateProjectRegularFile(ctx.ProjectDir, filename); err != nil {
+			return fmt.Errorf("validate required ISLE template file %q: %w", relativePath, err)
+		}
+	}
+	contractData, err := ctx.ReadFile(ctx.ResolveProjectPath(existingISLETemplateContractPath))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", existingISLETemplateContractPath, err)
+	}
+	if len(contractData) > maxExistingISLETemplateContractBytes {
+		return fmt.Errorf("existing ISLE template contract exceeds %d bytes", maxExistingISLETemplateContractBytes)
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(contractData))
+	decoder.KnownFields(true)
+	var contract existingISLETemplateContract
+	if err := decoder.Decode(&contract); err != nil {
+		return fmt.Errorf("parse %s: %w", existingISLETemplateContractPath, err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("parse %s: multiple YAML documents are not allowed", existingISLETemplateContractPath)
+		}
+		return fmt.Errorf("parse %s: %w", existingISLETemplateContractPath, err)
+	}
+	if contract.APIVersion != "sitectl.libops.io/v1alpha1" || contract.Kind != "TemplateContract" || contract.Schema != 1 || strings.TrimSpace(contract.Spec.ComponentDefaults.Revision) != existingISLEComponentRevision {
+		return fmt.Errorf("existing ISLE checkout has an unsupported %s; migrate it to the ISLE template v1.3.1 contract before retrying", existingISLETemplateContractPath)
+	}
+	return runCtx.Err()
+}
+
+func bootstrapCheckoutForContext(runCtx context.Context, out io.Writer, ctx *config.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("context is nil")
+	}
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
+	if ctx.DockerHostType != config.ContextRemote {
+		return createBootstrapCheckout(runCtx, out, ctx.ProjectDir)
 	}
 	projectDir := strings.TrimSpace(ctx.ProjectDir)
+	hasCommit, err := checkoutHasCommit(projectDir, func(stdout, stderr io.Writer, name string, args ...string) error {
+		return createRunComposeArgv(runCtx, ctx, projectDir, stdout, stderr, append([]string{name}, args...))
+	})
+	if err != nil {
+		return err
+	}
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
+	if hasCommit {
+		return nil
+	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, corecomponent.RenderSection(
 		"Git bootstrap",
@@ -786,42 +1148,70 @@ func bootstrapCheckoutForContext(out io.Writer, ctx *config.Context) error {
 	fmt.Fprintln(out)
 	return runWithSpinner(out, "Creating initial git commit", func() error {
 		safeDirectory := "safe.directory=" + projectDir
-		if err := createRunComposeCommand(context.Background(), ctx, projectDir, io.Discard, io.Discard, plugin.ShellJoin([]string{"git", "-c", safeDirectory, "add", "."})); err != nil {
+		if err := createRunComposeArgv(runCtx, ctx, projectDir, io.Discard, io.Discard, []string{"git", "-c", safeDirectory, "add", "."}); err != nil {
 			return fmt.Errorf("stage initial checkout: %w", err)
 		}
-		if err := createRunComposeCommand(
-			context.Background(),
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
+		if err := createRunComposeArgv(
+			runCtx,
 			ctx,
 			projectDir,
 			io.Discard,
 			io.Discard,
-			plugin.ShellJoin([]string{
+			[]string{
 				"git",
 				"-c", safeDirectory,
 				"-c", "user.name=sitectl-isle",
 				"-c", "user.email=sitectl-isle@localhost",
 				"commit",
 				"-m", "initial commit.",
-			}),
+			},
 		); err != nil {
 			return fmt.Errorf("create initial commit: %w", err)
 		}
-		return nil
+		return runCtx.Err()
 	})
 }
 
-func runCreateProjectShellCommand(ctx *config.Context, stdout, stderr io.Writer, commandText string) error {
+func runCreateProjectShellCommand(runCtx context.Context, ctx *config.Context, stdout, stderr io.Writer, commandText string) error {
 	if ctx == nil {
 		return fmt.Errorf("context is nil")
+	}
+	if err := runCtx.Err(); err != nil {
+		return err
 	}
 	// The sitectl SDK owns local and remote shell transport. Its only
 	// context-aware project runner currently accepts shell text, invokes
 	// `bash -lc` locally, and has no argv variant. It also applies the local
 	// Compose port environment only to `docker compose up` operations.
-	return createRunComposeCommand(context.Background(), ctx, ctx.ProjectDir, stdout, stderr, commandText)
+	return createRunComposeCommand(runCtx, ctx, ctx.ProjectDir, stdout, stderr, commandText)
 }
 
 func bootstrapCheckout(out io.Writer, projectDir string) error {
+	return bootstrapCheckoutContext(context.Background(), out, projectDir)
+}
+
+func bootstrapCheckoutContext(runCtx context.Context, out io.Writer, projectDir string) error {
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
+	hasCommit, err := checkoutHasCommit(projectDir, func(stdout, stderr io.Writer, name string, args ...string) error {
+		return createRunProjectCommand(runCtx, projectDir, stdout, stderr, name, args...)
+	})
+	if err != nil {
+		return err
+	}
+	if err := runCtx.Err(); err != nil {
+		return err
+	}
+	if hasCommit {
+		return nil
+	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, corecomponent.RenderSection(
 		"Git bootstrap",
@@ -831,10 +1221,14 @@ func bootstrapCheckout(out io.Writer, projectDir string) error {
 
 	return runWithSpinner(out, "Creating initial git commit", func() error {
 		safeDirectory := "safe.directory=" + projectDir
-		if err := createRunProjectCommand(projectDir, io.Discard, io.Discard, "git", "-c", safeDirectory, "add", "."); err != nil {
+		if err := createRunProjectCommand(runCtx, projectDir, io.Discard, io.Discard, "git", "-c", safeDirectory, "add", "."); err != nil {
 			return fmt.Errorf("stage initial checkout: %w", err)
 		}
+		if err := runCtx.Err(); err != nil {
+			return err
+		}
 		if err := createRunProjectCommand(
+			runCtx,
 			projectDir,
 			io.Discard,
 			io.Discard,
@@ -847,12 +1241,41 @@ func bootstrapCheckout(out io.Writer, projectDir string) error {
 		); err != nil {
 			return fmt.Errorf("create initial commit: %w", err)
 		}
-		return nil
+		return runCtx.Err()
 	})
 }
 
-func defaultRunProjectCommand(projectDir string, stdout, stderr io.Writer, name string, args ...string) error {
-	command := exec.Command(name, args...) // #nosec G204 -- command helper is used for fixed git/template commands assembled by sitectl-isle.
+type checkoutCommandRunner func(stdout, stderr io.Writer, name string, args ...string) error
+
+func checkoutHasCommit(projectDir string, run checkoutCommandRunner) (bool, error) {
+	projectDir = strings.TrimSpace(projectDir)
+	if projectDir == "" {
+		return false, fmt.Errorf("project directory cannot be empty")
+	}
+	if run == nil {
+		return false, fmt.Errorf("checkout command runner is nil")
+	}
+	safeDirectory := "safe.directory=" + projectDir
+	var commit bytes.Buffer
+	verifyErr := run(&commit, io.Discard, "git", "-c", safeDirectory, "rev-parse", "--verify", "HEAD")
+	if verifyErr == nil {
+		if strings.TrimSpace(commit.String()) == "" {
+			return false, fmt.Errorf("inspect checkout commit: git returned an empty HEAD")
+		}
+		return true, nil
+	}
+	var repository bytes.Buffer
+	if err := run(&repository, io.Discard, "git", "-c", safeDirectory, "rev-parse", "--is-inside-work-tree"); err != nil {
+		return false, fmt.Errorf("inspect checkout commit: %w", errors.Join(verifyErr, err))
+	}
+	if strings.TrimSpace(repository.String()) != "true" {
+		return false, fmt.Errorf("project directory %q is not a Git work tree", projectDir)
+	}
+	return false, nil
+}
+
+func defaultRunProjectCommand(runCtx context.Context, projectDir string, stdout, stderr io.Writer, name string, args ...string) error {
+	command := exec.CommandContext(runCtx, name, args...) // #nosec G204 -- command helper is used for fixed git/template commands assembled by sitectl-isle.
 	command.Dir = projectDir
 	command.Stdout = stdout
 	command.Stderr = stderr

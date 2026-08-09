@@ -17,7 +17,7 @@ func TestCreateRuntimeDoesNotEmbedNontrivialLifecycleShellPrograms(t *testing.T)
 		t.Fatalf("ReadFile(create.go) error = %v", err)
 	}
 	source := string(data)
-	if !strings.Contains(source, "EnsureComposeTemplateCheckoutContext") {
+	if !strings.Contains(source, "EnsureObservedComposeTemplateCheckoutContext") {
 		t.Fatal("remote template checkout must delegate to the sitectl SDK")
 	}
 	for _, forbidden := range []string{
@@ -37,10 +37,93 @@ func TestCreateRuntimeDoesNotEmbedNontrivialLifecycleShellPrograms(t *testing.T)
 	}
 }
 
+func TestCreateRuntimeRejectsRemoteBeforePrerequisitesAndTargetMutation(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("create.go")
+	if err != nil {
+		t.Fatalf("ReadFile(create.go) error = %v", err)
+	}
+	source := string(data)
+	runnerStart := strings.Index(source, "func (createRunner) Run")
+	if runnerStart < 0 {
+		t.Fatal("could not locate create runner source")
+	}
+	runnerEnd := strings.Index(source[runnerStart:], "func createDefinition")
+	if runnerEnd < 0 {
+		t.Fatal("could not locate create runner source")
+	}
+	runner := source[runnerStart : runnerStart+runnerEnd]
+	resolveIndex := strings.Index(runner, "createResolveRequest(cmd)")
+	rejectIndex := strings.Index(runner, "validateISLECreateTarget(req)")
+	prereqIndex := strings.Index(runner, "createCheckPrereqs(progress)")
+	if resolveIndex < 0 || rejectIndex <= resolveIndex || prereqIndex <= rejectIndex {
+		t.Fatalf("create runner must resolve and reject a remote target before local prerequisites:\n%s", runner)
+	}
+
+	commandStart := strings.Index(source, "func runCreateCommand")
+	if commandStart < 0 {
+		t.Fatal("could not locate create command source")
+	}
+	commandEnd := strings.Index(source[commandStart:], "func normalizeComposeProjectFilename")
+	if commandEnd < 0 {
+		t.Fatal("could not locate create command source")
+	}
+	command := source[commandStart : commandStart+commandEnd]
+	rejectIndex = strings.Index(command, "validateISLECreateTarget(req)")
+	contextMutationIndex := strings.Index(command, "createEnsureLocalContext(commandSDK, req)")
+	if rejectIndex < 0 || contextMutationIndex <= rejectIndex {
+		t.Fatalf("create command must reject a remote target before context mutation:\n%s", command)
+	}
+	if strings.Count(command, "createNormalizeCheckout(") != 1 || !strings.Contains(command, "if !existingCheckout {\n\t\tif err := createNormalizeCheckout(") {
+		t.Fatal("existing checkouts must never pass through template-owned filename normalization")
+	}
+	admissionIndex := strings.Index(command, "validateExistingISLECheckout")
+	checkoutMutationIndex := strings.Index(command, "createEnsureObservedCheckout")
+	if admissionIndex < 0 || checkoutMutationIndex <= admissionIndex {
+		t.Fatal("existing checkout contract admission must precede checkout mutation")
+	}
+}
+
+func TestExistingISLELifecycleContractMatchesTemplateV13(t *testing.T) {
+	t.Parallel()
+	want := []string{
+		"conf/triplet/config.yaml",
+		"scripts/drupal-media-storage-state.php",
+		"scripts/drupal-wait-installed.sh",
+		"scripts/ensure-islandora-jwt-keypair.sh",
+		"scripts/initialize-compose.sh",
+		"scripts/sitectl-prepare-build.sh",
+		"scripts/sitectl-prepare-init.sh",
+		"scripts/sitectl-rollout-preflight.sh",
+	}
+	if strings.Join(existingISLELifecycleFiles, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("existing checkout lifecycle contract = %#v, want %#v", existingISLELifecycleFiles, want)
+	}
+}
+
+func TestReleasePackagesRequireFencedCore(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../.goreleaser.yaml")
+	if err != nil {
+		t.Fatalf("ReadFile(.goreleaser.yaml) error = %v", err)
+	}
+	config := string(data)
+	for _, dependency := range []string{
+		"sitectl (>= 1.9.0)",
+		"sitectl >= 1.9.0",
+		"sitectl>=1.9.0",
+	} {
+		if !strings.Contains(config, dependency) {
+			t.Fatalf("release package configuration is missing %q", dependency)
+		}
+	}
+}
+
 func TestCreateDefinitionUsesCheckedInTemplatePrograms(t *testing.T) {
 	t.Parallel()
 	spec := createDefinition()
-	if spec.DockerComposeRepo != "https://github.com/libops/isle" || spec.DockerComposeBranch != "v1.3.0" {
+	if spec.DockerComposeRepo != "https://github.com/libops/isle" || spec.DockerComposeBranch != "v1.3.1" {
 		t.Fatalf("unexpected template contract: repo=%q branch=%q", spec.DockerComposeRepo, spec.DockerComposeBranch)
 	}
 	if len(spec.DockerComposeInit) != 3 || spec.DockerComposeInit[0] != "bash scripts/sitectl-prepare-init.sh" || spec.DockerComposeInit[1] != `docker compose run --rm -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" init` || spec.DockerComposeInit[2] != "bash scripts/sitectl-rollout-preflight.sh" {

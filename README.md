@@ -17,7 +17,7 @@ Create a local ISLE site from the matching template:
 ```bash
 sitectl create isle/default \
   --template-repo https://github.com/libops/isle \
-  --template-branch v1.3.0 \
+  --template-branch v1.3.1 \
   --path ./my-isle-site \
   --type local \
   --checkout-source template \
