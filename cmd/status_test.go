@@ -687,6 +687,17 @@ http:
 	}
 }
 
+func TestIsleDefaultIngressDomainIsLocalOnly(t *testing.T) {
+	t.Parallel()
+
+	if got := isleDefaultIngressDomain(&config.Context{DockerHostType: config.ContextRemote}); got != "" {
+		t.Fatalf("isleDefaultIngressDomain(remote) = %q, want empty", got)
+	}
+	if got := isleDefaultIngressDomain(&config.Context{DockerHostType: config.ContextLocal}); got != "localhost" {
+		t.Fatalf("isleDefaultIngressDomain(local) = %q, want localhost", got)
+	}
+}
+
 func TestRunIsleValidationAcceptsTripletIIIFConfig(t *testing.T) {
 	projectDir := t.TempDir()
 	writeISLEOnFixture(t, projectDir)

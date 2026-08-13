@@ -862,7 +862,6 @@ func TestRunComponentSetConfiguresIngressLetsEncrypt(t *testing.T) {
 		`FCREPO_ALLOW_EXTERNAL_DRUPAL: "https://repo.example.org/"`,
 		"--entryPoints.https.address=:443",
 		"--certificatesResolvers.letsencrypt.acme.email=admin@example.org",
-		`- "443:443"`,
 		"acme-data:/acme:rw",
 		"--entryPoints.http.forwardedHeaders.trustedIPs=10.0.0.0/8,203.0.113.4",
 		`PHP_UPLOAD_MAX_FILESIZE: "2G"`,
@@ -879,6 +878,9 @@ func TestRunComponentSetConfiguresIngressLetsEncrypt(t *testing.T) {
 		if !strings.Contains(compose, want) {
 			t.Fatalf("expected compose to contain %q, got:\n%s", want, compose)
 		}
+	}
+	if !strings.Contains(compose, `- "443:443"`) && !strings.Contains(compose, `- 443:443`) {
+		t.Fatalf("expected compose to publish port 443, got:\n%s", compose)
 	}
 
 	router := readFileForTest(t, filepath.Join(projectDir, "conf", "traefik", "drupal.yml"))

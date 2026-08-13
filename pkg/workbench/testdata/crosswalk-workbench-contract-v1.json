@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "spec": {
+    "name": "fabricator-workbench",
+    "version": "1",
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "policy": {
+    "path_mode": "staged-posix",
+    "staging_root": "/mnt/islandora_staging",
+    "allowed_absolute_roots": [
+      "/home",
+      "/mnt"
+    ],
+    "supplemental_media_use_tid": "151326",
+    "pending_supplemental_published": "1",
+    "unpublished_supplemental_media_use_tid": "151326",
+    "unpublished_supplemental_published": "0"
+  }
+}

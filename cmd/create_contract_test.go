@@ -110,9 +110,9 @@ func TestReleasePackagesRequireFencedCore(t *testing.T) {
 	}
 	config := string(data)
 	for _, dependency := range []string{
-		"sitectl (>= 1.9.0)",
-		"sitectl >= 1.9.0",
-		"sitectl>=1.9.0",
+		"sitectl (>= 1.10.0)",
+		"sitectl >= 1.10.0",
+		"sitectl>=1.10.0",
 	} {
 		if !strings.Contains(config, dependency) {
 			t.Fatalf("release package configuration is missing %q", dependency)

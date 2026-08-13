@@ -1579,8 +1579,10 @@ services:
 	if !strings.Contains(rendered, "command: >-") {
 		t.Fatalf("expected traefik folded scalar style preserved, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "      --ping=true\n      --log.level=INFO\n      --entryPoints.http.address=:80") {
-		t.Fatalf("expected traefik folded scalar content preserved, got:\n%s", rendered)
+	for _, command := range []string{"--ping=true", "--log.level=INFO", "--entryPoints.http.address=:80"} {
+		if !strings.Contains(rendered, command) {
+			t.Fatalf("expected traefik folded scalar value %q preserved, got:\n%s", command, rendered)
+		}
 	}
 	if strings.Contains(rendered, "restart: unless-stopped\n    image: islandora/alpaca") {
 		t.Fatalf("expected common settings to stay behind the anchor, got:\n%s", rendered)

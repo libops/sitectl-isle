@@ -19,7 +19,7 @@ var (
 	sdk *plugin.SDK
 )
 
-func Register(s *plugin.SDK) {
+func Register(s *plugin.SDK, resolveDrupal DrupalEndpointResolver) {
 	sdk = s
 	sdk.RegisterContextJob(job.Spec{
 		Name:        "fcrepo-db-backup",
@@ -37,6 +37,22 @@ func Register(s *plugin.SDK) {
 		Name:        "recovery-restore",
 		Description: "Restore an ISLE full-state recovery bundle",
 	}, &recoveryRestoreJob{})
+	sdk.RegisterContextJob(job.Spec{
+		Name:        "workbench-preflight",
+		Description: "Distinguish missing, unreadable, and invalid Workbench media paths",
+	}, &workbenchPreflightJob{})
+	sdk.RegisterContextJob(job.Spec{
+		Name:        "workbench-reconcile-supplemental",
+		Description: "Validate Crosswalk artifacts and resolve supplemental media against an exact rollback artifact",
+	}, &workbenchReconcileSupplementalJob{})
+	sdk.RegisterContextJob(job.Spec{
+		Name:        "workbench-retry-media",
+		Description: "Retry only allowlisted Workbench media-upload timeout cascades",
+	}, &workbenchRetryMediaJob{resolveDrupal: resolveDrupal})
+	sdk.RegisterContextJob(job.Spec{
+		Name:        "workbench-rollback",
+		Description: "Delete nodes from an exact Workbench rollback artifact",
+	}, &workbenchRollbackJob{resolveDrupal: resolveDrupal})
 }
 
 type recoveryBackupJob struct{ Output string }

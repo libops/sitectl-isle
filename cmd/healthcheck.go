@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strings"
 
+	isleendpoint "github.com/libops/sitectl-isle/pkg/endpoint"
 	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/healthcheck"
 	"github.com/libops/sitectl/pkg/plugin"
@@ -56,13 +57,10 @@ func isleDrupalPublicURL(ctx *config.Context) string {
 	if target == "" {
 		target = healthcheck.PublicURLFromEnv(ctx, "http", "localhost")
 	}
-	if traefikURL, ok, err := healthcheck.PublicURLFromTraefik(ctx, healthcheck.TraefikRouteOptions{
-		AppService:    "drupal",
-		Router:        "drupal",
-		DefaultScheme: "http",
-		DefaultDomain: "localhost",
-	}); err == nil && ok && preferISLETraefikHealthcheckURL(target, traefikURL) {
-		target = traefikURL
+	if resolved, err := isleEndpointProvider.App(nil, ctx); err == nil &&
+		resolved.Resolution == isleendpoint.ResolutionTraefik &&
+		preferISLETraefikHealthcheckURL(target, resolved.URL) {
+		target = resolved.URL
 	}
 	return isleDrupalHealthcheckURL(target)
 }

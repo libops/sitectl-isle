@@ -265,7 +265,7 @@ func domainFromTraefikRoute(siteCtx *config.Context, projectEnv map[string]strin
 		AppService:    "drupal",
 		Router:        "drupal",
 		DefaultScheme: "http",
-		DefaultDomain: coretraefik.DefaultIngressDomain,
+		DefaultDomain: isleDefaultIngressDomain(siteCtx),
 	})
 	if err != nil || !ok {
 		return ""

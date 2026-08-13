@@ -2,7 +2,9 @@ package cmd
 
 import (
 	pluginjobs "github.com/libops/sitectl-isle/pkg/jobs"
+	"github.com/libops/sitectl/pkg/config"
 	"github.com/libops/sitectl/pkg/plugin"
+	"github.com/spf13/cobra"
 )
 
 var commandSDK *plugin.SDK
@@ -14,7 +16,10 @@ func RegisterCommands(sdk *plugin.SDK) {
 		RequiredServices: []string{"drupal", "alpaca"},
 		Reason:           "drupal and alpaca services from ISLE site template",
 	})
-	pluginjobs.Register(sdk)
+	pluginjobs.Register(sdk, func(cmd *cobra.Command, ctx *config.Context) (string, error) {
+		resolved, err := isleEndpointProvider.App(cmd, ctx)
+		return resolved.URL, err
+	})
 	sdk.RegisterComponentDefinitions(orderedComponentDefinitions()...)
 	sdk.RegisterComponentCommand(componentExtensionCmd)
 	sdk.AddCommand(cacheCmd)
@@ -25,7 +30,7 @@ func RegisterCommands(sdk *plugin.SDK) {
 	sdk.RegisterSetRunner(&isleSetRunner{})
 	sdk.RegisterValidateRunner(&isleValidateRunner{})
 	sdk.RegisterHealthcheckRunner(isleHealthcheckRunner{})
-	sdk.RegisterIngressRouteProvider(isleIngressRouteProvider{})
+	sdk.RegisterIngressRouteProvider(isleEndpointProvider)
 	sdk.RegisterVerifyRunner(&isleVerifyRunner{})
 	sdk.AddCommand(recoveryCmd)
 	sdk.AddCommand(syncCmd)
