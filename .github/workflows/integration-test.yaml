@@ -68,7 +68,7 @@ jobs:
       project-path: isle-site-template
       local-plugin-path: sitectl-isle
       packages: sitectl sitectl-drupal
-      package-versions: sitectl=1.9.0 sitectl-drupal=1.4.1
+      package-versions: sitectl=1.10.0 sitectl-drupal=1.4.1
       allow-unversioned-packages: false
       expected-template-lock-revision: v1.0.0
       timeout-minutes: 120

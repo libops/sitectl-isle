@@ -41,7 +41,7 @@ func TestApplyTripletLocalReplacesCantaloupe(t *testing.T) {
 		"./conf/triplet/config.yaml:/etc/triplet/config.yaml:ro",
 		"triplet-cache:/var/lib/triplet/cache:rw",
 	)
-	assertContainsIIIF(t, compose, "  solr-data: {}\n  blazegraph-data: {}\n  triplet-cache: {}\n\nservices:")
+	assertOrderIIIF(t, compose, "solr-data: {}", "blazegraph-data: {}", "triplet-cache: {}", "\nservices:")
 	assertContainsIIIF(t, compose, `DRUPAL_DEFAULT_CANTALOUPE_URL: "http://localhost/iiif/3"`)
 	if strings.Contains(compose, "\n  cantaloupe:\n") || strings.Contains(compose, "\n  cantaloupe-data:") || strings.Contains(compose, "IIIF_UPSTREAM_URL") {
 		t.Fatalf("expected local triplet without cantaloupe or external upstream, got:\n%s", compose)

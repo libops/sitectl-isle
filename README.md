@@ -6,7 +6,7 @@ Documentation: https://sitectl.libops.io/plugins/isle
 
 ## Requirements
 
-- [`sitectl`](https://sitectl.libops.io/install).
+- [`sitectl`](https://sitectl.libops.io/install) v1.10.0 or newer, using RPC protocol 1.
 - Docker with the Compose v2 plugin for local ISLE sites.
 - [`sitectl-drupal`](https://github.com/libops/sitectl-drupal), because ISLE includes and extends the Drupal plugin surface.
 

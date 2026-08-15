@@ -1,0 +1,6 @@
+services:
+  blazegraph: {}
+  cantaloupe: {}
+  drupal: {}
+  fcrepo: {}
+  triplet: {}
