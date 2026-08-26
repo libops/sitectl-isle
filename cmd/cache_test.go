@@ -505,64 +505,83 @@ func TestCollectManifestWarmURLsForModeThumbnailSplit(t *testing.T) {
 	}
 }
 
-func TestCollectManifestWarmURLsForModePresentation3(t *testing.T) {
-	manifest := map[string]any{
-		"thumbnail": []any{
-			map[string]any{"id": "https://example.test/iiif/3/thumb/root"},
-		},
-		"items": []any{
-			map[string]any{
-				"thumbnail": map[string]any{
-					"id": "https://example.test/iiif/3/thumb/canvas-1",
+func TestCollectManifestWarmURLsForModePresentation3ImageAPIVersions(t *testing.T) {
+	tests := []struct {
+		name      string
+		version   string
+		fullWidth string
+	}{
+		{name: "image API v2", version: "2", fullWidth: "full"},
+		{name: "image API v3", version: "3", fullWidth: "max"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseURL := "https://example.test/cantaloupe/iiif/" + tt.version
+			fullImageURL := func(identifier string) string {
+				return fmt.Sprintf("%s/%s/full/%s/0/default.jpg", baseURL, identifier, tt.fullWidth)
+			}
+			thumbnailURL := func(identifier string) string {
+				return fmt.Sprintf("%s/%s/full/200,/0/default.jpg", baseURL, identifier)
+			}
+
+			manifest := map[string]any{
+				"thumbnail": []any{
+					map[string]any{"id": thumbnailURL("root")},
 				},
 				"items": []any{
 					map[string]any{
+						"thumbnail": map[string]any{
+							"id": thumbnailURL("canvas-1"),
+						},
 						"items": []any{
 							map[string]any{
-								"body": map[string]any{
-									"id": "https://example.test/iiif/3/full/1",
+								"items": []any{
+									map[string]any{
+										"body": map[string]any{
+											"id": fullImageURL("canvas-1"),
+										},
+									},
+								},
+							},
+						},
+					},
+					map[string]any{
+						"thumbnail": map[string]any{
+							"id": thumbnailURL("canvas-2"),
+						},
+						"items": []any{
+							map[string]any{
+								"items": []any{
+									map[string]any{
+										"body": map[string]any{
+											"id": fullImageURL("canvas-2"),
+										},
+									},
 								},
 							},
 						},
 					},
 				},
-			},
-			map[string]any{
-				"thumbnail": map[string]any{
-					"id": "https://example.test/iiif/3/thumb/canvas-2",
-				},
-				"items": []any{
-					map[string]any{
-						"items": []any{
-							map[string]any{
-								"body": map[string]any{
-									"id": "https://example.test/iiif/3/full/2",
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
+			}
 
-	ttfb := collectManifestWarmURLsForMode(manifest, miradorModeTTFB)
-	wantTTFB := []string{
-		"https://example.test/iiif/3/full/1",
-		"https://example.test/iiif/3/thumb/root",
-		"https://example.test/iiif/3/thumb/canvas-1",
-		"https://example.test/iiif/3/thumb/canvas-2",
-	}
-	if !reflect.DeepEqual(ttfb, wantTTFB) {
-		t.Fatalf("collectManifestWarmURLsForMode(ttfb, p3) = %v, want %v", ttfb, wantTTFB)
-	}
+			ttfb := collectManifestWarmURLsForMode(manifest, miradorModeTTFB)
+			wantTTFB := []string{
+				fullImageURL("canvas-1"),
+				thumbnailURL("root"),
+				thumbnailURL("canvas-1"),
+				thumbnailURL("canvas-2"),
+			}
+			if !reflect.DeepEqual(ttfb, wantTTFB) {
+				t.Fatalf("collectManifestWarmURLsForMode(ttfb) = %v, want %v", ttfb, wantTTFB)
+			}
 
-	browse := collectManifestWarmURLsForMode(manifest, miradorModeBrowse)
-	wantBrowse := []string{
-		"https://example.test/iiif/3/full/2",
-	}
-	if !reflect.DeepEqual(browse, wantBrowse) {
-		t.Fatalf("collectManifestWarmURLsForMode(browse, p3) = %v, want %v", browse, wantBrowse)
+			browse := collectManifestWarmURLsForMode(manifest, miradorModeBrowse)
+			wantBrowse := []string{fullImageURL("canvas-2")}
+			if !reflect.DeepEqual(browse, wantBrowse) {
+				t.Fatalf("collectManifestWarmURLsForMode(browse) = %v, want %v", browse, wantBrowse)
+			}
+		})
 	}
 }
 
