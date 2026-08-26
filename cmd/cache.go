@@ -870,7 +870,7 @@ func collectManifestWarmURLsForMode(value any, mode string) []string {
 	seenThumbnails := make(map[string]struct{})
 
 	addImageURL := func(s string) {
-		if s == "" || !strings.Contains(s, "/iiif/3/") {
+		if !isIIIFImageAPIURL(s) {
 			return
 		}
 		if _, exists := seenImages[s]; exists {
@@ -885,7 +885,7 @@ func collectManifestWarmURLsForMode(value any, mode string) []string {
 	}
 
 	addThumbnailURL := func(s string) {
-		if s == "" || !strings.Contains(s, "/iiif/3/") {
+		if !isIIIFImageAPIURL(s) {
 			return
 		}
 		if _, exists := seenThumbnails[s]; exists {
@@ -1017,4 +1017,8 @@ func collectManifestWarmURLsForMode(value any, mode string) []string {
 		}
 		return urls
 	}
+}
+
+func isIIIFImageAPIURL(value string) bool {
+	return strings.Contains(value, "/iiif/2/") || strings.Contains(value, "/iiif/3/")
 }
