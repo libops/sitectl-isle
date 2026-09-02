@@ -36,7 +36,7 @@ jobs:
             iiif_implementation: triplet
             iiif_topology: disabled
             bot_mitigation_state: on
-    uses: libops/.github/.github/workflows/sitectl-create-smoke-test.yaml@7277eacc89fca014481b2ca66039f4176509bcfc # main
+    uses: libops/.github/.github/workflows/sitectl-create-smoke-test.yaml@782ba8f6514788269e93e0a51c001061279f645a # main
     with:
       plugin: isle
       create-definition: default
